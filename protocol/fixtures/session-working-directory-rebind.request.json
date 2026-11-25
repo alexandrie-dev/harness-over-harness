@@ -1,0 +1,1 @@
+{"jsonrpc":"2.0","id":"session/working-directory/rebind","method":"session/working-directory/rebind","params":{"sessionId":"session-1","path":"/workspace","rootIdentity":{"device":"1","inode":"2"}}}

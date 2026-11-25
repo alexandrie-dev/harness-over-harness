@@ -1,0 +1,5 @@
+--- a/web/routes/_chat.index.tsx
++++ b/web/routes/_chat.index.tsx
+@@ -107 +107 @@
+-            <T>Couldn’t start a new thread</T>
++            <T>Couldn’t start a new chat</T>

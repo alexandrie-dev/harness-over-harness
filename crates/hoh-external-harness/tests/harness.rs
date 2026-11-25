@@ -17,7 +17,7 @@ use hoh_destructive_classifier::{
 use hoh_error::SharedError;
 use hoh_external_harness::{
     BINDING_RECORD, Discovery, ExternalHarnessPlugin, ExternalHarnesses, ProcessSpec, StdioHarness,
-    StdioHarnessConfig,
+    StdioHarnessConfig, TELEMETRY_RECORD,
 };
 use hoh_kernel::{Context, Disposer, Kernel, Plugin, Service};
 use hoh_llm::{ContentBlock, MessageSource, NewUserMessage, UserMessage, create_user_message};
@@ -35,6 +35,170 @@ use serde_json::{Value, json};
 
 const HARNESS: &str = "stub";
 const STUB: &str = env!("CARGO_BIN_EXE_hoh-external-harness-stub");
+
+/// A process harness with Codex's Stop contract: the agent's session/cancel path must terminate
+/// the supervised process group immediately and resume the native session on the next turn.
+struct StopEndsProcessHarness(StdioHarness);
+
+struct TrustCaptureHarness {
+    inner: StdioHarness,
+    decisions: Arc<Mutex<Vec<bool>>>,
+}
+
+struct TerminationBarrierHarness {
+    inner: StdioHarness,
+    entered: Arc<tokio::sync::Notify>,
+    release: Arc<tokio::sync::Notify>,
+    armed: Arc<AtomicBool>,
+}
+
+struct TerminationBarrierSession {
+    inner: Arc<dyn hoh_external_harness::HarnessSession>,
+    entered: Arc<tokio::sync::Notify>,
+    release: Arc<tokio::sync::Notify>,
+    armed: Arc<AtomicBool>,
+}
+
+impl hoh_external_harness::HarnessSession for TerminationBarrierSession {
+    fn prompt(
+        &self,
+        params: hoh_external_harness::PromptParams,
+    ) -> futures_util::future::BoxFuture<'static, hoh_external_harness::HarnessResult<()>> {
+        self.inner.prompt(params)
+    }
+    fn interrupt(
+        &self,
+    ) -> futures_util::future::BoxFuture<'static, hoh_external_harness::HarnessResult<()>> {
+        self.inner.interrupt()
+    }
+    fn respond(
+        &self,
+        params: hoh_external_harness::RespondParams,
+    ) -> futures_util::future::BoxFuture<'static, hoh_external_harness::HarnessResult<()>> {
+        self.inner.respond(params)
+    }
+    fn terminate(&self, grace: Duration) -> futures_util::future::BoxFuture<'static, ()> {
+        let inner = self.inner.clone();
+        let entered = self.entered.clone();
+        let release = self.release.clone();
+        let armed = self.armed.clone();
+        Box::pin(async move {
+            if armed.swap(false, Ordering::SeqCst) {
+                entered.notify_one();
+                release.notified().await;
+            }
+            inner.terminate(grace).await;
+        })
+    }
+    fn diagnostics(&self) -> String {
+        self.inner.diagnostics()
+    }
+}
+
+impl hoh_external_harness::ExternalHarness for TerminationBarrierHarness {
+    fn discover(
+        &self,
+    ) -> futures_util::future::BoxFuture<'static, hoh_external_harness::HarnessResult<Discovery>>
+    {
+        self.inner.discover()
+    }
+    fn start_or_resume(
+        &self,
+        params: hoh_external_harness::StartParams,
+    ) -> futures_util::future::BoxFuture<
+        'static,
+        hoh_external_harness::HarnessResult<hoh_external_harness::Started>,
+    > {
+        let started = self.inner.start_or_resume(params);
+        let entered = self.entered.clone();
+        let release = self.release.clone();
+        let armed = self.armed.clone();
+        Box::pin(async move {
+            let mut started = started.await?;
+            started.session = Arc::new(TerminationBarrierSession {
+                inner: started.session,
+                entered,
+                release,
+                armed,
+            });
+            Ok(started)
+        })
+    }
+}
+
+impl hoh_external_harness::ExternalHarness for TrustCaptureHarness {
+    fn discover(
+        &self,
+    ) -> futures_util::future::BoxFuture<'static, hoh_external_harness::HarnessResult<Discovery>>
+    {
+        self.inner.discover()
+    }
+
+    fn start_or_resume(
+        &self,
+        params: hoh_external_harness::StartParams,
+    ) -> futures_util::future::BoxFuture<
+        'static,
+        hoh_external_harness::HarnessResult<hoh_external_harness::Started>,
+    > {
+        self.inner.start_or_resume(params)
+    }
+
+    fn start_with_folder_trust(
+        &self,
+        params: hoh_external_harness::StartParams,
+        access: hoh_external_harness::AccessMode,
+        trusted: bool,
+    ) -> futures_util::future::BoxFuture<
+        'static,
+        hoh_external_harness::HarnessResult<hoh_external_harness::Started>,
+    > {
+        lock(&self.decisions).push(trusted);
+        self.inner.start_with_access(params, access)
+    }
+}
+
+impl hoh_external_harness::ExternalHarness for StopEndsProcessHarness {
+    fn discover(
+        &self,
+    ) -> futures_util::future::BoxFuture<'static, hoh_external_harness::HarnessResult<Discovery>>
+    {
+        self.0.discover()
+    }
+
+    fn start_or_resume(
+        &self,
+        params: hoh_external_harness::StartParams,
+    ) -> futures_util::future::BoxFuture<
+        'static,
+        hoh_external_harness::HarnessResult<hoh_external_harness::Started>,
+    > {
+        self.0.start_or_resume(params)
+    }
+
+    fn start_with_access(
+        &self,
+        params: hoh_external_harness::StartParams,
+        access: hoh_external_harness::AccessMode,
+    ) -> futures_util::future::BoxFuture<
+        'static,
+        hoh_external_harness::HarnessResult<hoh_external_harness::Started>,
+    > {
+        self.0.start_with_access(params, access)
+    }
+
+    fn launch_flags(
+        &self,
+        policy: &hoh_external_harness::HarnessPolicy,
+        access: hoh_external_harness::AccessMode,
+    ) -> Vec<String> {
+        self.0.launch_flags(policy, access)
+    }
+
+    fn stop_ends_process(&self) -> bool {
+        true
+    }
+}
 
 fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
     m.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -72,10 +236,9 @@ struct Dirs {
 }
 
 fn dirs() -> Dirs {
-    std::fs::create_dir_all("/dev/shm/hoh").expect("scratch root");
     let temp = tempfile::Builder::new()
         .prefix("o1-harness-")
-        .tempdir_in("/dev/shm/hoh")
+        .tempdir()
         .expect("temp dir");
     let (store, state, work, profile) = (
         temp.path().join("store"),
@@ -129,7 +292,7 @@ async fn env_full(
     program: &str,
     adjust: impl FnOnce(&mut StdioHarnessConfig),
 ) -> Env {
-    env_core(dirs, config, program, adjust, None).await
+    env_core(dirs, config, program, adjust, None, None).await
 }
 
 /// [`env_full`], with the classifier over `fs` instead of the real file system.
@@ -139,6 +302,7 @@ async fn env_core(
     program: &str,
     adjust: impl FnOnce(&mut StdioHarnessConfig),
     fs: Option<Arc<dyn hoh_destructive_classifier::Fs>>,
+    io_hook: Option<hoh_session_persistence_jsonl::testing::IoHook>,
 ) -> Env {
     let kernel = Kernel::start();
     let ctx = kernel.root();
@@ -159,11 +323,26 @@ async fn env_core(
             .expect("classifier");
         }
     }
-    mount::<hoh_session_persistence_jsonl::JsonlSessionPersistencePlugin>(
-        &ctx,
-        json!({"root": dirs.store.to_str().expect("utf-8"), "compression": "none"}),
-    )
-    .await;
+    if let Some(hook) = io_hook {
+        let mut config = hoh_session_persistence_jsonl::Config::new(dirs.store.to_str().unwrap());
+        config.compression = hoh_session_persistence_jsonl::JsonlCompression::None;
+        let backend = hoh_session_persistence_jsonl::testing::create_jsonl_test_backend(
+            &ctx,
+            config,
+            Some(hook),
+        )
+        .await
+        .unwrap();
+        ctx.provide::<SessionPersistenceService>(Arc::new(backend))
+            .await
+            .unwrap();
+    } else {
+        mount::<hoh_session_persistence_jsonl::JsonlSessionPersistencePlugin>(
+            &ctx,
+            json!({"root": dirs.store.to_str().expect("utf-8"), "compression": "none"}),
+        )
+        .await;
+    }
     // The launcher names the profile before the plugins mount: the window's saved choices are
     // kept next to it.
     ctx.provide::<hoh_loader::ProfileContextKey>(Arc::new(hoh_loader::ProfileContext {
@@ -512,6 +691,10 @@ async fn a_turn_streams_and_records_the_answer_like_the_agent_loop() {
     turn(&agent, "hello").await;
     assert_eq!(last_answer(&agent), "Hello from native-1 turn 1");
     assert_eq!(last_turn_end(&agent), json!({"kind": "completed"}));
+    assert_eq!(
+        of_type(&agent, "plugin:external-harness/launch")[0]["runtimeMode"],
+        "confirm"
+    );
     let types: Vec<String> = events(&agent).into_iter().map(|(kind, _)| kind).collect();
     assert_eq!(
         types,
@@ -520,7 +703,9 @@ async fn a_turn_streams_and_records_the_answer_like_the_agent_loop() {
             "turn/start",
             "step/start",
             "user/message",
+            "working-directory/change",
             BINDING_RECORD,
+            "plugin:external-harness/launch",
             "assistant/message",
             "step/end",
             "turn/end"
@@ -538,34 +723,221 @@ async fn a_turn_streams_and_records_the_answer_like_the_agent_loop() {
             .collect::<Vec<_>>(),
         [Value::Null, json!("native-1")]
     );
-    // Deltas went to the live stream and ended committed as that assistant/message. The last
-    // word waits for the next chunk or the end (it may be the start of a key): one chunk.
+    // Reasoning and text deltas went to distinct live attempts and both ended committed as that
+    // assistant/message. Each last word waits for the next chunk or the end (it may start a key).
     let frames = lock(&frames).clone();
     assert!(matches!(
         frames.first(),
         Some(AssistantStreamFrame::Start { .. })
     ));
+    let chunks: Vec<Value> = frames
+        .iter()
+        .filter_map(|frame| match frame {
+            AssistantStreamFrame::Chunk { chunk, .. } => serde_json::to_value(chunk).ok(),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        chunks,
+        [
+            json!({"type": "reasoning-delta", "index": 0, "text": ""}),
+            json!({"type": "text-delta", "index": 0, "text": "Hello"}),
+            json!({"type": "reasoning-delta", "index": 0, "text": "thinking"}),
+        ]
+    );
     assert_eq!(
         frames
             .iter()
-            .filter(|frame| matches!(frame, AssistantStreamFrame::Chunk { .. }))
+            .filter(|frame| matches!(
+                frame,
+                AssistantStreamFrame::End {
+                    outcome: AssistantStreamOutcome::Committed {
+                        event_type: "assistant/message",
+                        ..
+                    },
+                    ..
+                }
+            ))
             .count(),
-        1
+        2
     );
-    assert!(matches!(
-        frames.last(),
-        Some(AssistantStreamFrame::End {
-            outcome: AssistantStreamOutcome::Committed {
-                event_type: "assistant/message",
-                ..
-            },
-            ..
-        })
-    ));
     // The same process serves the next turn.
     turn(&agent, "hello").await;
     assert_eq!(last_answer(&agent), "Hello from native-1 turn 2");
     assert_eq!(bindings(&agent).len(), 2);
+    env.close().await;
+}
+
+#[tokio::test]
+async fn raw_telemetry_is_durable_and_keeps_provider_provenance() {
+    let dirs = dirs();
+    let env = env(&dirs).await;
+    let agent = env.create("s-telemetry").await;
+    turn(&agent, "telemetry").await;
+    turn(&agent, "telemetry").await;
+
+    let records = of_type(&agent, TELEMETRY_RECORD);
+    assert_eq!(records.len(), 4, "{:?}", events(&agent));
+    assert!(records.iter().all(|record| record["harness"] == HARNESS));
+    let source_ids: Vec<_> = records
+        .iter()
+        .map(|record| record["record"]["provenance"]["sourceId"].clone())
+        .collect();
+    assert_eq!(
+        source_ids,
+        [
+            json!("assistant-usage-1"),
+            json!("empty-roster-1"),
+            json!("assistant-usage-1"),
+            json!("empty-roster-1")
+        ]
+    );
+    let turn_ids: Vec<_> = records
+        .iter()
+        .map(|record| record["record"]["provenance"]["turnId"].clone())
+        .collect();
+    assert_eq!(turn_ids[0], turn_ids[1]);
+    assert_eq!(turn_ids[2], turn_ids[3]);
+    assert_ne!(turn_ids[0], turn_ids[2]);
+    assert!(
+        records
+            .iter()
+            .all(|record| { record["record"]["provenance"]["nativeSessionId"] == "native-1" })
+    );
+    let launch_ids: Vec<_> = records
+        .iter()
+        .map(|record| record["record"]["provenance"]["launchId"].clone())
+        .collect();
+    assert!(launch_ids.iter().all(|id| id == &launch_ids[0]));
+    assert!(
+        launch_ids[0]
+            .as_str()
+            .is_some_and(|id| id.starts_with("stub-"))
+    );
+    assert_eq!(
+        records[1]["record"]["payload"],
+        json!({"kind": "background-tasks-snapshot", "tasks": []})
+    );
+    env.close().await;
+}
+
+#[tokio::test]
+async fn durable_telemetry_is_redacted_bounded_and_never_partially_snapshotted() {
+    let dirs = dirs();
+    let env = env(&dirs).await;
+    let (logs, _exporter) = capture_logs(&env.ctx);
+    let agent = env.create("s-telemetry-safe").await;
+    turn(&agent, "telemetry unsafe").await;
+
+    let records = of_type(&agent, TELEMETRY_RECORD);
+    assert_eq!(
+        records.len(),
+        2,
+        "oversized records must be dropped: {records:#?}"
+    );
+    let encoded = serde_json::to_string(&records).unwrap();
+    assert!(encoded.contains("[redacted]"), "{encoded}");
+    for secret in [
+        "top-secret",
+        "abcdefgh12345678",
+        "subtype-secret",
+        "type-secret",
+        "description-secret",
+        "status-secret",
+        "summary-secret",
+        "kind-secret",
+        "title-secret",
+        "label-secret",
+        "state-secret",
+        "phase-secret",
+        "model-secret",
+        "prompt-secret",
+        "result-secret",
+    ] {
+        assert!(
+            !encoded.contains(secret),
+            "secret leaked: {secret}: {encoded}"
+        );
+    }
+    let update = &records[1]["record"]["payload"]["update"];
+    assert_eq!(update["task"]["taskId"], "task-id-kept");
+    assert_eq!(update["task"]["runId"], "run-id-kept");
+    assert_eq!(update["workflowProgress"][0]["agentId"], "agent-id-kept");
+    assert!(
+        update["task"]["description"]
+            .as_str()
+            .is_some_and(|text| text.len() <= 4 * 1024)
+    );
+    assert!(!encoded.contains("oversized-roster"));
+    let dropped: Vec<_> = lock(&logs)
+        .iter()
+        .filter(|line| line.contains("dropping harness telemetry"))
+        .cloned()
+        .collect();
+    assert_eq!(dropped.len(), 2, "{dropped:#?}");
+    assert!(
+        dropped
+            .iter()
+            .any(|line| line.contains("too many background tasks"))
+    );
+    assert!(
+        dropped
+            .iter()
+            .any(|line| line.contains("telemetry record is too large"))
+    );
+    env.close().await;
+}
+
+#[tokio::test]
+async fn context_usage_is_broadcast_while_the_turn_is_running_and_kept_at_the_end() {
+    let dirs = dirs();
+    let env = env(&dirs).await;
+    let agent = env.create("s-usage").await;
+    turn(&agent, "usage").await;
+    let updates = of_type(&agent, "plugin:hoh/context-usage");
+    assert_eq!(updates.len(), 2, "{updates:?}");
+    assert!(
+        agent
+            .session()
+            .snapshot_events(None, None)
+            .iter()
+            .filter(|event| event.event_type() == "plugin:hoh/context-usage")
+            .all(|event| event.ignorable())
+    );
+    assert_eq!(updates[0]["usage"]["inputTokens"], 100);
+    assert_eq!(updates[0]["usage"]["maxTokens"], Value::Null);
+    assert_eq!(updates[1]["usage"]["inputTokens"], 200);
+    assert_eq!(updates[1]["usage"]["maxTokens"], 200_000);
+    let end = of_type(&agent, "turn/end").pop().expect("turn end");
+    assert_eq!(end["usage"], updates[1]["usage"]);
+    env.close().await;
+}
+
+#[tokio::test]
+async fn an_empty_first_reasoning_delta_opens_the_live_thinking_item() {
+    let dirs = dirs();
+    let env = env(&dirs).await;
+    let agent = env.create("s-empty-reasoning").await;
+    let frames = frames(&env, &agent);
+    turn(&agent, "empty reasoning").await;
+    let chunks: Vec<Value> = lock(&frames)
+        .iter()
+        .filter_map(|frame| match frame {
+            AssistantStreamFrame::Chunk { chunk, .. } => serde_json::to_value(chunk).ok(),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        chunks,
+        [json!({"type": "reasoning-delta", "index": 0, "text": ""})]
+    );
+    assert!(lock(&frames).iter().any(|frame| matches!(
+        frame,
+        AssistantStreamFrame::End {
+            outcome: AssistantStreamOutcome::Abandoned,
+            ..
+        }
+    )));
     env.close().await;
 }
 
@@ -651,7 +1023,7 @@ async fn a_harmless_command_is_asked_plainly_and_recorded_as_a_step() {
     let asked = env.asked();
     assert_eq!(asked.len(), 1, "{asked:?}");
     assert_eq!(asked[0].tool, "bash");
-    assert_eq!(asked[0].headline, "Stub просит выполнить команду: ls");
+    assert_eq!(asked[0].headline, "Stub asks to run: ls");
     assert_eq!(last_answer(&agent), "decision allow");
     let call = &of_type(&agent, "tool/call")[0];
     assert_eq!(call["callId"], "c1");
@@ -867,6 +1239,54 @@ async fn stop_kills_the_process_group_of_a_harness_that_ignores_it() {
     // The next turn starts the harness again and continues the native session.
     turn(&agent, "hello").await;
     assert_eq!(last_answer(&agent), "Hello from native-1 turn 1");
+    env.close().await;
+}
+
+#[tokio::test]
+async fn production_stop_for_a_process_ending_harness_reaps_the_group_and_resumes() {
+    const STOP_HARNESS: &str = "stop-stub";
+    let dirs = dirs();
+    let env = env(&dirs).await;
+    let harness = StopEndsProcessHarness(StdioHarness::new(StdioHarnessConfig::new(ProcessSpec {
+        program: PathBuf::from(STUB),
+        args: vec!["--state".into(), dirs.state.to_str().expect("utf-8").into()],
+        ..ProcessSpec::default()
+    })));
+    let _registration = env
+        .harnesses
+        .register(&env.ctx, STOP_HARNESS, Arc::new(harness))
+        .expect("process-ending harness registers");
+    let options = AgentOptions {
+        provider: Some(Live::Value(STOP_HARNESS.into())),
+        model: Some(Live::Value("stub-small".into())),
+        ..AgentOptions::default()
+    };
+    let agent = env.create_with("s-stop-process", options).await;
+    say(&agent, "stubborn command");
+    until_event(&agent, "tool/call").await;
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let pid = grandchild(&dirs);
+    assert!(alive(pid));
+    let stopped = Instant::now();
+    agent
+        .cancel(AgentCancelCause::User, CancelOptions::default())
+        .expect("session/cancel");
+    tokio::time::timeout(Duration::from_secs(30), agent.when_idle())
+        .await
+        .expect("production Stop finished");
+    assert_eq!(last_turn_end(&agent)["kind"], "aborted");
+    assert!(
+        until_dead(pid).await,
+        "process-group child {pid} survived Stop"
+    );
+    assert!(stopped.elapsed() < Duration::from_secs(3));
+    turn(&agent, "hello").await;
+    assert_eq!(last_answer(&agent), "Hello from native-1 turn 1");
+    assert_eq!(
+        counter(&dirs, "starts"),
+        2,
+        "the next turn starts a resumed process"
+    );
     env.close().await;
 }
 
@@ -1129,6 +1549,59 @@ async fn a_completed_turn_keeps_a_text_without_final_and_lone_reasoning() {
             "tool/result",
             "assistant/message"
         ]
+    );
+    env.close().await;
+}
+
+#[tokio::test]
+async fn parented_harness_events_extend_existing_session_events() {
+    let dirs = dirs();
+    let env = env(&dirs).await;
+    let agent = env.create("s-nested-events").await;
+    let frames = frames(&env, &agent);
+    turn(&agent, "nested events").await;
+
+    assert!(
+        lock(&frames).is_empty(),
+        "child reasoning or text was flattened into the root live stream"
+    );
+
+    let messages = of_type(&agent, "assistant/message");
+    let child_text = messages
+        .iter()
+        .find(|data| {
+            data["message"]["content"]
+                .as_array()
+                .is_some_and(|content| content.iter().any(|block| block["text"] == "child note"))
+        })
+        .expect("child text");
+    assert_eq!(child_text["parentCallId"], "parent");
+
+    let calls = of_type(&agent, "tool/call");
+    let child_call = calls
+        .iter()
+        .find(|data| data["callId"] == "child-read")
+        .expect("child call");
+    assert_eq!(child_call["parentCallId"], "parent");
+    let parent_call = calls
+        .iter()
+        .find(|data| data["callId"] == "parent")
+        .expect("parent call");
+    assert!(parent_call.get("parentCallId").is_none(), "{parent_call}");
+
+    let results = of_type(&agent, "tool/result");
+    let child_result = results
+        .iter()
+        .find(|data| data["message"]["toolCallId"] == "child-read")
+        .expect("child result");
+    assert_eq!(child_result["parentCallId"], "parent");
+    let parent_result = results
+        .iter()
+        .find(|data| data["message"]["toolCallId"] == "parent")
+        .expect("parent result");
+    assert!(
+        parent_result.get("parentCallId").is_none(),
+        "{parent_result}"
     );
     env.close().await;
 }
@@ -1521,14 +1994,17 @@ async fn a_mixed_change_question_lists_every_change() {
     assert_eq!(asked.len(), 2, "{asked:?}");
     assert_eq!(
         asked[0].details,
-        "Изменения:\nудалить: a.txt\nизменить: /home/u/.ssh/authorized_keys"
+        "Changes:\ndelete: a.txt\nedit: /home/u/.ssh/authorized_keys"
     );
     assert_eq!(
         asked[1].details,
-        "Изменения:\nпереместить: new.txt → b.txt\nсоздать: /etc/profile"
+        "Changes:\nmove: new.txt → b.txt\ncreate: /etc/profile"
     );
     for question in &asked {
-        assert!(!question.headline.contains("не полностью"), "{question:?}");
+        assert!(
+            !question.headline.contains("partially shown"),
+            "{question:?}"
+        );
     }
     env.close().await;
 }
@@ -1566,7 +2042,7 @@ async fn a_command_over_the_details_limit_is_flagged_in_the_question() {
     let asked = env.asked();
     assert_eq!(asked.len(), 1, "{asked:?}");
     assert!(
-        asked[0].headline.ends_with("(показано не полностью)"),
+        asked[0].headline.ends_with("(partially shown)"),
         "{}",
         asked[0].headline
     );
@@ -1574,13 +2050,13 @@ async fn a_command_over_the_details_limit_is_flagged_in_the_question() {
     assert!(
         asked[0]
             .details
-            .contains(&format!("всего {} знаков", command.chars().count())),
+            .contains(&format!("{} characters in total", command.chars().count())),
         "{}",
         &asked[0].details[asked[0].details.len() - 200..]
     );
     // A command that fits is not flagged.
     turn(&agent, "run: ls").await;
-    assert!(!env.asked()[1].headline.contains("не полностью"));
+    assert!(!env.asked()[1].headline.contains("partially shown"));
     env.close().await;
 }
 
@@ -1745,14 +2221,14 @@ async fn under_never_only_commands_that_stay_in_the_folder_pass_without_a_questi
     assert!(
         asked[0]
             .headline
-            .contains("без вопросов только о командах и правках файлов, которые остаются в папке"),
+            .contains("run commands and edit files within the session folder without asking"),
         "{}",
         asked[0].headline
     );
     assert!(
-        asked[0].reason.contains(
-            "Без вопроса пройдут только: команда, у которой рабочая папка и все пути в аргументах"
-        ),
+        asked[0]
+            .reason
+            .contains("This applies only to commands whose working folder, argument paths"),
         "{}",
         asked[0].reason
     );
@@ -2132,7 +2608,17 @@ async fn window(
     host: Host,
     adjust: impl FnOnce(&mut StdioHarnessConfig),
 ) -> Window {
-    let base = env_full(dirs, config, STUB, adjust).await;
+    window_with_hook(dirs, config, host, adjust, None).await
+}
+
+async fn window_with_hook(
+    dirs: &Dirs,
+    config: Value,
+    host: Host,
+    adjust: impl FnOnce(&mut StdioHarnessConfig),
+    hook: Option<hoh_session_persistence_jsonl::testing::IoHook>,
+) -> Window {
+    let base = env_core(dirs, config, STUB, adjust, None, hook).await;
     let ctx = base.ctx.clone();
     mount::<hoh_llm::LlmPlugin>(&ctx, json!({})).await;
     let adapter = ctx
@@ -2200,8 +2686,180 @@ fn full_access_args(config: &mut StdioHarnessConfig) {
 }
 
 const CONFIRM_TEXT: &str =
-    "С подтверждением: команды, правки файлов и сеть Stub выполняет после вашего подтверждения";
-const FULL_TEXT: &str = "Полный доступ: Stub выполняет команды без вопросов";
+    "Supervised: Stub asks before running commands, editing files, or using the network";
+const FULL_TEXT: &str = "Full access: Stub runs commands without asking";
+
+#[tokio::test]
+async fn a_retry_after_failed_turn_open_keeps_the_accepted_messages_access() {
+    let dirs = dirs();
+    let window = window(&dirs, quick(), Host::Allows, full_access_args).await;
+    window
+        .call(
+            "hoh/executor/select",
+            json!({"executor":HARNESS,"model":"stub-small"}),
+        )
+        .await
+        .unwrap();
+    window
+        .call(
+            "hoh/executor/access/set",
+            json!({"executor":HARNESS,"sessionId":"retry-access","mode":"confirm"}),
+        )
+        .await
+        .unwrap();
+    let armed = Arc::new(AtomicBool::new(true));
+    let flag = armed.clone();
+    window
+        .base
+        .ctx
+        .on_dispatch(move |_, _, payload| {
+            if let Some(emitted) = payload.downcast_ref::<SessionEventEmitted>()
+                && emitted.event.event_type() == "user/message"
+                && flag.swap(false, Ordering::SeqCst)
+            {
+                emitted
+                    .validation
+                    .reject(SharedError::new("temporary error").into());
+            }
+        })
+        .unwrap();
+    window
+        .call(
+            "session/prompt",
+            json!({"sessionId":"retry-access","contentBlocks":[{"type":"text","text":"hello"}]}),
+        )
+        .await
+        .unwrap();
+    let agent = window
+        .base
+        .agents
+        .get(&SessionId::from("retry-access"))
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(30), agent.when_idle())
+        .await
+        .unwrap();
+    assert!(!armed.load(Ordering::SeqCst));
+    window
+        .call(
+            "hoh/executor/access/set",
+            json!({"executor":HARNESS,"sessionId":"retry-access","mode":"full"}),
+        )
+        .await
+        .unwrap();
+    turn(&agent, "echo second").await;
+    let launches: Vec<_> = events(&agent)
+        .into_iter()
+        .filter(|(kind, _)| kind == "plugin:external-harness/launch")
+        .map(|(_, data)| data["runtimeMode"].clone())
+        .collect();
+    assert_eq!(launches.first(), Some(&json!("confirm")), "{launches:?}");
+    window.close().await;
+}
+
+#[tokio::test]
+async fn unbound_session_keeps_each_executors_mode_across_restart() {
+    let dirs = dirs();
+    let initial = window(&dirs, quick(), Host::Allows, full_access_args).await;
+    let other = StdioHarness::new(StdioHarnessConfig::new(ProcessSpec {
+        program: PathBuf::from(STUB),
+        args: vec!["--state".into(), dirs.state.to_str().unwrap().into()],
+        ..ProcessSpec::default()
+    }));
+    let _registration = initial
+        .base
+        .harnesses
+        .register(&initial.base.ctx, "codex", Arc::new(other))
+        .unwrap();
+    initial
+        .call(
+            "hoh/executor/access/set",
+            json!({"executor":HARNESS,"mode":"full"}),
+        )
+        .await
+        .unwrap();
+    initial
+        .call(
+            "hoh/executor/access/set",
+            json!({"executor":HARNESS,"sessionId":"unbound-pair","mode":"confirm"}),
+        )
+        .await
+        .unwrap();
+    initial
+        .call(
+            "hoh/executor/access/set",
+            json!({"executor":"codex","sessionId":"unbound-pair","mode":"full"}),
+        )
+        .await
+        .unwrap();
+    initial.close().await;
+
+    let restarted = window(&dirs, quick(), Host::Allows, full_access_args).await;
+    let agent = restarted.base.create("unbound-pair").await;
+    turn(&agent, "hello").await;
+    assert_eq!(started_with(&dirs)["access"], "confirm");
+    assert!(!stub_argv(&dirs).contains(&FULL_ARGS.to_string()));
+    restarted.close().await;
+}
+
+#[tokio::test]
+async fn an_unbound_session_is_not_reported_as_a_builtin_agent() {
+    let dirs = dirs();
+    let window = window(&dirs, quick(), Host::Allows, |_| {}).await;
+    let access = window
+        .call(
+            "hoh/executor/access/get",
+            json!({"executor": HARNESS, "sessionId":"not-bound"}),
+        )
+        .await
+        .unwrap();
+    assert!(access["session"]["executor"].is_null());
+    assert!(
+        access["session"].get("builtin").is_none(),
+        "unbound is not proof of a builtin agent: {access}"
+    );
+    window.close().await;
+}
+
+#[tokio::test]
+async fn a_different_executor_cannot_replace_a_bound_sessions_access_choice() {
+    let dirs = dirs();
+    let window = window(&dirs, quick(), Host::Allows, |_| {}).await;
+    let other = StdioHarness::new(StdioHarnessConfig::new(ProcessSpec {
+        program: PathBuf::from(STUB),
+        args: vec!["--state".into(), dirs.state.to_str().unwrap().into()],
+        ..ProcessSpec::default()
+    }));
+    let _registration = window
+        .base
+        .harnesses
+        .register(&window.base.ctx, "codex", Arc::new(other))
+        .unwrap();
+    let _agent = window.base.create("bound-access").await;
+    window
+        .call(
+            "hoh/executor/access/set",
+            json!({"executor": HARNESS, "sessionId":"bound-access", "mode":"confirm"}),
+        )
+        .await
+        .unwrap();
+    let error = window
+        .call(
+            "hoh/executor/access/set",
+            json!({"executor":"codex", "sessionId":"bound-access", "mode":"full"}),
+        )
+        .await
+        .unwrap_err();
+    assert!(error.contains("another executor"), "{error}");
+    let access = window
+        .call(
+            "hoh/executor/access/get",
+            json!({"executor": HARNESS, "sessionId":"bound-access"}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(access["session"]["runtimeMode"], "confirm");
+    window.close().await;
+}
 
 /// The user turns full access on in the window; the next turn runs under it, and the switches
 /// the window is shown are the ones the process was started with.
@@ -2383,6 +3041,294 @@ async fn access_and_select_need_the_hosts_approval() {
         assert_eq!(stub_argv(&dirs), base_argv(&dirs));
         window.close().await;
     }
+}
+
+#[tokio::test]
+async fn folder_trust_requires_host_approval_and_is_revoked_on_change() {
+    let dirs = dirs();
+    let request = json!({"executor": "claude", "cwd": dirs.work, "trust": true});
+    let query = json!({"executor": "claude", "cwd": dirs.work});
+    for (index, host) in [Host::Absent, Host::Refuses].into_iter().enumerate() {
+        let window = window(&dirs, quick(), host, full_access_args).await;
+        mount::<hoh_fs_local::FsLocalPlugin>(&window.base.ctx, json!({"cwd": dirs.work})).await;
+        mount::<hoh_system_prompt::SystemPrompt>(
+            &window.base.ctx,
+            json!({"includeRuntimeContext": false}),
+        )
+        .await;
+        mount::<hoh_working_directory::WorkingDirectory>(
+            &window.base.ctx,
+            json!({"defaultDirectory": dirs.work}),
+        )
+        .await;
+        let _agent = window
+            .base
+            .create(&format!("trust-refused-folder-{index}"))
+            .await;
+        assert!(
+            window
+                .call("hoh/executor/trust/set", request.clone())
+                .await
+                .is_err()
+        );
+        let result = window
+            .call("hoh/executor/trust/get", query.clone())
+            .await
+            .unwrap();
+        assert_eq!(result["trusted"], false);
+        window.close().await;
+    }
+    let window = window(&dirs, quick(), Host::Allows, full_access_args).await;
+    mount::<hoh_fs_local::FsLocalPlugin>(&window.base.ctx, json!({"cwd": dirs.work})).await;
+    mount::<hoh_system_prompt::SystemPrompt>(
+        &window.base.ctx,
+        json!({"includeRuntimeContext": false}),
+    )
+    .await;
+    mount::<hoh_working_directory::WorkingDirectory>(
+        &window.base.ctx,
+        json!({"defaultDirectory": dirs.work}),
+    )
+    .await;
+    let agent = window.base.create("trust-change-event").await;
+    let result = window
+        .call("hoh/executor/trust/set", request)
+        .await
+        .unwrap();
+    assert_eq!(result["trusted"], true);
+    assert_eq!(
+        window
+            .call(
+                "hoh/executor/trust/get",
+                json!({"executor": "codex", "cwd": dirs.work})
+            )
+            .await
+            .unwrap()["trusted"],
+        true
+    );
+    assert_eq!(
+        window
+            .call("hoh/executor/trust/get", query.clone())
+            .await
+            .unwrap()["trusted"],
+        true
+    );
+    std::fs::create_dir_all(dirs.work.join(".claude")).unwrap();
+    std::fs::write(dirs.work.join(".claude/settings.json"), "{}").unwrap();
+    let result = window.call("hoh/executor/trust/get", query).await.unwrap();
+    assert_eq!(result["trusted"], false);
+    assert_eq!(result["changed"], true);
+    assert!(
+        agent
+            .session()
+            .snapshot_events(None, None)
+            .iter()
+            .any(|event| event.event_type() == "plugin:external-harness/folder-trust-changed")
+    );
+    window.close().await;
+}
+
+#[tokio::test]
+async fn revoking_trust_reserves_agent_during_termination_and_releases_on_cancel() {
+    for case in 0..3 {
+        let dirs = dirs();
+        let window = window(&dirs, quick(), Host::Allows, full_access_args).await;
+        mount::<hoh_fs_local::FsLocalPlugin>(&window.base.ctx, json!({"cwd": dirs.work})).await;
+        mount::<hoh_system_prompt::SystemPrompt>(
+            &window.base.ctx,
+            json!({"includeRuntimeContext": false}),
+        )
+        .await;
+        mount::<hoh_working_directory::WorkingDirectory>(
+            &window.base.ctx,
+            json!({"defaultDirectory": dirs.work}),
+        )
+        .await;
+        let entered = Arc::new(tokio::sync::Notify::new());
+        let release = Arc::new(tokio::sync::Notify::new());
+        let config = StdioHarnessConfig::new(ProcessSpec {
+            program: PathBuf::from(STUB),
+            args: vec!["--state".into(), dirs.state.to_string_lossy().into_owned()],
+            ..ProcessSpec::default()
+        });
+        let _registration = window
+            .base
+            .harnesses
+            .register(
+                &window.base.ctx,
+                "claude",
+                Arc::new(TerminationBarrierHarness {
+                    inner: StdioHarness::new(config),
+                    entered: entered.clone(),
+                    release: release.clone(),
+                    armed: Arc::new(AtomicBool::new(true)),
+                }),
+            )
+            .unwrap();
+        let agent = window
+            .base
+            .create_with(
+                "trust-reservation",
+                AgentOptions {
+                    provider: Some(Live::Value("claude".into())),
+                    model: Some(Live::Value("stub-small".into())),
+                    ..AgentOptions::default()
+                },
+            )
+            .await;
+        window
+            .call(
+                "hoh/executor/trust/set",
+                json!({"executor":"claude", "cwd":dirs.work, "trust":true}),
+            )
+            .await
+            .unwrap();
+        turn(&agent, "hello").await;
+        if case == 2 {
+            // An invalid settings directory makes snapshotting fail after the reservation.
+            let bad_settings = dirs.work.join(".claude");
+            std::fs::write(&bad_settings, "not a directory").unwrap();
+            let result = window
+                .call(
+                    "hoh/executor/trust/set",
+                    json!({"executor":"claude", "cwd":dirs.work, "trust":false}),
+                )
+                .await;
+            assert!(
+                result.is_err(),
+                "revocation must report the snapshot failure"
+            );
+            std::fs::remove_file(bad_settings).unwrap();
+            agent
+                .followup(message("after failed revoke"))
+                .expect("reservation must be released on error");
+            tokio::time::timeout(Duration::from_secs(10), agent.when_idle())
+                .await
+                .unwrap();
+            release.notify_one();
+            window.close().await;
+            continue;
+        }
+        let server = window.server.clone();
+        let params = json!({"executor":"claude", "cwd":dirs.work, "trust":false});
+        let revoke = tokio::spawn(async move {
+            server
+                .handle_request("hoh/executor/trust/set", params)
+                .await
+        });
+        tokio::time::timeout(Duration::from_secs(10), entered.notified())
+            .await
+            .expect("revocation did not start stopping the process");
+        let admitted_during_revoke = agent.followup(message("racing prompt")).is_ok();
+        if case == 1 {
+            revoke.abort();
+            let _ = revoke.await;
+        } else {
+            release.notify_one();
+            revoke.await.unwrap().unwrap();
+        }
+        assert!(
+            !admitted_during_revoke,
+            "a prompt was admitted before the old process stopped"
+        );
+        agent
+            .followup(message("after revoke"))
+            .expect("reservation must be released");
+        tokio::time::timeout(Duration::from_secs(10), agent.when_idle())
+            .await
+            .unwrap();
+        window.close().await;
+    }
+}
+
+#[tokio::test]
+async fn host_trust_reaches_each_native_start_and_changed_settings_revoke_it() {
+    let dirs = dirs();
+    let window = window(&dirs, quick(), Host::Allows, full_access_args).await;
+    mount::<hoh_fs_local::FsLocalPlugin>(&window.base.ctx, json!({"cwd": dirs.work})).await;
+    mount::<hoh_system_prompt::SystemPrompt>(
+        &window.base.ctx,
+        json!({"includeRuntimeContext": false}),
+    )
+    .await;
+    mount::<hoh_working_directory::WorkingDirectory>(
+        &window.base.ctx,
+        json!({"defaultDirectory": dirs.work}),
+    )
+    .await;
+    let decisions = Arc::new(Mutex::new(Vec::new()));
+    let config = StdioHarnessConfig::new(ProcessSpec {
+        program: PathBuf::from(STUB),
+        args: vec!["--state".into(), dirs.state.to_string_lossy().into_owned()],
+        ..ProcessSpec::default()
+    });
+    let _registration = window
+        .base
+        .harnesses
+        .register(
+            &window.base.ctx,
+            "claude",
+            Arc::new(TrustCaptureHarness {
+                inner: StdioHarness::new(config),
+                decisions: decisions.clone(),
+            }),
+        )
+        .unwrap();
+    let options = || AgentOptions {
+        provider: Some(Live::Value("claude".into())),
+        model: Some(Live::Value("stub-small".into())),
+        ..AgentOptions::default()
+    };
+    let first = window.base.create_with("trust-before", options()).await;
+    turn(&first, "hello").await;
+    assert_eq!(&*lock(&decisions), &[false]);
+    window
+        .call(
+            "hoh/executor/trust/set",
+            json!({"executor": "claude", "cwd": dirs.work, "trust": true}),
+        )
+        .await
+        .unwrap();
+    turn(&first, "hello").await;
+    assert_eq!(&*lock(&decisions), &[false, true]);
+    std::fs::create_dir_all(dirs.work.join(".claude")).unwrap();
+    std::fs::write(dirs.work.join(".claude/settings.json"), "{}").unwrap();
+    turn(&first, "hello").await;
+    assert_eq!(&*lock(&decisions), &[false, true, false]);
+    assert!(!of_type(&first, "plugin:external-harness/folder-trust-changed").is_empty());
+    turn(&first, "exit after turn").await;
+    let before_exit = window
+        .call(
+            "hoh/executor/access/get",
+            json!({"executor": "claude", "sessionId": "trust-before"}),
+        )
+        .await
+        .unwrap();
+    assert!(
+        !before_exit["session"]["running"].is_null(),
+        "{before_exit}"
+    );
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let access = window
+            .call(
+                "hoh/executor/access/get",
+                json!({
+                    "executor": "claude", "sessionId": "trust-before"
+                }),
+            )
+            .await
+            .unwrap();
+        if access["session"]["running"].is_null() {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "ended process still shown: {access}"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    window.close().await;
 }
 
 /// Nothing in a session turns full access on or picks the executor: not the chat, not a tool
@@ -2783,7 +3729,7 @@ async fn file_change_checks_run_off_the_runtime_thread() {
         on_runtime: on_runtime.clone(),
         calls: calls.clone(),
     });
-    let env = env_core(&dirs, quick(), STUB, |_| {}, Some(watched)).await;
+    let env = env_core(&dirs, quick(), STUB, |_| {}, Some(watched), None).await;
     env.set_answer(Answer::Reject);
     let agent = env.create("s-overwrite").await;
     turn(
@@ -2831,5 +3777,357 @@ async fn the_saved_choice_is_where_a_new_run_starts() {
     expected.push(FULL_ARGS.into());
     assert_eq!(stub_argv(&dirs), expected);
     assert_eq!(started_with(&dirs)["access"], "full");
+    window.close().await;
+}
+
+#[tokio::test]
+async fn a_codex_selection_and_model_survive_restart_in_a_downgrade_safe_sidecar() {
+    let dirs = dirs();
+    let initial = window(&dirs, quick(), Host::Allows, |_| {}).await;
+    let codex = StdioHarness::new(StdioHarnessConfig::new(ProcessSpec {
+        program: PathBuf::from(STUB),
+        args: vec!["--state".into(), dirs.state.to_str().expect("utf-8").into()],
+        ..ProcessSpec::default()
+    }));
+    let _codex_registration = initial
+        .base
+        .harnesses
+        .register(&initial.base.ctx, "codex", Arc::new(codex))
+        .expect("Codex test harness registers");
+    initial
+        .call(
+            "hoh/executor/select",
+            json!({"executor":"codex","model":"gpt-test"}),
+        )
+        .await
+        .expect("select Codex");
+    initial.close().await;
+
+    let legacy: Value = serde_json::from_str(
+        &std::fs::read_to_string(dirs.profile.join(hoh_external_harness::CHOICES_FILE))
+            .expect("legacy choices"),
+    )
+    .expect("legacy JSON");
+    assert_eq!(
+        legacy["selected"],
+        Value::Null,
+        "an older HoH must not restore Codex"
+    );
+    let sidecar: Value = serde_json::from_str(
+        &std::fs::read_to_string(
+            dirs.profile
+                .join(hoh_external_harness::CODEX_SELECTION_FILE),
+        )
+        .expect("Codex sidecar"),
+    )
+    .expect("sidecar JSON");
+    assert_eq!(sidecar["version"], 1);
+    assert_eq!(
+        sidecar["selected"],
+        json!({"executor":"codex","model":"gpt-test"})
+    );
+
+    let restarted = window(&dirs, quick(), Host::Absent, |_| {}).await;
+    assert_eq!(
+        restarted.access().await["selected"],
+        json!({"executor":"codex","model":"gpt-test"})
+    );
+    restarted.close().await;
+
+    // An older HoH knows only the legacy file. If it later changes the selection, a subsequent
+    // upgrade must not resurrect the stale Codex sidecar.
+    tokio::time::sleep(Duration::from_millis(20)).await;
+    std::fs::write(
+        dirs.profile.join(hoh_external_harness::CHOICES_FILE),
+        json!({"access":{},"selected":{"executor":"stub","model":"stub-large"}}).to_string(),
+    )
+    .expect("older HoH choice");
+    let after_downgrade = window(&dirs, quick(), Host::Absent, |_| {}).await;
+    assert_eq!(
+        after_downgrade.access().await["selected"],
+        json!({"executor":"stub","model":"stub-large"})
+    );
+    after_downgrade.close().await;
+}
+
+#[tokio::test]
+async fn del2_external_dispose_reports_a_journal_close_failure() {
+    use hoh_session_persistence_jsonl::testing::{IoHook, IoOperation};
+    let dirs = dirs();
+    let fail = Arc::new(AtomicBool::new(false));
+    let switch = fail.clone();
+    let hook: IoHook = Arc::new(move |request| {
+        let fail = switch.load(Ordering::SeqCst)
+            && request.operation == IoOperation::Close
+            && request.path.ends_with("session.lock")
+            && !request.after;
+        Box::pin(async move {
+            if fail {
+                Err(std::io::Error::other("close failed").into())
+            } else {
+                Ok(())
+            }
+        })
+    });
+    let env = env_core(&dirs, quick(), STUB, |_| {}, None, Some(hook)).await;
+    let handle = env.create_handle("close-fail-del2", env.options()).await;
+    handle
+        .agent
+        .session()
+        .append("plugin:test", json!({"ignorable":true}), None)
+        .unwrap();
+    env.ctx
+        .get::<SessionPersistenceService>()
+        .unwrap()
+        .flush()
+        .await
+        .unwrap();
+    fail.store(true, Ordering::SeqCst);
+    assert!(
+        handle.dispose().await.is_err(),
+        "a close failure must reach the deleting caller"
+    );
+    fail.store(false, Ordering::SeqCst);
+    env.close().await;
+}
+
+#[tokio::test]
+async fn del2_external_reservation_blocks_late_and_already_accepted_input() {
+    let dirs = dirs();
+    let env = env(&dirs).await;
+    let reserved = env.create("reserved-del2").await;
+    reserved.reserve_deletion().unwrap();
+    assert!(
+        reserved
+            .followup(message("late scheduler delivery"))
+            .is_err()
+    );
+    reserved.release_deletion();
+    reserved.followup(message("accepted first")).unwrap();
+    assert!(
+        reserved.reserve_deletion().is_err(),
+        "accepted input must prevent deletion even before turn/start"
+    );
+    reserved.when_idle().await;
+    env.close().await;
+}
+
+#[tokio::test]
+async fn del2_delete_does_not_move_the_log_when_external_close_fails() {
+    use hoh_session_persistence_jsonl::testing::{IoHook, IoOperation};
+    let dirs = dirs();
+    let armed = Arc::new(AtomicBool::new(false));
+    let switch = armed.clone();
+    let hook: IoHook = Arc::new(move |request| {
+        let fail = switch.load(Ordering::SeqCst)
+            && request.operation == IoOperation::Close
+            && request.path.ends_with("session.lock")
+            && !request.after;
+        Box::pin(async move {
+            if fail {
+                Err(std::io::Error::other("close failed").into())
+            } else {
+                Ok(())
+            }
+        })
+    });
+    let window = window_with_hook(&dirs, quick(), Host::Allows, |_| {}, Some(hook)).await;
+    window
+        .call(
+            "hoh/executor/select",
+            json!({"executor":HARNESS,"model":"stub-small"}),
+        )
+        .await
+        .unwrap();
+    window.call("session/prompt", json!({"sessionId":"close-delete-del2","contentBlocks":[{"type":"text","text":"hello"}]})).await.unwrap();
+    let agent = window
+        .base
+        .agents
+        .get(&SessionId::from("close-delete-del2"))
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(30), agent.when_idle())
+        .await
+        .unwrap();
+    agent
+        .session()
+        .append("plugin:test", json!({"ignorable":true}), None)
+        .unwrap();
+    let persistence = window.base.ctx.get::<SessionPersistenceService>().unwrap();
+    persistence.flush().await.unwrap();
+    armed.store(true, Ordering::SeqCst);
+    let result = window
+        .call("session/delete", json!({"sessionId":"close-delete-del2"}))
+        .await;
+    assert!(result.is_err(), "failed close must reject Delete");
+    assert!(
+        persistence
+            .stat(&"close-delete-del2".into(), None)
+            .await
+            .unwrap()
+            .is_some()
+    );
+    assert!(!dirs.store.join("trash").exists());
+    armed.store(false, Ordering::SeqCst);
+    window.close().await;
+}
+
+#[tokio::test]
+async fn del3_delete_does_not_flush_another_chats_failing_writer() {
+    use hoh_session_persistence_jsonl::testing::{IoHook, IoOperation};
+    let dirs = dirs();
+    let armed = Arc::new(AtomicBool::new(false));
+    let flag = armed.clone();
+    let hook: IoHook = Arc::new(move |request| {
+        let fail = flag.load(Ordering::SeqCst)
+            && !request.after
+            && request.operation == IoOperation::Write
+            && request.path.contains("other-del3")
+            && request.path.ends_with(".jsonl");
+        Box::pin(async move {
+            if fail {
+                Err(std::io::Error::other("unrelated writer failed").into())
+            } else {
+                Ok(())
+            }
+        })
+    });
+    let window = window_with_hook(&dirs, quick(), Host::Allows, |_| {}, Some(hook)).await;
+    window
+        .call(
+            "hoh/executor/select",
+            json!({"executor":HARNESS,"model":"stub-small"}),
+        )
+        .await
+        .unwrap();
+    window
+        .call(
+            "session/prompt",
+            json!({"sessionId":"target-del3","contentBlocks":[{"type":"text","text":"hello"}]}),
+        )
+        .await
+        .unwrap();
+    let target = window
+        .base
+        .agents
+        .get(&SessionId::from("target-del3"))
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(30), target.when_idle())
+        .await
+        .unwrap();
+    let other = window.base.create("other-del3").await;
+    other
+        .session()
+        .append("plugin:test", json!({"ignorable":true}), None)
+        .unwrap();
+    window
+        .base
+        .ctx
+        .get::<SessionPersistenceService>()
+        .unwrap()
+        .flush()
+        .await
+        .unwrap();
+    other
+        .session()
+        .append("plugin:test", json!({"ignorable":true,"late":true}), None)
+        .unwrap();
+    armed.store(true, Ordering::SeqCst);
+    let result = tokio::time::timeout(
+        Duration::from_secs(5),
+        window.call("session/delete", json!({"sessionId":"target-del3"})),
+    )
+    .await
+    .expect("another writer must not block deletion");
+    assert!(
+        result.is_ok(),
+        "unrelated writer must not reject deletion: {result:?}"
+    );
+    armed.store(false, Ordering::SeqCst);
+    window.close().await;
+}
+
+#[tokio::test]
+async fn del3_failed_close_tail_rejects_delete_and_retry_until_saved() {
+    use hoh_session_persistence_jsonl::testing::{IoHook, IoOperation};
+    let dirs = dirs();
+    let armed = Arc::new(AtomicBool::new(false));
+    let flag = armed.clone();
+    let hook: IoHook = Arc::new(move |request| {
+        let fail = flag.load(Ordering::SeqCst)
+            && !request.after
+            && request.operation == IoOperation::Write
+            && request.path.contains("tail-delete-del3")
+            && request.path.ends_with(".jsonl");
+        Box::pin(async move {
+            if fail {
+                Err(std::io::Error::other("tail write failed").into())
+            } else {
+                Ok(())
+            }
+        })
+    });
+    let window = window_with_hook(&dirs, quick(), Host::Allows, |_| {}, Some(hook)).await;
+    window
+        .call(
+            "hoh/executor/select",
+            json!({"executor":HARNESS,"model":"stub-small"}),
+        )
+        .await
+        .unwrap();
+    window.call("session/prompt", json!({"sessionId":"tail-delete-del3","contentBlocks":[{"type":"text","text":"hello"}]})).await.unwrap();
+    let agent = window
+        .base
+        .agents
+        .get(&SessionId::from("tail-delete-del3"))
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(30), agent.when_idle())
+        .await
+        .unwrap();
+    let session = agent.session().clone();
+    let flag = armed.clone();
+    let _effect = agent
+        .ctx()
+        .try_effect(
+            "del3 late event",
+            move |undos| -> Result<(), hoh_error::BoxError> {
+                undos.push(hoh_kernel::Undo::future(move || async move {
+                    hoh_session::append_plugin_record(
+                        &session,
+                        "plugin:test",
+                        json!({"tail":"del3"}),
+                    )?;
+                    flag.store(true, Ordering::SeqCst);
+                    Ok(())
+                }))?;
+                Ok(())
+            },
+        )
+        .unwrap();
+    for _ in 0..2 {
+        assert!(
+            window
+                .call("session/delete", json!({"sessionId":"tail-delete-del3"}))
+                .await
+                .is_err()
+        );
+        assert!(!dirs.store.join("trash").exists());
+    }
+    armed.store(false, Ordering::SeqCst);
+    window
+        .call("session/delete", json!({"sessionId":"tail-delete-del3"}))
+        .await
+        .unwrap();
+    let mut trash = std::fs::read_dir(dirs.store.join("trash")).unwrap();
+    let dir = trash.next().unwrap().unwrap().path();
+    let path = std::fs::read_dir(dir)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .find(|path| path.extension().is_some_and(|ext| ext == "jsonl"))
+        .unwrap();
+    let journal = std::fs::read_to_string(path).unwrap();
+    assert!(
+        journal.contains("\"tail\":\"del3\""),
+        "the recovered tail must reach trash"
+    );
     window.close().await;
 }

@@ -9,6 +9,10 @@ pub fn typed_result(method: &str, value: Value) -> Value {
             serde_json::to_value(serde_json::from_value::<InitializeResult>(value).unwrap())
                 .unwrap()
         }
+        "hoh/executor/limits" => {
+            serde_json::to_value(serde_json::from_value::<ExecutorLimitsResult>(value).unwrap())
+                .unwrap()
+        }
         "hoh/executor/discover" => {
             serde_json::to_value(serde_json::from_value::<ExecutorDiscoverResult>(value).unwrap())
                 .unwrap()
@@ -25,6 +29,26 @@ pub fn typed_result(method: &str, value: Value) -> Value {
             serde_json::to_value(serde_json::from_value::<ExecutorAccessSetResult>(value).unwrap())
                 .unwrap()
         }
+        "hoh/executor/trust/get" | "hoh/executor/trust/set" => {
+            serde_json::to_value(serde_json::from_value::<ExecutorTrustResult>(value).unwrap())
+                .unwrap()
+        }
+        "hoh/executor/commands" => {
+            serde_json::to_value(serde_json::from_value::<ExecutorCommandsResult>(value).unwrap())
+                .unwrap()
+        }
+        "hoh/workspace/add" => {
+            serde_json::to_value(serde_json::from_value::<WorkspaceAddResult>(value).unwrap())
+                .unwrap()
+        }
+        "hoh/workspace/entries" => {
+            serde_json::to_value(serde_json::from_value::<WorkspaceEntriesResult>(value).unwrap())
+                .unwrap()
+        }
+        "hoh/executor/title/generate" => serde_json::to_value(
+            serde_json::from_value::<ExecutorTitleGenerateResult>(value).unwrap(),
+        )
+        .unwrap(),
         "session/prompt" => {
             serde_json::to_value(serde_json::from_value::<SessionPromptResult>(value).unwrap())
                 .unwrap()
@@ -47,6 +71,14 @@ pub fn typed_result(method: &str, value: Value) -> Value {
             serde_json::from_value::<SessionWorkingDirectoryResult>(value).unwrap(),
         )
         .unwrap(),
+        "session/working-directory/status" => serde_json::to_value(
+            serde_json::from_value::<SessionWorkingDirectoryStatusResult>(value).unwrap(),
+        )
+        .unwrap(),
+        "session/working-directory/rebind" => serde_json::to_value(
+            serde_json::from_value::<SessionWorkingDirectoryResult>(value).unwrap(),
+        )
+        .unwrap(),
         "shutdown" => {
             serde_json::to_value(serde_json::from_value::<Empty>(value).unwrap()).unwrap()
         }
@@ -58,7 +90,7 @@ pub fn typed_result(method: &str, value: Value) -> Value {
             serde_json::to_value(serde_json::from_value::<SessionEventsResult>(value).unwrap())
                 .unwrap()
         }
-        "session/cancel" => {
+        "session/cancel" | "session/delete" => {
             serde_json::to_value(serde_json::from_value::<Empty>(value).unwrap()).unwrap()
         }
         "hoh/employee/list" => {
@@ -166,6 +198,10 @@ pub fn typed_result(method: &str, value: Value) -> Value {
         }
         "hoh/model/probe" => {
             serde_json::to_value(serde_json::from_value::<ModelProbeResult>(value).unwrap())
+                .unwrap()
+        }
+        "hoh/plugins/list" => {
+            serde_json::to_value(serde_json::from_value::<Vec<PluginInventoryItem>>(value).unwrap())
                 .unwrap()
         }
         "hoh/settings/get" => {

@@ -1,0 +1,5 @@
+--- a/shared/composerContextReferences.ts
++++ b/shared/composerContextReferences.ts
+@@ -129 +129 @@
+-      threadContextRecord(candidates[0]!, label?.trim() || "Thread");
++      threadContextRecord(candidates[0]!, label?.trim() || "Chat");

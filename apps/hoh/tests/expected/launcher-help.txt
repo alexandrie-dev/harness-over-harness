@@ -19,3 +19,4 @@
   hoh sdk-minimal --dump-config
   hoh sdk-minimal --dump-config-schema
   hoh sdk-minimal --patch ./extra.yml --dump-config
+  hoh plugin --help                 Команды создания и проверки плагинов

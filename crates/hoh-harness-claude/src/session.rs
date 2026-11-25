@@ -13,9 +13,12 @@ use std::time::Duration;
 
 use futures_util::future::BoxFuture;
 use hoh_external_harness::{
-    ApprovalDecision, EndReason, FileChange, FileChangeKind, Frame, HarnessAction, HarnessEvent,
-    HarnessFailure, HarnessQuestion, HarnessResponse, HarnessSession, ItemOutcome, PromptParams,
-    QuestionAnswer, QuestionOption, RespondParams, Supervisor, code,
+    ApprovalDecision, EndReason, FileChange, FileChangeKind, Frame, HarnessAction,
+    HarnessBackgroundTask, HarnessBackgroundTaskPatch, HarnessBackgroundTaskUpdate, HarnessEvent,
+    HarnessFailure, HarnessMcpServer, HarnessModelUsage, HarnessQuestion, HarnessResponse,
+    HarnessSession, HarnessTelemetry, HarnessTelemetryProvenance, HarnessTelemetryRecord,
+    HarnessTokenUsage, HarnessWorkflowProgress, ItemOutcome, PromptParams, QuestionAnswer,
+    QuestionOption, RespondParams, Supervisor, code,
 };
 use serde_json::{Value, json};
 use tokio::sync::{mpsc, oneshot};
@@ -28,6 +31,147 @@ fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
 
 fn text<'a>(value: &'a Value, key: &str) -> Option<&'a str> {
     value.get(key).and_then(Value::as_str)
+}
+
+fn count(value: &Value, key: &str) -> Option<u64> {
+    value.get(key).and_then(Value::as_u64)
+}
+
+fn non_negative(value: &Value, key: &str) -> Option<f64> {
+    value
+        .get(key)
+        .and_then(Value::as_f64)
+        .filter(|number| number.is_finite() && *number >= 0.0)
+}
+
+/// Presence of the object is meaningful even when this CLI version supplied none of the known
+/// counters: the later fold distinguishes an empty report from a missing report.
+fn token_usage(value: &Value) -> Option<HarnessTokenUsage> {
+    value.as_object()?;
+    Some(HarnessTokenUsage {
+        input_tokens: count(value, "input_tokens"),
+        output_tokens: count(value, "output_tokens"),
+        cache_read_input_tokens: count(value, "cache_read_input_tokens"),
+        cache_creation_input_tokens: count(value, "cache_creation_input_tokens"),
+    })
+}
+
+fn model_usage(value: &Value) -> Option<Vec<HarnessModelUsage>> {
+    let entries = value.as_object()?;
+    Some(
+        entries
+            .iter()
+            .map(|(model, entry)| HarnessModelUsage {
+                model: model.clone(),
+                input_tokens: count(entry, "inputTokens"),
+                output_tokens: count(entry, "outputTokens"),
+                cache_read_input_tokens: count(entry, "cacheReadInputTokens"),
+                cache_creation_input_tokens: count(entry, "cacheCreationInputTokens"),
+                context_window: count(entry, "contextWindow"),
+                max_output_tokens: count(entry, "maxOutputTokens"),
+                web_search_requests: count(entry, "webSearchRequests"),
+                cost_usd: non_negative(entry, "costUSD"),
+            })
+            .collect(),
+    )
+}
+
+fn background_task(value: &Value) -> Option<HarnessBackgroundTask> {
+    let task_id = text(value, "task_id")?;
+    if task_id.is_empty() {
+        return None;
+    }
+    Some(HarnessBackgroundTask {
+        task_id: task_id.to_owned(),
+        run_id: text(value, "run_id").map(str::to_owned),
+        tool_use_id: text(value, "tool_use_id").map(str::to_owned),
+        parent_task_id: text(value, "parent_task_id").map(str::to_owned),
+        task_type: text(value, "task_type").map(str::to_owned),
+        description: text(value, "description").map(str::to_owned),
+    })
+}
+
+fn workflow_progress(value: &Value) -> Option<HarnessWorkflowProgress> {
+    Some(HarnessWorkflowProgress {
+        kind: text(value, "type")?.to_owned(),
+        index: count(value, "index"),
+        title: text(value, "title").map(str::to_owned),
+        label: text(value, "label").map(str::to_owned),
+        agent_id: text(value, "agentId").map(str::to_owned),
+        state: text(value, "state").map(str::to_owned),
+        phase_index: count(value, "phaseIndex"),
+        phase_title: text(value, "phaseTitle").map(str::to_owned),
+        model: text(value, "model").map(str::to_owned),
+        prompt_preview: text(value, "promptPreview").map(str::to_owned),
+        result_preview: text(value, "resultPreview").map(str::to_owned),
+        started_at: count(value, "startedAt"),
+        last_progress_at: count(value, "lastProgressAt"),
+        duration_ms: count(value, "durationMs"),
+        attempt: count(value, "attempt"),
+    })
+}
+
+fn provenance(
+    inner: &Inner,
+    message: &Value,
+    turn_id: Option<String>,
+    source_id: Option<String>,
+    parent_item_id: Option<String>,
+) -> HarnessTelemetryProvenance {
+    let state = lock(&inner.state);
+    HarnessTelemetryProvenance {
+        launch_id: inner.launch_id.clone(),
+        native_session_id: text(message, "session_id")
+            .unwrap_or(&state.native)
+            .to_owned()
+            .into(),
+        turn_id,
+        source_id,
+        parent_item_id,
+    }
+}
+
+async fn emit_telemetry(
+    inner: &Inner,
+    message: &Value,
+    turn_id: Option<String>,
+    source_id: Option<String>,
+    parent_item_id: Option<String>,
+    payload: HarnessTelemetry,
+) {
+    let provenance = provenance(inner, message, turn_id, source_id, parent_item_id);
+    inner
+        .emit(HarnessEvent::Telemetry {
+            record: HarnessTelemetryRecord {
+                provenance,
+                payload,
+            },
+        })
+        .await;
+}
+
+fn stream_usage(value: &Value) -> StreamUsage {
+    StreamUsage {
+        input_tokens: count(value, "input_tokens").unwrap_or(0),
+        cache_creation_input_tokens: count(value, "cache_creation_input_tokens").unwrap_or(0),
+        cache_read_input_tokens: count(value, "cache_read_input_tokens").unwrap_or(0),
+        output_tokens: count(value, "output_tokens").unwrap_or(0),
+    }
+}
+
+fn context_window(result: &Value, model: Option<&str>) -> Option<u64> {
+    let usage = result.get("modelUsage")?.as_object()?;
+    let of = |entry: &Value| count(entry, "contextWindow").filter(|value| *value > 0);
+    model
+        .and_then(|model| usage.get(model))
+        .and_then(of)
+        .or_else(|| {
+            (usage.len() == 1)
+                .then(|| usage.values().next())
+                .flatten()
+                .and_then(of)
+        })
+        .or_else(|| usage.values().filter_map(of).max())
 }
 
 /// What a held `can_use_tool` request is, until HoH answers it.
@@ -62,12 +206,16 @@ struct State {
     /// Requests the CLI sent here and still waits for, by the CLI's request id.
     pending: HashMap<String, Pending>,
     started: HashSet<String>,
-    /// `tool_use` ids of subagents: their steps are not the turn's own (T3 nests them).
-    subagent_tools: HashSet<String>,
+    /// A subagent tool call id to the Agent/Task call that owns it.
+    item_parents: HashMap<String, String>,
+    /// Provider tool ids keep the HoH turn where they originated. This outlives visible item
+    /// settlement because background/subagent assistant frames may arrive in a later prompt.
+    item_turns: HashMap<String, String>,
     declined: HashSet<String>,
     turn: Option<String>,
     interrupting: bool,
-    message_id: Option<String>,
+    /// Current streamed message id per root (`None`) or subagent parent call.
+    message_ids: HashMap<Option<String>, String>,
     /// The native id of the session; the CLI may assign a new one when it resumes.
     native: String,
     /// Why the stream was cut off (a line that is not a contract message), for the window.
@@ -84,12 +232,43 @@ struct State {
     /// This CLI has named a prompt of this session by its uuid (an echo in a `result`, or a
     /// `command_lifecycle`): T3 `promptEchoMode` other than `unknown`.
     echoes: bool,
+    /// The model named by system/init, used to select its context window from result.modelUsage.
+    model: Option<String>,
+    /// The latest root assistant message's per-message usage (never result.usage, which aggregates
+    /// multiple model calls in a turn).
+    stream_usage: Option<StreamUsage>,
+    /// The last model context window Claude reported. The CLI supplies this on a result, so the
+    /// first turn gains it at completion and later streaming snapshots can reuse it immediately.
+    context_window: Option<u64>,
+}
+
+#[derive(Clone, Copy, Default)]
+struct StreamUsage {
+    input_tokens: u64,
+    cache_creation_input_tokens: u64,
+    cache_read_input_tokens: u64,
+    output_tokens: u64,
+}
+
+async fn emit_usage(inner: &Inner, usage: StreamUsage, max_tokens: Option<u64>) {
+    inner
+        .emit(HarnessEvent::Usage {
+            input_tokens: usage.input_tokens,
+            cache_creation_input_tokens: usage.cache_creation_input_tokens,
+            cache_read_input_tokens: usage.cache_read_input_tokens,
+            output_tokens: usage.output_tokens,
+            max_tokens,
+        })
+        .await;
 }
 
 struct Inner {
     sup: Supervisor,
     events: Mutex<Option<mpsc::Sender<HarnessEvent>>>,
     state: Mutex<State>,
+    /// One identity per spawned CLI process; a resume keeps the native session id but gets a new
+    /// launch id, so the later fold can reset its cumulative model ledger without guessing.
+    launch_id: String,
     cwd: PathBuf,
     next_request: AtomicU64,
     terminated: AtomicBool,
@@ -103,6 +282,16 @@ struct Inner {
 
 pub(crate) struct ClaudeSession {
     inner: Arc<Inner>,
+}
+
+static NEXT_LAUNCH_ID: AtomicU64 = AtomicU64::new(1);
+
+fn launch_id() -> String {
+    let ordinal = NEXT_LAUNCH_ID.fetch_add(1, Ordering::Relaxed);
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_nanos());
+    format!("{}-{nanos}-{ordinal}", std::process::id())
 }
 
 /// The last handle gone without a stop kills the process group: a start the caller gave up on
@@ -159,6 +348,7 @@ impl ClaudeSession {
                 native,
                 ..State::default()
             }),
+            launch_id: launch_id(),
             cwd,
             next_request: AtomicU64::new(1),
             terminated: AtomicBool::new(false),
@@ -191,7 +381,7 @@ impl ClaudeSession {
             _ = tokio::time::sleep(init_timeout) => {
                 session.inner.sup.terminate(Duration::from_millis(500)).await;
                 return Err(HarnessFailure::new(
-                    code::PROTOCOL,
+                    code::TIMEOUT,
                     version::protocol_message(version, "нет ответа на initialize"),
                 ));
             }
@@ -260,6 +450,42 @@ impl ClaudeSession {
 }
 
 impl ClaudeSession {
+    /// One control request of HoH and the CLI's answer to it, within `timeout` (the probe's
+    /// `reload_skills`, HOH-41).
+    pub(crate) async fn control(
+        &self,
+        subtype: &str,
+        timeout: Duration,
+    ) -> Result<Value, HarnessFailure> {
+        let id = self.inner.request_id();
+        let (tx, rx) = oneshot::channel();
+        lock(&self.inner.state).host.insert(id.clone(), tx);
+        let sent = self
+            .inner
+            .send(json!({
+                "type": "control_request",
+                "request_id": id,
+                "request": { "subtype": subtype },
+            }))
+            .await;
+        if let Err(failure) = sent {
+            lock(&self.inner.state).host.remove(&id);
+            return Err(failure);
+        }
+        match tokio::time::timeout(timeout, rx).await {
+            Ok(Ok(Ok(answer))) => Ok(answer),
+            Ok(Ok(Err(error))) => Err(HarnessFailure::new(code::HARNESS, error)),
+            Ok(Err(_)) => Err(HarnessFailure::new(code::CLOSED, "the process ended")),
+            Err(_) => {
+                lock(&self.inner.state).host.remove(&id);
+                Err(HarnessFailure::new(
+                    code::PROTOCOL,
+                    format!("no answer to {subtype}"),
+                ))
+            }
+        }
+    }
+
     /// End the process at once (a probe has nothing to finish).
     pub async fn terminate_now(&self) {
         self.inner.terminated.store(true, Ordering::SeqCst);
@@ -503,28 +729,131 @@ fn handle_control_response(inner: &Inner, message: &Value) {
 }
 
 async fn handle_system(inner: &Inner, message: &Value) {
-    if text(message, "subtype") != Some("init") {
-        return;
-    }
-    if let Some(id) = text(message, "session_id")
-        && id != lock(&inner.state).native
-    {
-        lock(&inner.state).native = id.to_owned();
-        inner
-            .emit(HarnessEvent::NativeSession {
-                native_session_id: id.into(),
-            })
+    let source_id = text(message, "uuid").map(str::to_owned);
+    match text(message, "subtype") {
+        Some("init") => {
+            if let Some(model) = text(message, "model") {
+                lock(&inner.state).model = Some(model.to_owned());
+            }
+            if let Some(id) = text(message, "session_id")
+                && id != lock(&inner.state).native
+            {
+                lock(&inner.state).native = id.to_owned();
+                inner
+                    .emit(HarnessEvent::NativeSession {
+                        native_session_id: id.into(),
+                    })
+                    .await;
+            }
+            if let Some(servers) = message.get("mcp_servers").and_then(Value::as_array) {
+                let servers = servers
+                    .iter()
+                    .filter_map(|server| {
+                        let name = text(server, "name")?.trim();
+                        (!name.is_empty()).then(|| HarnessMcpServer {
+                            name: name.to_owned(),
+                            status: text(server, "status").map(str::to_owned),
+                        })
+                    })
+                    .collect();
+                emit_telemetry(
+                    inner,
+                    message,
+                    None,
+                    source_id,
+                    None,
+                    HarnessTelemetry::McpServers { servers },
+                )
+                .await;
+            }
+        }
+        Some(subtype @ ("task_started" | "task_progress" | "task_notification")) => {
+            let Some(task) = background_task(message) else {
+                return;
+            };
+            let workflow_progress = message
+                .get("workflow_progress")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(workflow_progress)
+                .collect();
+            let update = HarnessBackgroundTaskUpdate {
+                subtype: subtype.to_owned(),
+                task,
+                status: text(message, "status").map(str::to_owned),
+                summary: text(message, "summary").map(str::to_owned),
+                is_backgrounded: message.get("is_backgrounded").and_then(Value::as_bool),
+                workflow_progress,
+            };
+            emit_telemetry(
+                inner,
+                message,
+                None,
+                source_id,
+                text(message, "tool_use_id").map(str::to_owned),
+                HarnessTelemetry::BackgroundTask { update },
+            )
             .await;
+        }
+        Some("task_updated") => {
+            let Some(task_id) = text(message, "task_id").filter(|id| !id.is_empty()) else {
+                return;
+            };
+            let Some(patch) = message.get("patch").and_then(Value::as_object) else {
+                return;
+            };
+            let patch = HarnessBackgroundTaskPatch {
+                status: patch
+                    .get("status")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned),
+                end_time: patch.get("end_time").and_then(Value::as_u64),
+                background: patch
+                    .get("background")
+                    .or_else(|| patch.get("is_backgrounded"))
+                    .and_then(Value::as_bool),
+            };
+            emit_telemetry(
+                inner,
+                message,
+                None,
+                source_id,
+                None,
+                HarnessTelemetry::BackgroundTaskUpdated {
+                    task_id: task_id.to_owned(),
+                    run_id: text(message, "run_id").map(str::to_owned),
+                    patch,
+                },
+            )
+            .await;
+        }
+        Some("background_tasks_changed") => {
+            let Some(tasks) = message.get("tasks").and_then(Value::as_array) else {
+                return;
+            };
+            // A roster is authoritative only when every entry is understood. In particular,
+            // preserve a genuine `[]`, but never turn a mixed/malformed roster into a plausible
+            // partial or empty snapshot.
+            let Some(tasks) = tasks.iter().map(background_task).collect() else {
+                return;
+            };
+            emit_telemetry(
+                inner,
+                message,
+                None,
+                source_id,
+                None,
+                HarnessTelemetry::BackgroundTasksSnapshot { tasks },
+            )
+            .await;
+        }
+        _ => {}
     }
 }
 
 async fn handle_stream_event(inner: &Inner, message: &Value) {
-    if message
-        .get("parent_tool_use_id")
-        .is_some_and(|v| !v.is_null())
-    {
-        return;
-    }
+    let parent_item_id = text(message, "parent_tool_use_id").map(str::to_owned);
     let Some(event) = message.get("event") else {
         return;
     };
@@ -534,14 +863,80 @@ async fn handle_stream_event(inner: &Inner, message: &Value) {
                 .get("message")
                 .and_then(|m| text(m, "id"))
                 .map(str::to_owned);
-            lock(&inner.state).message_id = id;
+            let usage = event
+                .get("message")
+                .and_then(|message| message.get("usage"))
+                .map(stream_usage);
+            let max_tokens = {
+                let mut state = lock(&inner.state);
+                if let Some(id) = id {
+                    state.message_ids.insert(parent_item_id.clone(), id);
+                }
+                if parent_item_id.is_none() {
+                    state.stream_usage = usage;
+                    Some(state.context_window)
+                } else {
+                    None
+                }
+            };
+            if let (Some(usage), Some(max_tokens)) = (usage, max_tokens) {
+                emit_usage(inner, usage, max_tokens).await;
+            }
+        }
+        Some("message_delta") => {
+            if parent_item_id.is_some() {
+                return;
+            }
+            let Some(delta) = event.get("usage") else {
+                return;
+            };
+            let snapshot = {
+                let mut state = lock(&inner.state);
+                let max_tokens = state.context_window;
+                if let Some(usage) = state.stream_usage.as_mut() {
+                    if let Some(value) = count(delta, "input_tokens") {
+                        usage.input_tokens = value;
+                    }
+                    if let Some(value) = count(delta, "cache_creation_input_tokens") {
+                        usage.cache_creation_input_tokens = value;
+                    }
+                    if let Some(value) = count(delta, "cache_read_input_tokens") {
+                        usage.cache_read_input_tokens = value;
+                    }
+                    if let Some(value) = count(delta, "output_tokens") {
+                        usage.output_tokens = value;
+                    }
+                    Some((*usage, max_tokens))
+                } else {
+                    None
+                }
+            };
+            if let Some((usage, max_tokens)) = snapshot {
+                emit_usage(inner, usage, max_tokens).await;
+            }
+        }
+        Some("content_block_start") => {
+            let kind = event
+                .get("content_block")
+                .and_then(|block| text(block, "type"));
+            if matches!(kind, Some("thinking" | "redacted_thinking")) {
+                let index = event.get("index").and_then(Value::as_u64).unwrap_or(0);
+                let message_id = block_id(inner, parent_item_id.as_deref(), None, index as usize);
+                inner
+                    .emit(HarnessEvent::ReasoningDelta {
+                        message_id,
+                        text: String::new(),
+                        parent_item_id,
+                    })
+                    .await;
+            }
         }
         Some("content_block_delta") => {
             let index = event.get("index").and_then(Value::as_u64).unwrap_or(0);
             let Some(delta) = event.get("delta") else {
                 return;
             };
-            let message_id = block_id(inner, None, index as usize);
+            let message_id = block_id(inner, parent_item_id.as_deref(), None, index as usize);
             match text(delta, "type") {
                 Some("text_delta") => {
                     if let Some(text) = text(delta, "text") {
@@ -549,6 +944,7 @@ async fn handle_stream_event(inner: &Inner, message: &Value) {
                             .emit(HarnessEvent::TextDelta {
                                 message_id,
                                 text: text.to_owned(),
+                                parent_item_id: parent_item_id.clone(),
                             })
                             .await;
                     }
@@ -559,6 +955,7 @@ async fn handle_stream_event(inner: &Inner, message: &Value) {
                             .emit(HarnessEvent::ReasoningDelta {
                                 message_id,
                                 text: text.to_owned(),
+                                parent_item_id: parent_item_id.clone(),
                             })
                             .await;
                     }
@@ -571,8 +968,14 @@ async fn handle_stream_event(inner: &Inner, message: &Value) {
 }
 
 /// `<message id>:<block index>` — the same for the streamed deltas and the final block.
-fn block_id(inner: &Inner, message_id: Option<&str>, index: usize) -> String {
-    let current = lock(&inner.state).message_id.clone();
+fn block_id(
+    inner: &Inner,
+    parent_item_id: Option<&str>,
+    message_id: Option<&str>,
+    index: usize,
+) -> String {
+    let parent = parent_item_id.map(str::to_owned);
+    let current = lock(&inner.state).message_ids.get(&parent).cloned();
     let id = message_id.map(str::to_owned).or(current);
     format!("{}:{index}", id.as_deref().unwrap_or("message"))
 }
@@ -587,13 +990,34 @@ async fn handle_assistant(inner: &Inner, message: &Value) {
     {
         lock(&inner.state).auth_failed = true;
     }
-    let subagent = message
-        .get("parent_tool_use_id")
-        .is_some_and(|v| !v.is_null());
+    let parent_item_id = text(message, "parent_tool_use_id").map(str::to_owned);
     let Some(body) = message.get("message") else {
         return;
     };
-    let message_id = text(body, "id").unwrap_or("message").to_owned();
+    let telemetry_source_id = text(body, "id").map(str::to_owned);
+    // The visible stream still needs an internal key for id-less provider frames. That fallback
+    // is deliberately separate from telemetry provenance: it is not a provider identity.
+    let message_id = telemetry_source_id
+        .clone()
+        .unwrap_or_else(|| "message".to_owned());
+    let origin_turn = {
+        let state = lock(&inner.state);
+        match parent_item_id.as_deref() {
+            Some(parent) => state.item_turns.get(parent).cloned(),
+            None => state.turn.clone(),
+        }
+    };
+    if let Some(usage) = body.get("usage").and_then(token_usage) {
+        emit_telemetry(
+            inner,
+            message,
+            origin_turn.clone(),
+            telemetry_source_id,
+            parent_item_id.clone(),
+            HarnessTelemetry::AssistantUsage { usage },
+        )
+        .await;
+    }
     let Some(blocks) = body.get("content").and_then(Value::as_array) else {
         return;
     };
@@ -607,33 +1031,39 @@ async fn handle_assistant(inner: &Inner, message: &Value) {
         };
         let id = format!("{message_id}:{ordinal}");
         match text(block, "type") {
-            Some("text") if !subagent => {
+            Some("text") => {
                 if let Some(text) = text(block, "text") {
                     inner
                         .emit(HarnessEvent::TextFinal {
                             message_id: id,
                             text: text.to_owned(),
+                            parent_item_id: parent_item_id.clone(),
                         })
                         .await;
                 }
             }
-            Some("thinking") if !subagent => {
+            Some("thinking") => {
                 if let Some(text) = text(block, "thinking") {
                     inner
                         .emit(HarnessEvent::ReasoningFinal {
                             message_id: id,
                             text: text.to_owned(),
+                            parent_item_id: parent_item_id.clone(),
                         })
                         .await;
                 }
             }
             Some("tool_use") => {
                 if let (Some(tool_id), Some(name)) = (text(block, "id"), text(block, "name")) {
-                    if subagent {
-                        lock(&inner.state).subagent_tools.insert(tool_id.to_owned());
-                    } else {
-                        ensure_item_started(inner, tool_id, name, block.get("input")).await;
-                    }
+                    ensure_item_started(
+                        inner,
+                        tool_id,
+                        name,
+                        block.get("input"),
+                        parent_item_id.clone(),
+                        origin_turn.clone(),
+                    )
+                    .await;
                 }
             }
             _ => {}
@@ -641,14 +1071,33 @@ async fn handle_assistant(inner: &Inner, message: &Value) {
     }
 }
 
-async fn ensure_item_started(inner: &Inner, id: &str, name: &str, input: Option<&Value>) {
-    let fresh = lock(&inner.state).started.insert(id.to_owned());
+async fn ensure_item_started(
+    inner: &Inner,
+    id: &str,
+    name: &str,
+    input: Option<&Value>,
+    parent_item_id: Option<String>,
+    origin_turn: Option<String>,
+) {
+    let fresh = {
+        let mut state = lock(&inner.state);
+        if let Some(parent_item_id) = parent_item_id.as_ref() {
+            state
+                .item_parents
+                .insert(id.to_owned(), parent_item_id.clone());
+        }
+        if let Some(origin_turn) = origin_turn {
+            state.item_turns.entry(id.to_owned()).or_insert(origin_turn);
+        }
+        state.started.insert(id.to_owned())
+    };
     if fresh {
         let action = action_for(name, input.unwrap_or(&Value::Null), &inner.cwd).await;
         inner
             .emit(HarnessEvent::ItemStarted {
                 item_id: id.to_owned(),
                 action,
+                parent_item_id,
             })
             .await;
     }
@@ -761,6 +1210,7 @@ pub(crate) async fn action_for(name: &str, input: &Value, cwd: &std::path::Path)
 }
 
 async fn handle_user(inner: &Inner, message: &Value) {
+    let message_parent = text(message, "parent_tool_use_id").map(str::to_owned);
     let Some(blocks) = message
         .get("message")
         .and_then(|m| m.get("content"))
@@ -775,10 +1225,17 @@ async fn handle_user(inner: &Inner, message: &Value) {
         let Some(id) = text(block, "tool_use_id") else {
             continue;
         };
-        let (known, declined) = {
+        let (known, declined, parent_item_id) = {
             let mut state = lock(&inner.state);
-            state.subagent_tools.remove(id);
-            (state.started.remove(id), state.declined.remove(id))
+            let parent_item_id = state
+                .item_parents
+                .remove(id)
+                .or_else(|| message_parent.clone());
+            (
+                state.started.remove(id),
+                state.declined.remove(id),
+                parent_item_id,
+            )
         };
         if !known {
             continue;
@@ -802,6 +1259,7 @@ async fn handle_user(inner: &Inner, message: &Value) {
                 outcome,
                 output: Some(tool_result_text(block.get("content"))),
                 exit_code: None,
+                parent_item_id,
             })
             .await;
     }
@@ -865,16 +1323,64 @@ fn of_another_turn(state: &mut State, message: &Value) -> bool {
 }
 
 async fn handle_result(inner: &Inner, message: &Value) {
-    let (turn, interrupted, open, withdrawn, auth_failed) = {
+    let (telemetry_turn, other_turn) = {
         let mut state = lock(&inner.state);
-        if state.turn.is_some() && of_another_turn(&mut state, message) {
-            return;
-        }
+        let other = state.turn.is_some() && of_another_turn(&mut state, message);
+        (if other { None } else { state.turn.clone() }, other)
+    };
+    let usage = message.get("usage").and_then(token_usage);
+    let model_usage = message.get("modelUsage").and_then(model_usage);
+    let total_cost_usd = non_negative(message, "total_cost_usd");
+    if usage.is_some() || model_usage.is_some() || total_cost_usd.is_some() {
+        let user_message_uuids = echoed_uuids(message)
+            .into_iter()
+            .map(str::to_owned)
+            .collect();
+        let origin = message
+            .get("origin")
+            .and_then(|value| text(value, "kind"))
+            .map(str::to_owned);
+        emit_telemetry(
+            inner,
+            message,
+            telemetry_turn,
+            text(message, "uuid").map(str::to_owned),
+            None,
+            HarnessTelemetry::ResultUsage {
+                usage,
+                model_usage,
+                total_cost_usd,
+                user_message_uuids,
+                origin,
+            },
+        )
+        .await;
+    }
+    if other_turn {
+        return;
+    }
+    let reported_context_window = {
+        let model = lock(&inner.state).model.clone();
+        context_window(message, model.as_deref())
+    };
+    let (turn, interrupted, open, withdrawn, auth_failed, usage, max_tokens) = {
+        let mut state = lock(&inner.state);
         state.prompt_uuid = None;
-        let open: Vec<String> = state.started.drain().collect();
+        let parents = std::mem::take(&mut state.item_parents);
+        let open: Vec<(String, Option<String>)> = state
+            .started
+            .drain()
+            .map(|id| {
+                let parent = parents.get(&id).cloned();
+                (id, parent)
+            })
+            .collect();
         state.declined.clear();
-        state.subagent_tools.clear();
         state.consumed.clear();
+        state.message_ids.clear();
+        if reported_context_window.is_some() {
+            state.context_window = reported_context_window;
+        }
         let withdrawn: Vec<String> = state.pending.drain().map(|(id, _)| id).collect();
         (
             state.turn.take(),
@@ -882,6 +1388,8 @@ async fn handle_result(inner: &Inner, message: &Value) {
             open,
             withdrawn,
             std::mem::take(&mut state.auth_failed),
+            state.stream_usage.take(),
+            state.context_window,
         )
     };
     for request_id in withdrawn {
@@ -889,19 +1397,23 @@ async fn handle_result(inner: &Inner, message: &Value) {
             .emit(HarnessEvent::RequestResolved { request_id })
             .await;
     }
-    for item_id in open {
+    for (item_id, parent_item_id) in open {
         inner
             .emit(HarnessEvent::ItemCompleted {
                 item_id,
                 outcome: ItemOutcome::Interrupted,
                 output: None,
                 exit_code: None,
+                parent_item_id,
             })
             .await;
     }
     let Some(turn_id) = turn else {
         return;
     };
+    if let Some(usage) = usage {
+        emit_usage(inner, usage, max_tokens).await;
+    }
     let failed = message.get("is_error").and_then(Value::as_bool) == Some(true)
         || text(message, "subtype").is_some_and(|subtype| subtype != "success");
     let event = if interrupted {
@@ -936,7 +1448,11 @@ async fn handle_control_request(inner: &Inner, message: &Value) {
         return;
     };
     match text(request, "subtype") {
-        Some("can_use_tool") => can_use_tool(inner, request_id, request).await,
+        Some("can_use_tool") => {
+            let parent =
+                text(request, "parent_tool_use_id").or_else(|| text(message, "parent_tool_use_id"));
+            can_use_tool(inner, request_id, request, parent).await;
+        }
         _ => {
             inner
                 .reply_error(request_id, "unsupported control request")
@@ -958,12 +1474,50 @@ fn signed_out_message(cwd: &std::path::Path, config_dir: Option<&str>) -> String
 
 /// `can_use_tool`: T3 `ClaudeAdapterV2.ts` `canUseToolEffect`. `AskUserQuestion` becomes a
 /// question; everything else a permission request.
-async fn can_use_tool(inner: &Inner, request_id: &str, request: &Value) {
+async fn can_use_tool(inner: &Inner, request_id: &str, request: &Value, parent: Option<&str>) {
     let name = text(request, "tool_name").unwrap_or("tool");
     let input = request.get("input").cloned().unwrap_or_else(|| json!({}));
     let native_id = text(request, "tool_use_id")
         .unwrap_or(request_id)
         .to_owned();
+    let tool_use_id = text(request, "tool_use_id").map(str::to_owned);
+    let (parent_item_id, origin_turn) = {
+        let state = lock(&inner.state);
+        let parent_item_id = tool_use_id
+            .as_deref()
+            .and_then(|id| state.item_parents.get(id).cloned())
+            .or_else(|| parent.map(str::to_owned));
+        let origin_turn = tool_use_id
+            .as_deref()
+            .and_then(|id| state.item_turns.get(id).cloned())
+            .or_else(|| {
+                parent_item_id
+                    .as_deref()
+                    .and_then(|id| state.item_turns.get(id).cloned())
+            })
+            .or_else(|| state.turn.clone());
+        (parent_item_id, origin_turn)
+    };
+    if name == "ExitPlanMode" {
+        if let Some(id) = tool_use_id.as_deref() {
+            ensure_item_started(
+                inner,
+                id,
+                name,
+                Some(&input),
+                parent_item_id.clone(),
+                origin_turn.clone(),
+            )
+            .await;
+        }
+        let captured = json!({
+            "behavior": "deny",
+            "message": "The client captured your proposed plan. Stop here and wait for the user's feedback or implementation request in a later turn.",
+            "toolUseID": native_id,
+        });
+        let _ = inner.reply(request_id, captured).await;
+        return;
+    }
     if name == "AskUserQuestion" {
         let (questions, texts) = questions_from(&input);
         lock(&inner.state).pending.insert(
@@ -978,16 +1532,21 @@ async fn can_use_tool(inner: &Inner, request_id: &str, request: &Value) {
             .emit(HarnessEvent::QuestionAsked {
                 request_id: request_id.to_owned(),
                 questions,
+                parent_item_id,
             })
             .await;
         return;
     }
-    let tool_use_id = text(request, "tool_use_id").map(str::to_owned);
-    let of_subagent = tool_use_id
-        .as_deref()
-        .is_some_and(|id| lock(&inner.state).subagent_tools.contains(id));
-    if let Some(id) = tool_use_id.as_deref().filter(|_| !of_subagent) {
-        ensure_item_started(inner, id, name, Some(&input)).await;
+    if let Some(id) = tool_use_id.as_deref() {
+        ensure_item_started(
+            inner,
+            id,
+            name,
+            Some(&input),
+            parent_item_id.clone(),
+            origin_turn,
+        )
+        .await;
     }
     if inner.bypass && is_removal_safety_refusal(name, request) {
         // T3 `ClaudeAdapterV2.ts:12494-12510`: the CLI's own removal check refused it under
@@ -1017,9 +1576,10 @@ async fn can_use_tool(inner: &Inner, request_id: &str, request: &Value) {
     inner
         .emit(HarnessEvent::ApprovalRequested {
             request_id: request_id.to_owned(),
-            item_id: tool_use_id.filter(|_| !of_subagent),
+            item_id: tool_use_id,
             action,
             reason,
+            parent_item_id,
         })
         .await;
 }
@@ -1182,6 +1742,26 @@ fn questions_from(input: &Value) -> (Vec<HarnessQuestion>, Vec<String>) {
 /// T3 `ClaudeAdapterV2.test.ts:14176`: an interrupt the CLI never follows with a result is
 /// bounded. The turn ends once as aborted, the open steps as interrupted, and the process is
 /// closed.
+/// The content of a user turn as Claude reads it (HOH-41): the pictures first, each a base64 block,
+/// then the text, as T3's Claude adapter sends them. A turn of pictures alone carries no empty
+/// text block (the model refuses one).
+fn prompt_content(params: &PromptParams) -> Value {
+    let mut content: Vec<Value> = params
+        .images
+        .iter()
+        .map(|image| {
+            json!({
+                "type": "image",
+                "source": { "type": "base64", "media_type": image.media_type, "data": image.data },
+            })
+        })
+        .collect();
+    if content.is_empty() || !params.text.is_empty() {
+        content.push(json!({ "type": "text", "text": params.text }));
+    }
+    Value::Array(content)
+}
+
 fn spawn_interrupt_watch(inner: &Arc<Inner>, turn_id: String) {
     let handle = tokio::spawn(settle_unanswered_interrupt(inner.clone(), turn_id));
     let mut timers = lock(&inner.timers);
@@ -1191,7 +1771,7 @@ fn spawn_interrupt_watch(inner: &Arc<Inner>, turn_id: String) {
 
 async fn settle_unanswered_interrupt(inner: Arc<Inner>, turn_id: String) {
     tokio::time::sleep(inner.interrupt_timeout).await;
-    let open: Vec<String> = {
+    let open: Vec<(String, Option<String>)> = {
         let mut state = lock(&inner.state);
         if state.turn.as_deref() != Some(turn_id.as_str())
             || inner.terminated.load(Ordering::SeqCst)
@@ -1201,21 +1781,30 @@ async fn settle_unanswered_interrupt(inner: Arc<Inner>, turn_id: String) {
         state.turn = None;
         state.interrupting = false;
         state.declined.clear();
-        state.subagent_tools.clear();
+        let parents = std::mem::take(&mut state.item_parents);
         state.consumed.clear();
-        state.started.drain().collect()
+        state.message_ids.clear();
+        state
+            .started
+            .drain()
+            .map(|id| {
+                let parent = parents.get(&id).cloned();
+                (id, parent)
+            })
+            .collect()
     };
     inner.terminated.store(true, Ordering::SeqCst);
     // The settlement is not the watcher's to lose: the end of the stream aborts the watchers,
     // and the turn must still get its one end and the session its `SessionEnded`.
     tokio::spawn(async move {
-        for item_id in open {
+        for (item_id, parent_item_id) in open {
             inner
                 .emit(HarnessEvent::ItemCompleted {
                     item_id,
                     outcome: ItemOutcome::Interrupted,
                     output: None,
                     exit_code: None,
+                    parent_item_id,
                 })
                 .await;
         }
@@ -1268,7 +1857,7 @@ impl HarnessSession for ClaudeSession {
             let sent = inner
                 .send(json!({
                     "type": "user",
-                    "message": { "role": "user", "content": [{ "type": "text", "text": params.text }] },
+                    "message": { "role": "user", "content": prompt_content(&params) },
                     "parent_tool_use_id": null,
                     "session_id": native,
                     "uuid": uuid,
@@ -1512,6 +2101,35 @@ mod tests {
         assert_eq!(non_execution_kind(&message, "b"), None);
         assert_eq!(non_execution_kind(&json!({}), "a"), None);
     }
+
+    #[test]
+    fn pictures_go_first_as_base64_blocks_then_the_text() {
+        let image = |media_type: &str, data: &str| hoh_external_harness::PromptImage {
+            media_type: media_type.into(),
+            data: data.into(),
+            name: Some("a.png".into()),
+        };
+        let mut params = PromptParams {
+            text: "what is on it?".into(),
+            images: vec![image("image/png", "iVBO"), image("image/webp", "UklG")],
+            ..Default::default()
+        };
+        assert_eq!(
+            prompt_content(&params),
+            json!([
+                { "type": "image", "source": { "type": "base64", "media_type": "image/png", "data": "iVBO" } },
+                { "type": "image", "source": { "type": "base64", "media_type": "image/webp", "data": "UklG" } },
+                { "type": "text", "text": "what is on it?" },
+            ])
+        );
+        params.text.clear();
+        assert_eq!(prompt_content(&params).as_array().map(Vec::len), Some(2));
+        params.images.clear();
+        assert_eq!(
+            prompt_content(&params),
+            json!([{ "type": "text", "text": "" }])
+        );
+    }
 }
 
 #[cfg(test)]
@@ -1739,6 +2357,7 @@ mod round2_tests {
             program: PathBuf::from("sh"),
             args: vec!["-c".into(), "exec 0<&-; exec sleep 30".into()],
             cwd: None,
+            cwd_identity: None,
             env: Vec::new(),
             env_remove: Vec::new(),
         };
@@ -1756,6 +2375,7 @@ mod round2_tests {
                 native: "n".into(),
                 ..State::default()
             }),
+            launch_id: "test-launch".into(),
             cwd: PathBuf::from("/w/proj"),
             next_request: AtomicU64::new(1),
             terminated: AtomicBool::new(false),
@@ -1794,6 +2414,7 @@ mod round2_tests {
                 session_id: "s".into(),
                 turn_id: "t1".into(),
                 text: "hi".into(),
+                ..Default::default()
             })
             .await
             .expect_err("the prompt cannot reach the process");

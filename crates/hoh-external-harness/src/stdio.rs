@@ -92,20 +92,22 @@ impl ExternalHarness for StdioHarness {
     ) -> BoxFuture<'static, HarnessResult<(Discovery, VersionStatus)>> {
         let config = self.config.clone();
         Box::pin(async move {
-            let connection = match Connection::open(&config, config.spec.cwd.clone(), &[]).await {
-                Ok(connection) => connection,
-                Err(failure) if failure.code == code::NOT_INSTALLED => {
-                    let discovery = Discovery {
-                        installed: false,
-                        version: None,
-                        auth: AuthState::Unknown,
-                        models: Vec::new(),
-                        detail: Some(failure.message),
-                    };
-                    return Ok((discovery, VersionStatus::Unknown));
-                }
-                Err(failure) => return Err(failure),
-            };
+            let connection =
+                match Connection::open(&config, config.spec.cwd.clone(), None, &[]).await {
+                    Ok(connection) => connection,
+                    Err(failure) if failure.code == code::NOT_INSTALLED => {
+                        let discovery = Discovery {
+                            installed: false,
+                            version: None,
+                            auth: AuthState::Unknown,
+                            models: Vec::new(),
+                            detail: Some(failure.message),
+                            failure: None,
+                        };
+                        return Ok((discovery, VersionStatus::Unknown));
+                    }
+                    Err(failure) => return Err(failure),
+                };
             let answer = connection
                 .link
                 .request::<_, Value>(method::DISCOVER, &json!({}))
@@ -149,9 +151,18 @@ impl ExternalHarness for StdioHarness {
                     ));
                 }
             };
-            let connection =
-                Connection::open(&config, Some(params.cwd.clone().into()), &extra).await?;
+            let connection = Connection::open(
+                &config,
+                Some(params.cwd.clone().into()),
+                params.cwd_identity,
+                &extra,
+            )
+            .await?;
             let mut request = encode(&params)?;
+            // The identity guards the local process spawn; it is not part of the peer protocol.
+            if let Some(object) = request.as_object_mut() {
+                object.remove("cwdIdentity");
+            }
             request["access"] = json!(access);
             let result = match connection
                 .link
@@ -219,10 +230,12 @@ impl Connection {
     async fn open(
         config: &StdioHarnessConfig,
         cwd: Option<std::path::PathBuf>,
+        cwd_identity: Option<[u64; 2]>,
         extra_args: &[String],
     ) -> HarnessResult<Connection> {
         let mut spec = config.spec.clone();
         spec.cwd = cwd;
+        spec.cwd_identity = cwd_identity;
         spec.args.extend_from_slice(extra_args);
         let supervisor = Arc::new(Supervisor::spawn(
             &spec,
@@ -375,7 +388,7 @@ async fn pump(
             Frame::Message(value) => match route(&value, &rpc) {
                 Routed::Event(event) => {
                     // A full queue holds stdout back; a gone driver drops the event.
-                    let _ = events.send(event).await;
+                    let _ = events.send(*event).await;
                 }
                 Routed::Request(id) => {
                     let reply = json!({"jsonrpc": "2.0", "id": id, "error": {
@@ -454,7 +467,7 @@ async fn pump(
 }
 
 enum Routed {
-    Event(HarnessEvent),
+    Event(Box<HarnessEvent>),
     Request(Value),
     Done,
     Invalid(String),
@@ -467,7 +480,7 @@ fn route(value: &Value, rpc: &Rpc) -> Routed {
         (Some(id), Some(_)) => Routed::Request(id.clone()),
         (None, Some(name)) if name == method::EVENT => {
             match serde_json::from_value::<EventParams>(value["params"].clone()) {
-                Ok(params) => Routed::Event(params.event),
+                Ok(params) => Routed::Event(Box::new(params.event)),
                 Err(error) => {
                     Routed::Invalid(redact(&format!("invalid {name} notification: {error}")))
                 }

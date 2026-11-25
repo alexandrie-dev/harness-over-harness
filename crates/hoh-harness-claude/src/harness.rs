@@ -4,20 +4,28 @@
 //! `ClaudeAdapterV2.ts` (`permissionModeForClaudeRuntimePolicy`, `claudeRuntimeQueryPolicy…`);
 //! discovery follows `ClaudeProvider.ts` (`claudeAuthStatus`, capabilities probe).
 
-use std::path::PathBuf;
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::fs::DirBuilder;
+#[cfg(unix)]
+use std::os::unix::fs::DirBuilderExt;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use futures_util::future::BoxFuture;
 use hoh_external_harness::{
-    AccessMode, ApprovalMode, AuthState, DEFAULT_ACCESS, Discovery, ExternalHarness,
-    HarnessFailure, HarnessModel, HarnessPolicy, HarnessResult, NetworkAccess, ProcessSpec,
-    SandboxMode, StartParams, StartResult, Started, Supervisor, SupervisorLimits, VersionStatus,
-    code,
+    AccessMode, ApprovalMode, AuthState, DEFAULT_ACCESS, Discovery, DiscoveryFailure,
+    DiscoveryOperation, ExitInfo, ExternalHarness, Frame, HarnessCommand, HarnessCommands,
+    HarnessFailure, HarnessModel, HarnessPolicy, HarnessResult, InteractionMode, NetworkAccess,
+    ProcessSpec, SandboxMode, StartParams, StartResult, Started, Supervisor, SupervisorLimits,
+    VersionStatus, code,
 };
 use serde_json::Value;
 use tokio::io::AsyncReadExt;
+use tokio::sync::Semaphore;
 
+use crate::channel_plugins;
 use crate::session::{ClaudeSession, SessionSettings};
 use crate::version;
 
@@ -29,9 +37,7 @@ use crate::version;
 )]
 #[serde(rename_all = "lowercase")]
 pub enum SettingSources {
-    /// The human's own settings: those of [`PERSONAL_SETTING_SOURCES`] (their permission rules,
-    /// hooks, plugins, `CLAUDE.md`); their MCP servers are not turned off. The settings of the
-    /// working folder (`.claude/settings.json`, `.claude/settings.local.json`) are not among them.
+    /// The human's settings; project and local settings are included only for a trusted folder.
     Personal,
     /// Nothing of the human's: no settings file (`--setting-sources ""`) and no MCP server
     /// (`--strict-mcp-config`, none given). What the organization manages still applies.
@@ -42,12 +48,12 @@ pub enum SettingSources {
 /// the CEO, 21.11). [`SettingSources::Isolated`] stays available in the profile.
 pub const DEFAULT_SETTING_SOURCES: SettingSources = SettingSources::Personal;
 
-/// The setting sources of [`SettingSources::Personal`], the only place they are named: the
-/// human's user settings only (the CEO, 21.11 ~02:00). The project and local settings live in the
-/// working folder, where anyone who wrote to it (another person, the model itself) could put an
-/// `allow` rule or a hook that answers in place of the window's question. The other choice (as T3
-/// reads them, `ClaudeAdapterV2.ts:5595`) is this constant set to `"user,project,local"`.
+/// Default for a folder without host-approved trust.
 const PERSONAL_SETTING_SOURCES: &str = "user";
+
+/// The effort levels of Claude Code, lowest first: `claude --help` (`--effort <level>`) and T3
+/// (`CLAUDE_EFFORT_LEVELS`, `ClaudeModelCatalog.ts:366`).
+pub const EFFORT_LEVELS: &[&str] = &["low", "medium", "high", "xhigh", "max"];
 
 impl SettingSources {
     /// The switches of this choice, in the order they are passed.
@@ -122,16 +128,17 @@ impl Default for ClaudeConfig {
 }
 
 impl ClaudeConfig {
-    /// The command line a session is started with under `access`, program first: exactly what is
-    /// run for these arguments. `native_id` is the id of a new session (`--session-id`), unless
-    /// `resume` names one to continue (`--resume`). The part that decides what the session may do
-    /// without asking is [`launch_flags`](Self::launch_flags) of the same policy and mode, in the
-    /// same place.
+    /// The cwd-independent command line under `access`, program first. The real window launch
+    /// uses [`Self::argv_in`] to add its project-aware channel-plugin overlay. `native_id` is the
+    /// id of a new session (`--session-id`), unless `resume` names one to continue (`--resume`);
+    /// `effort` is one of [`EFFORT_LEVELS`] (`--effort`). The part that decides what the session
+    /// may do without asking is [`launch_flags`](Self::launch_flags) of the same policy and mode.
     pub fn argv(
         &self,
         policy: &HarnessPolicy,
         access: AccessMode,
         model: Option<&str>,
+        effort: Option<&str>,
         resume: Option<&str>,
         native_id: &str,
     ) -> Vec<String> {
@@ -141,9 +148,30 @@ impl ClaudeConfig {
             &launch,
             self.setting_sources,
             model,
+            effort,
             resume,
             native_id,
         ));
+        argv
+    }
+
+    /// [`Self::argv`] for the explicit working directory whose project/local Claude settings
+    /// apply. The window launch uses this same channel-plugin overlay with its session cwd.
+    #[allow(clippy::too_many_arguments)]
+    pub fn argv_in(
+        &self,
+        policy: &HarnessPolicy,
+        access: AccessMode,
+        model: Option<&str>,
+        effort: Option<&str>,
+        resume: Option<&str>,
+        native_id: &str,
+        cwd: &std::path::Path,
+    ) -> Vec<String> {
+        let mut argv = self.argv(policy, access, model, effort, resume, native_id);
+        if self.setting_sources == SettingSources::Personal {
+            channel_plugins::append_disabled_user_channels(&mut argv, &self.extra_env, cwd);
+        }
         argv
     }
 
@@ -158,11 +186,45 @@ impl ClaudeConfig {
 
 pub struct ClaudeHarness {
     config: ClaudeConfig,
+    command_snapshots: Arc<CommandSnapshots>,
+}
+
+#[derive(Clone)]
+struct CommandSnapshot {
+    revision: u64,
+    commands: HarnessCommands,
+}
+
+#[derive(Default)]
+struct CommandSnapshots {
+    next_revision: AtomicU64,
+    by_folder: Mutex<HashMap<PathBuf, CommandSnapshot>>,
+}
+
+impl CommandSnapshots {
+    fn get(&self, cwd: &Path) -> Option<CommandSnapshot> {
+        self.by_folder
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(cwd)
+            .cloned()
+    }
+
+    fn replace(&self, cwd: PathBuf, commands: HarnessCommands) {
+        let revision = self.next_revision.fetch_add(1, Ordering::Relaxed) + 1;
+        self.by_folder
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(cwd, CommandSnapshot { revision, commands });
+    }
 }
 
 impl ClaudeHarness {
     pub fn new(config: ClaudeConfig) -> Self {
-        Self { config }
+        Self {
+            config,
+            command_snapshots: Arc::default(),
+        }
     }
 
     /// [`ClaudeConfig::argv`] of this harness.
@@ -171,10 +233,12 @@ impl ClaudeHarness {
         policy: &HarnessPolicy,
         access: AccessMode,
         model: Option<&str>,
+        effort: Option<&str>,
         resume: Option<&str>,
         native_id: &str,
     ) -> Vec<String> {
-        self.config.argv(policy, access, model, resume, native_id)
+        self.config
+            .argv(policy, access, model, effort, resume, native_id)
     }
 }
 
@@ -204,10 +268,34 @@ pub(crate) struct Launch {
 /// the plugin's configuration). Confirm: `default` + `can_use_tool`, so every command, write and
 /// network call the CLI does not settle itself is a question to the slot, which has no automatic
 /// "yes" here; read-only is `default` too, with `--tools` limited to the read tools and no
-/// `--allowedTools`. Full: `bypassPermissions` when it widens the policy, `dontAsk` with the read
+/// `--allowedTools`. Claude's web tools remain available in Confirm because their use reaches the
+/// same permission callback; preserved legacy auto modes still keep the network-denied tool cap.
+/// Full: `bypassPermissions` when it widens the policy, `dontAsk` with the read
 /// tools when the session is read-only. `approval: never` under confirm is refused before this
 /// point ([`NEVER_REFUSED`]).
 pub(crate) fn launch_for(policy: &HarnessPolicy, access: AccessMode) -> Launch {
+    launch_for_interaction(policy, access, InteractionMode::Default)
+}
+
+fn launch_for_interaction(
+    policy: &HarnessPolicy,
+    access: AccessMode,
+    interaction_mode: InteractionMode,
+) -> Launch {
+    if interaction_mode == InteractionMode::Plan {
+        let read_only = policy.sandbox == SandboxMode::ReadOnly;
+        return Launch {
+            permission_mode: "plan",
+            permission_prompt: true,
+            bypass: false,
+            // Plan mode changes Claude's interaction policy, not the session sandbox. T3 keeps
+            // its read-only allow-list here too, so a reviewer cannot acquire Bash/Write merely
+            // by asking Claude to plan.
+            tools: read_only.then_some(READ_ONLY_TOOLS),
+            disallowed_tools: (!read_only && policy.network == NetworkAccess::Denied)
+                .then_some("WebFetch,WebSearch"),
+        };
+    }
     if access == AccessMode::Full && policy.sandbox == SandboxMode::ReadOnly {
         // Full access does not widen a read-only session (a reviewer stays one): the read tools
         // only, as T3 does for read-only (`ClaudeAdapterV2.ts:3380-3386`, `dontAsk` + tools), and
@@ -237,13 +325,24 @@ pub(crate) fn launch_for(policy: &HarnessPolicy, access: AccessMode) -> Launch {
         };
     }
     let read_only = policy.sandbox == SandboxMode::ReadOnly;
+    let permission_mode = match access {
+        _ if read_only => "default",
+        AccessMode::AutoAcceptEdits | AccessMode::AcceptEdits => "acceptEdits",
+        AccessMode::Auto => "auto",
+        // Full that does not widen is read-only, handled above.
+        AccessMode::Confirm | AccessMode::Full => "default",
+    };
     Launch {
-        permission_mode: "default",
+        permission_mode,
         permission_prompt: true,
         bypass: false,
         tools: read_only.then_some(READ_ONLY_TOOLS),
-        // The CLI has no network switch; without network access its two network tools stay off.
-        disallowed_tools: (policy.network == NetworkAccess::Denied).then_some("WebFetch,WebSearch"),
+        // Confirm asks the person about WebFetch/WebSearch through the stdio callback. Keep the
+        // old network-denied cap for persisted auto modes: they can settle actions themselves and
+        // are not part of this exception.
+        disallowed_tools: (access != AccessMode::Confirm
+            && policy.network == NetworkAccess::Denied)
+            .then_some("WebFetch,WebSearch"),
     }
 }
 
@@ -265,6 +364,7 @@ pub(crate) fn session_args(
     launch: &Launch,
     sources: SettingSources,
     model: Option<&str>,
+    effort: Option<&str>,
     resume: Option<&str>,
     new_id: &str,
 ) -> Vec<String> {
@@ -272,6 +372,11 @@ pub(crate) fn session_args(
     args.extend(permission_args(launch, sources));
     if let Some(model) = model.filter(|model| *model != "default") {
         args.extend(["--model".into(), model.into()]);
+    }
+    // T3 hands the chosen level to its SDK (`effort`, `ClaudeAdapterV2.ts:2296`), which passes it
+    // to the CLI as this switch.
+    if let Some(effort) = effort {
+        args.extend(["--effort".into(), effort.into()]);
     }
     match resume {
         Some(id) => args.extend(["--resume".into(), id.into()]),
@@ -329,6 +434,458 @@ fn probe_args() -> Vec<String> {
     args
 }
 
+/// The probe of the slash commands and skills of a folder (HOH-41), T3
+/// `buildClaudeCapabilitiesProbeQueryOptions` with the folder as its cwd: before the person's
+/// first message it uses user settings but never the untrusted folder's project/local settings,
+/// no hooks, no MCP server, no stored session, and nothing allowed without a question. Once a
+/// real session starts for that message, its `initialize` and `reload_skills` snapshot replaces
+/// this probe. The probe itself runs no turn.
+fn commands_probe_args(sources: SettingSources) -> Vec<String> {
+    let mut args = base_args();
+    // Before a turn Personal may see the person's own commands, while Isolated must stay as
+    // empty as the real session. Neither profile reads project/local sources in this probe.
+    let sources = match sources {
+        SettingSources::Personal => "user",
+        SettingSources::Isolated => "",
+    };
+    args.extend(
+        [
+            "--permission-mode",
+            "default",
+            "--permission-prompt-tool",
+            "stdio",
+            "--setting-sources",
+            sources,
+        ]
+        .map(str::to_owned),
+    );
+    args.extend(
+        [
+            "--settings",
+            match sources {
+                "user" => "{\"disableAllHooks\":true,\"enabledPlugins\":{\"telegram@claude-plugins-official\":false}}",
+                _ => "{\"disableAllHooks\":true}",
+            },
+            "--no-session-persistence",
+            "--mcp-config",
+            "{\"mcpServers\":{}}",
+        ]
+        .map(str::to_owned),
+    );
+    args.push("--strict-mcp-config".to_owned());
+    args
+}
+
+/// Commands as Claude Code lists them (`initialize` → `commands`, `reload_skills` → `skills`):
+/// each with a name, trimmed; empty parts dropped; one per name regardless of case, the first,
+/// filled with a later one's description and hint (T3 `parseClaudeInitializationCommands`,
+/// `dedupeSlashCommands`). Nothing is added.
+pub(crate) fn commands_from(list: Option<&Value>) -> Vec<HarnessCommand> {
+    let field = |command: &Value, key: &str| {
+        command
+            .get(key)
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_owned)
+    };
+    let mut found: Vec<HarnessCommand> = Vec::new();
+    for command in list.and_then(Value::as_array).into_iter().flatten() {
+        let Some(name) = field(command, "name") else {
+            continue;
+        };
+        let description = field(command, "description");
+        let argument_hint = field(command, "argumentHint");
+        match found
+            .iter_mut()
+            .find(|seen| seen.name.to_lowercase() == name.to_lowercase())
+        {
+            Some(seen) => {
+                if seen.description.is_none() {
+                    seen.description = description;
+                }
+                if seen.argument_hint.is_none() {
+                    seen.argument_hint = argument_hint;
+                }
+            }
+            None => found.push(HarnessCommand {
+                name,
+                description,
+                argument_hint,
+            }),
+        }
+    }
+    found
+}
+
+/// What Claude Code declares for `cwd`, from [`commands_probe_args`]: the commands of its answer
+/// to `initialize`, the skills of its answer to `reload_skills` (a CLI without that request gives
+/// none). HoH reads none of Claude Code's files.
+async fn commands_of(config: &ClaudeConfig, cwd: PathBuf) -> HarnessResult<HarnessCommands> {
+    let version = match check_version(config).await {
+        VersionCheck::Supported(version) => version,
+        VersionCheck::NotInstalled => {
+            return Err(HarnessFailure::new(
+                code::NOT_INSTALLED,
+                version::not_installed_message(),
+            ));
+        }
+        VersionCheck::Refused { message, .. } => {
+            return Err(HarnessFailure::new(code::UNSUPPORTED_VERSION, message));
+        }
+    };
+    let args = commands_probe_args(config.setting_sources);
+    let sup = spawn(&spec(config, args, cwd.clone(), true)).await?;
+    let (session, _events, init) = ClaudeSession::start(
+        sup,
+        String::new(),
+        cwd,
+        &version,
+        settings_of(config, false),
+    )
+    .await?;
+    let skills = session.control("reload_skills", config.init_timeout).await;
+    session.terminate_now().await;
+    Ok(HarnessCommands {
+        commands: commands_from(init.response.get("commands")),
+        skills: skills
+            .map(|answer| commands_from(answer.get("skills")))
+            .unwrap_or_default(),
+    })
+}
+
+const TITLE_SCHEMA: &str = r#"{"type":"object","properties":{"title":{"type":"string"}},"required":["title"],"additionalProperties":false}"#;
+
+fn managed_mcp_config_path() -> &'static Path {
+    if cfg!(target_os = "macos") {
+        Path::new("/Library/Application Support/ClaudeCode/managed-mcp.json")
+    } else if cfg!(target_os = "windows") {
+        Path::new(r"C:\Program Files\ClaudeCode\managed-mcp.json")
+    } else {
+        Path::new("/etc/claude-code/managed-mcp.json")
+    }
+}
+
+const TITLE_INPUT_MAX_BYTES: usize = 64 * 1024;
+const TITLE_OUTPUT_MAX_BYTES: usize = 64 * 1024;
+const TITLE_TIMEOUT: Duration = Duration::from_secs(45);
+static TITLE_SLOT: Semaphore = Semaphore::const_new(1);
+
+fn title_args(
+    setting_sources: SettingSources,
+    no_session_persistence: bool,
+    managed_mcp_config: bool,
+) -> Vec<String> {
+    let mut args = [
+        "-p",
+        "--output-format",
+        "json",
+        "--json-schema",
+        TITLE_SCHEMA,
+        "--model",
+        "claude-haiku-5-5",
+        "--effort",
+        "low",
+        "--settings",
+        r#"{"disableAllHooks":true}"#,
+        "--tools",
+        "",
+        "--disable-slash-commands",
+    ]
+    .map(str::to_owned)
+    .to_vec();
+    if no_session_persistence {
+        args.push("--no-session-persistence".into());
+    }
+    args.extend(
+        [
+            "--setting-sources",
+            match setting_sources {
+                SettingSources::Personal => PERSONAL_SETTING_SOURCES,
+                SettingSources::Isolated => "",
+            },
+        ]
+        .map(str::to_owned),
+    );
+    // Claude rejects strict MCP mode when the administrator has installed managed-mcp.json;
+    // that file already excludes every other MCP source. This is T3's exact conditional.
+    if !managed_mcp_config {
+        args.push("--strict-mcp-config".into());
+    }
+    args.extend(["--permission-mode".into(), "dontAsk".into()]);
+    args
+}
+
+#[derive(Debug)]
+struct TitleCommandOutput {
+    status: ExitInfo,
+    response: Option<Value>,
+    stderr: String,
+}
+
+/// A cancelled title future must not detach its CLI or any descendant. Successful/explicitly
+/// terminated supervisors make this a cheap idempotent no-op.
+struct AbandonTitleOnDrop<'a>(&'a Supervisor);
+
+impl Drop for AbandonTitleOnDrop<'_> {
+    fn drop(&mut self) {
+        self.0.abandon();
+    }
+}
+
+/// Private, cancellation-safe storage for the one-shot cwd and fallback Claude config. Drop is
+/// synchronous deliberately: cancelling the future must remove persisted prompt/session data
+/// before control returns to its caller.
+struct TitleTempRoot {
+    path: PathBuf,
+    closed: bool,
+}
+
+impl TitleTempRoot {
+    fn create() -> HarnessResult<Self> {
+        let path = std::env::temp_dir().join(format!("hoh-claude-title-{}", random_uuid()?));
+        let mut builder = DirBuilder::new();
+        #[cfg(unix)]
+        builder.mode(0o700);
+        builder.create(&path).map_err(|error| {
+            HarnessFailure::new(
+                code::IO,
+                format!("cannot create private title storage: {error}"),
+            )
+        })?;
+        Ok(Self {
+            path,
+            closed: false,
+        })
+    }
+
+    fn path(&self) -> &Path {
+        &self.path
+    }
+
+    fn close(mut self) -> HarnessResult<()> {
+        std::fs::remove_dir_all(&self.path).map_err(|error| {
+            HarnessFailure::new(
+                code::IO,
+                format!("cannot remove private title storage: {error}"),
+            )
+        })?;
+        self.closed = true;
+        Ok(())
+    }
+
+    /// Remove storage before returning either a successful title response or its failure. This
+    /// keeps ordinary errors and timeouts on the same explicit, fallible cleanup path.
+    fn finish<T>(self, outcome: HarnessResult<T>) -> HarnessResult<T> {
+        self.close()?;
+        outcome
+    }
+}
+
+impl Drop for TitleTempRoot {
+    fn drop(&mut self) {
+        if !self.closed
+            && let Err(error) = std::fs::remove_dir_all(&self.path)
+        {
+            // Drop cannot return the cleanup failure, but it must not be silent: this means
+            // cancellation may have left isolated Claude persistence behind. Do not print the
+            // path because it can identify a sensitive title request.
+            eprintln!("cannot remove cancelled Claude title storage: {error}");
+        }
+    }
+}
+
+fn title_spec(
+    config: &ClaudeConfig,
+    cwd: &Path,
+    no_session_persistence: bool,
+    fallback_config_dir: Option<&Path>,
+) -> ProcessSpec {
+    let mut env: Vec<_> = config
+        .extra_env
+        .iter()
+        .filter(|(name, _)| fallback_config_dir.is_none() || name != "CLAUDE_CONFIG_DIR")
+        .cloned()
+        .collect();
+    if let Some(directory) = fallback_config_dir {
+        env.push((
+            "CLAUDE_CONFIG_DIR".to_owned(),
+            directory.to_string_lossy().into_owned(),
+        ));
+    }
+    let mut args = title_args(
+        config.setting_sources,
+        no_session_persistence,
+        managed_mcp_config_path().exists(),
+    );
+    if config.setting_sources == SettingSources::Personal {
+        let mut overlay = Vec::new();
+        channel_plugins::append_disabled_channels(&mut overlay, &env, cwd, None);
+        if let Some(settings) = overlay.get(1)
+            && let Ok(mut value) = serde_json::from_str::<Value>(settings)
+            && let Some(object) = value.as_object_mut()
+        {
+            object.insert("disableAllHooks".to_owned(), Value::Bool(true));
+            if let Some(index) = args.iter().position(|arg| arg == "--settings") {
+                args[index + 1] = value.to_string();
+            }
+        }
+    }
+    ProcessSpec {
+        program: config.executable.clone(),
+        args,
+        cwd: Some(cwd.to_owned()),
+        cwd_identity: None,
+        env,
+        env_remove: Vec::new(),
+    }
+}
+
+fn title_limits() -> SupervisorLimits {
+    SupervisorLimits {
+        max_frame_bytes: TITLE_OUTPUT_MAX_BYTES,
+        frame_queue: 2,
+        stdin_queue: 1,
+        stderr_lines: 20,
+        stderr_line_bytes: 2048,
+    }
+}
+
+async fn run_title_command(
+    config: &ClaudeConfig,
+    cwd: &Path,
+    prompt: &str,
+    no_session_persistence: bool,
+    fallback_config_dir: Option<&Path>,
+) -> Result<TitleCommandOutput, HarnessFailure> {
+    let spec = title_spec(config, cwd, no_session_persistence, fallback_config_dir);
+    run_title_process(&spec, prompt, TITLE_TIMEOUT).await
+}
+
+async fn run_title_process(
+    spec: &ProcessSpec,
+    prompt: &str,
+    deadline: Duration,
+) -> Result<TitleCommandOutput, HarnessFailure> {
+    let supervisor = Supervisor::spawn(spec, title_limits(), None)?;
+    let _abandon_on_drop = AbandonTitleOnDrop(&supervisor);
+    let Some(mut frames) = supervisor.take_frames() else {
+        supervisor.terminate(Duration::from_millis(200)).await;
+        return Err(HarnessFailure::new(
+            code::CLOSED,
+            "Claude title output is unavailable",
+        ));
+    };
+    let outcome = tokio::time::timeout(deadline, async {
+        supervisor
+            .send_input_and_close(prompt.as_bytes(), TITLE_INPUT_MAX_BYTES)
+            .await?;
+        let mut response = None;
+        loop {
+            match frames.recv().await {
+                Some(Frame::Message(value)) if response.is_none() => response = Some(value),
+                Some(Frame::Message(_)) => {
+                    return Err(HarnessFailure::new(
+                        code::PROTOCOL,
+                        "Claude returned more than one title response",
+                    ));
+                }
+                Some(Frame::Violation(detail)) => {
+                    return Err(HarnessFailure::new(code::PROTOCOL, detail));
+                }
+                Some(Frame::Closed { truncated: true }) => {
+                    return Err(HarnessFailure::new(
+                        code::PROTOCOL,
+                        "Claude returned a truncated title response",
+                    ));
+                }
+                Some(Frame::Closed { truncated: false }) | None => break,
+            }
+        }
+        Ok((supervisor.wait().await, response))
+    })
+    .await;
+    let (status, response) = match outcome {
+        Ok(Ok(output)) => output,
+        Ok(Err(error)) => {
+            supervisor.terminate(Duration::from_millis(200)).await;
+            return Err(error);
+        }
+        Err(_) => {
+            supervisor.terminate(Duration::from_millis(200)).await;
+            return Err(HarnessFailure::new(
+                code::HARNESS,
+                "Claude title request timed out",
+            ));
+        }
+    };
+    supervisor.stderr_drained(Duration::from_millis(200)).await;
+    Ok(TitleCommandOutput {
+        status,
+        response,
+        stderr: supervisor.stderr_tail(),
+    })
+}
+
+async fn generate_title(config: ClaudeConfig, prompt: String) -> HarnessResult<String> {
+    let _slot = TITLE_SLOT.acquire().await.map_err(|_| {
+        HarnessFailure::new(code::CLOSED, "Claude title request slot is unavailable")
+    })?;
+    let root = TitleTempRoot::create()?;
+    let directory = root.path().join("cwd");
+    let fallback_config = root.path().join("config");
+    tokio::fs::create_dir_all(&directory)
+        .await
+        .map_err(|error| {
+            HarnessFailure::new(
+                code::HARNESS,
+                format!("cannot create title directory: {error}"),
+            )
+        })?;
+    let outcome = async {
+        let first = run_title_command(&config, &directory, &prompt, true, None).await;
+        match first {
+            Ok(output)
+                if !output.status.success()
+                    && output.stderr.contains("--no-session-persistence") =>
+            {
+                tokio::fs::create_dir_all(&fallback_config)
+                    .await
+                    .map_err(|error| {
+                        HarnessFailure::new(
+                            code::HARNESS,
+                            format!("cannot create isolated title configuration: {error}"),
+                        )
+                    })?;
+                run_title_command(&config, &directory, &prompt, false, Some(&fallback_config)).await
+            }
+            output => output,
+        }
+    }
+    .await;
+    let output = root.finish(outcome)?;
+    if !output.status.success() {
+        return Err(HarnessFailure::new(
+            code::HARNESS,
+            format!(
+                "Claude title request exited unsuccessfully: {}",
+                output.stderr.trim()
+            ),
+        ));
+    }
+    let envelope = output
+        .response
+        .ok_or_else(|| HarnessFailure::new(code::PROTOCOL, "Claude returned no title response"))?;
+    let title = envelope
+        .get("structured_output")
+        .and_then(|value| value.get("title"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|title| !title.is_empty() && title.len() <= 120)
+        .ok_or_else(|| HarnessFailure::new(code::PROTOCOL, "Claude returned an invalid title"))?;
+    Ok(title.to_owned())
+}
+
 fn settings_of(config: &ClaudeConfig, bypass: bool) -> SessionSettings {
     SessionSettings {
         event_queue: config.event_queue,
@@ -378,6 +935,7 @@ enum VersionCheck {
     Refused {
         version: Option<String>,
         message: String,
+        failure: Option<DiscoveryFailure>,
     },
 }
 
@@ -399,11 +957,22 @@ async fn check_version(config: &ClaudeConfig) -> VersionCheck {
     let mut command = tokio::process::Command::new(&config.executable);
     command
         .arg("--version")
-        .envs(config.extra_env.iter().map(|(k, v)| (k, v)))
+        .envs(
+            config
+                .extra_env
+                .iter()
+                .filter(|(k, _)| !hoh_external_harness::supervisor::is_telegram_env(k))
+                .map(|(k, v)| (k, v)),
+        )
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::null())
         .kill_on_drop(true);
+    for (name, _) in std::env::vars_os() {
+        if name.to_string_lossy().starts_with("TELEGRAM_") {
+            command.env_remove(name);
+        }
+    }
     let mut child = match command.spawn() {
         Ok(child) => child,
         Err(error)
@@ -418,6 +987,7 @@ async fn check_version(config: &ClaudeConfig) -> VersionCheck {
             return VersionCheck::Refused {
                 version: None,
                 message: version::unrecognized_version_message(&error.to_string()),
+                failure: None,
             };
         }
     };
@@ -439,6 +1009,10 @@ async fn check_version(config: &ClaudeConfig) -> VersionCheck {
         return VersionCheck::Refused {
             version: None,
             message: version::unrecognized_version_message("нет ответа на --version"),
+            failure: Some(DiscoveryFailure::Timeout {
+                operation: DiscoveryOperation::Version,
+                timeout_seconds: config.version_timeout.as_secs().max(1),
+            }),
         };
     }
     if let Some(status) = status.filter(|status| !status.success()) {
@@ -450,12 +1024,17 @@ async fn check_version(config: &ClaudeConfig) -> VersionCheck {
         return VersionCheck::Refused {
             version: None,
             message: version::unrecognized_version_message(&shown),
+            failure: Some(DiscoveryFailure::Exit {
+                operation: DiscoveryOperation::Version,
+                exit_code: status.code(),
+            }),
         };
     }
     match version::parse_version(&output) {
         None => VersionCheck::Refused {
             version: None,
             message: version::unrecognized_version_message(&output),
+            failure: None,
         },
         Some(parsed) if version::is_supported(parsed) => {
             VersionCheck::Supported(version::format_version(parsed))
@@ -465,6 +1044,7 @@ async fn check_version(config: &ClaudeConfig) -> VersionCheck {
             VersionCheck::Refused {
                 message: version::unsupported_version_message(&shown),
                 version: Some(shown),
+                failure: None,
             }
         }
     }
@@ -487,6 +1067,7 @@ fn spec(config: &ClaudeConfig, args: Vec<String>, cwd: PathBuf, probe: bool) -> 
         program: config.executable.clone(),
         args,
         cwd: Some(cwd),
+        cwd_identity: None,
         env,
         env_remove: Vec::new(),
     }
@@ -495,9 +1076,7 @@ fn spec(config: &ClaudeConfig, args: Vec<String>, cwd: PathBuf, probe: bool) -> 
 async fn spawn(spec: &ProcessSpec) -> Result<Supervisor, HarnessFailure> {
     // A missing folder fails the launch with the same `NotFound` as a missing program.
     if let Some(cwd) = &spec.cwd
-        && !tokio::fs::metadata(cwd)
-            .await
-            .is_ok_and(|meta| meta.is_dir())
+        && !std::fs::metadata(cwd).is_ok_and(|meta| meta.is_dir())
     {
         return Err(HarnessFailure::new(
             code::IO,
@@ -542,6 +1121,8 @@ pub(crate) fn models_from(response: &Value) -> Vec<HarnessModel> {
         id: "default".into(),
         display_name: Some("По умолчанию (модель Claude Code)".into()),
         is_default: true,
+        effort_levels: Vec::new(),
+        default_effort: None,
     }];
     let reported: Vec<HarnessModel> = response
         .get("models")
@@ -558,6 +1139,8 @@ pub(crate) fn models_from(response: &Value) -> Vec<HarnessModel> {
                     .and_then(Value::as_str)
                     .map(str::to_owned),
                 is_default: false,
+                effort_levels: Vec::new(),
+                default_effort: None,
             })
         })
         .collect();
@@ -566,6 +1149,8 @@ pub(crate) fn models_from(response: &Value) -> Vec<HarnessModel> {
             id: alias.into(),
             display_name: None,
             is_default: false,
+            effort_levels: Vec::new(),
+            default_effort: None,
         }));
     } else {
         models.extend(reported);
@@ -588,16 +1173,22 @@ async fn discover_claude(config: &ClaudeConfig) -> (Discovery, VersionStatus) {
                 auth: AuthState::Unknown,
                 models: Vec::new(),
                 detail: Some(version::not_installed_message()),
+                failure: None,
             };
             return (discovery, status);
         }
-        VersionCheck::Refused { version, message } => {
+        VersionCheck::Refused {
+            version,
+            message,
+            failure,
+        } => {
             let discovery = Discovery {
                 installed: true,
                 version,
                 auth: AuthState::Unknown,
                 models: Vec::new(),
                 detail: Some(hoh_external_harness::redact::redact(&message)),
+                failure,
             };
             return (discovery, status);
         }
@@ -625,6 +1216,10 @@ async fn discover_claude(config: &ClaudeConfig) -> (Discovery, VersionStatus) {
                 auth: AuthState::Unknown,
                 models: Vec::new(),
                 detail: Some(hoh_external_harness::redact::redact(&failure.message)),
+                failure: (failure.code == code::TIMEOUT).then_some(DiscoveryFailure::Timeout {
+                    operation: DiscoveryOperation::Initialize,
+                    timeout_seconds: config.init_timeout.as_secs().max(1),
+                }),
             };
             return (discovery, status);
         }
@@ -639,6 +1234,7 @@ async fn discover_claude(config: &ClaudeConfig) -> (Discovery, VersionStatus) {
         detail: (auth == AuthState::Unauthenticated).then(|| {
             "Вход в Claude Code не выполнен: запустите `claude` в терминале и войдите.".to_owned()
         }),
+        failure: None,
     };
     (discovery, status)
 }
@@ -663,6 +1259,29 @@ impl ExternalHarness for ClaudeHarness {
         true
     }
 
+    fn effort_levels(&self) -> &'static [&'static str] {
+        EFFORT_LEVELS
+    }
+
+    fn commands(&self, cwd: PathBuf) -> BoxFuture<'static, HarnessResult<HarnessCommands>> {
+        if let Some(snapshot) = self.command_snapshots.get(&cwd) {
+            return Box::pin(std::future::ready(Ok(snapshot.commands)));
+        }
+        let config = self.config.clone();
+        Box::pin(async move { commands_of(&config, cwd).await })
+    }
+
+    fn commands_revision(&self, cwd: &Path) -> u64 {
+        self.command_snapshots
+            .get(cwd)
+            .map_or(0, |snapshot| snapshot.revision)
+    }
+
+    fn generate_title(&self, prompt: String) -> BoxFuture<'static, HarnessResult<String>> {
+        let config = self.config.clone();
+        Box::pin(async move { generate_title(config, prompt).await })
+    }
+
     /// Without a mode from the slot: the default one ([`DEFAULT_ACCESS`], confirm).
     fn start_or_resume(&self, params: StartParams) -> BoxFuture<'static, HarnessResult<Started>> {
         self.start_with_access(params, DEFAULT_ACCESS)
@@ -676,11 +1295,32 @@ impl ExternalHarness for ClaudeHarness {
         params: StartParams,
         access: AccessMode,
     ) -> BoxFuture<'static, HarnessResult<Started>> {
+        self.start_with_folder_trust(params, access, false)
+    }
+
+    fn start_with_folder_trust(
+        &self,
+        params: StartParams,
+        access: AccessMode,
+        trusted: bool,
+    ) -> BoxFuture<'static, HarnessResult<Started>> {
         let config = self.config.clone();
+        let command_snapshots = self.command_snapshots.clone();
         Box::pin(async move {
             // In full access nothing is asked by definition, so `never` changes nothing there.
-            if params.policy.approval == ApprovalMode::Never && access == AccessMode::Confirm {
+            if params.policy.approval == ApprovalMode::Never && access.asks() {
                 return Err(HarnessFailure::new(code::ESCALATION_DENIED, NEVER_REFUSED));
+            }
+            // Only a level of the list follows `--effort` (the slot passes no other).
+            if let Some(effort) = params
+                .effort
+                .as_deref()
+                .filter(|e| !EFFORT_LEVELS.contains(e))
+            {
+                return Err(HarnessFailure::new(
+                    code::PROTOCOL,
+                    format!("Claude Code has no effort level {effort:?}"),
+                ));
             }
             // No chat with a version outside the range (the CEO's condition).
             let version = match check_version(&config).await {
@@ -706,24 +1346,55 @@ impl ExternalHarness for ClaudeHarness {
                 Some(id) => id.clone(),
                 None => random_uuid()?,
             };
-            let launch = launch_for(&params.policy, access);
-            let args = session_args(
+            let launch = launch_for_interaction(&params.policy, access, params.interaction_mode);
+            let cwd = PathBuf::from(&params.cwd);
+            let command_key = tokio::fs::canonicalize(&cwd)
+                .await
+                .unwrap_or_else(|_| cwd.clone());
+            let mut args = session_args(
                 &launch,
                 config.setting_sources,
                 params.model.as_deref(),
+                params.effort.as_deref(),
                 resume.as_deref(),
                 &native,
             );
-            let cwd = PathBuf::from(&params.cwd);
-            let sup = spawn(&spec(&config, args, cwd.clone(), false)).await?;
-            let (session, events, _init) = ClaudeSession::start(
+            if config.setting_sources == SettingSources::Personal && trusted {
+                if let Some(index) = args.iter().position(|arg| arg == "--setting-sources") {
+                    args[index + 1] = "user,project,local".to_owned();
+                }
+            }
+            if config.setting_sources == SettingSources::Personal && trusted {
+                channel_plugins::append_disabled_channels(
+                    &mut args,
+                    &config.extra_env,
+                    &cwd,
+                    params.cwd_identity,
+                );
+            } else if config.setting_sources == SettingSources::Personal {
+                channel_plugins::append_disabled_user_channels(&mut args, &config.extra_env, &cwd);
+            }
+            let mut process = spec(&config, args, cwd.clone(), false);
+            process.cwd_identity = params.cwd_identity;
+            let sup = spawn(&process).await?;
+            let (session, events, init) = ClaudeSession::start(
                 sup,
                 native.clone(),
-                cwd,
+                cwd.clone(),
                 &version,
                 settings_of(&config, launch.bypass),
             )
             .await?;
+            let skills = session.control("reload_skills", config.init_timeout).await;
+            command_snapshots.replace(
+                command_key,
+                HarnessCommands {
+                    commands: commands_from(init.response.get("commands")),
+                    skills: skills
+                        .map(|answer| commands_from(answer.get("skills")))
+                        .unwrap_or_default(),
+                },
+            );
             Ok(Started {
                 result: StartResult {
                     native_session_id: native.into(),
@@ -739,12 +1410,83 @@ impl ExternalHarness for ClaudeHarness {
     fn launch_flags(&self, policy: &HarnessPolicy, access: AccessMode) -> Vec<String> {
         self.config.launch_flags(policy, access)
     }
+
+    fn launch_flags_for_folder_trust(
+        &self,
+        policy: &HarnessPolicy,
+        access: AccessMode,
+        trusted: bool,
+    ) -> Vec<String> {
+        let mut flags = self.config.launch_flags(policy, access);
+        if trusted
+            && self.config.setting_sources == SettingSources::Personal
+            && let Some(at) = flags.iter().position(|flag| flag == "--setting-sources")
+        {
+            flags[at + 1] = "user,project,local".to_owned();
+        }
+        flags
+    }
+
+    fn launch_flags_for_turn(
+        &self,
+        policy: &HarnessPolicy,
+        access: AccessMode,
+        interaction: InteractionMode,
+    ) -> Vec<String> {
+        permission_args(
+            &launch_for_interaction(policy, access, interaction),
+            self.config.setting_sources,
+        )
+    }
+
+    fn launch_flags_for_turn_and_trust(
+        &self,
+        policy: &HarnessPolicy,
+        access: AccessMode,
+        interaction: InteractionMode,
+        trusted: bool,
+    ) -> Vec<String> {
+        let mut flags = self.launch_flags_for_turn(policy, access, interaction);
+        if trusted
+            && self.config.setting_sources == SettingSources::Personal
+            && let Some(at) = flags.iter().position(|flag| flag == "--setting-sources")
+        {
+            flags[at + 1] = "user,project,local".to_owned();
+        }
+        flags
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn published_plan_flags_match_the_actual_full_plan_launch() {
+        use hoh_external_harness::ExternalHarness;
+        let harness = ClaudeHarness::new(ClaudeConfig::default());
+        let policy = HarnessPolicy {
+            sandbox: SandboxMode::FullAccess,
+            ..HarnessPolicy::default()
+        };
+        let flags = harness.launch_flags_for_turn(&policy, AccessMode::Full, InteractionMode::Plan);
+        let at = flags
+            .iter()
+            .position(|flag| flag == "--permission-mode")
+            .unwrap();
+        assert_eq!(flags[at + 1], "plan");
+        assert!(!flags.iter().any(|flag| flag.contains("bypass")));
+        assert_eq!(
+            flags,
+            permission_args(
+                &launch_for_interaction(&policy, AccessMode::Full, InteractionMode::Plan),
+                harness.config.setting_sources
+            )
+        );
+    }
     use serde_json::json;
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt;
 
     #[test]
     fn only_a_missing_token_without_other_proof_is_signed_out() {
@@ -817,7 +1559,8 @@ mod tests {
                         AccessMode::Confirm,
                     );
                     assert_eq!(launch.permission_mode, "default");
-                    let args = session_args(&launch, DEFAULT_SETTING_SOURCES, None, None, "id");
+                    let args =
+                        session_args(&launch, DEFAULT_SETTING_SOURCES, None, None, None, "id");
                     let at = args
                         .iter()
                         .position(|a| a == "--permission-prompt-tool")
@@ -841,6 +1584,7 @@ mod tests {
             AccessMode::Full,
             None,
             None,
+            None,
             "id",
         );
         let at = argv.iter().position(|a| a == "--permission-mode").unwrap();
@@ -849,6 +1593,126 @@ mod tests {
         assert!(argv.contains(&"--permission-prompt-tool".to_owned()));
         assert!(!argv.contains(&"--disallowedTools".to_owned()));
         assert!(!argv.contains(&"--tools".to_owned()));
+    }
+
+    #[test]
+    fn argv_disables_only_channel_plugins_in_the_session_working_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        let config_dir = dir.path().join("claude-config");
+        let project = dir.path().join("project");
+        let channel = config_dir.join("plugins/cache/test/chat/1");
+        let ordinary = config_dir.join("plugins/cache/test/ordinary/1");
+        std::fs::create_dir_all(channel.join("src")).unwrap();
+        std::fs::create_dir_all(&ordinary).unwrap();
+        std::fs::create_dir_all(&project).unwrap();
+        std::fs::write(
+            config_dir.join("settings.json"),
+            r#"{"enabledPlugins":{"chat@test":true,"ordinary@test":true}}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            config_dir.join("plugins/installed_plugins.json"),
+            serde_json::json!({
+                "plugins": {
+                    "chat@test": [{"installPath": channel}],
+                    "ordinary@test": [{"installPath": ordinary}]
+                }
+            })
+            .to_string(),
+        )
+        .unwrap();
+        std::fs::write(
+            channel.join("src/server.ts"),
+            "experimental: { 'claude/channel': {} }",
+        )
+        .unwrap();
+        std::fs::write(
+            channel.join(".mcp.json"),
+            r#"{"mcpServers":{"chat":{"command":"node","args":["src/server.ts"]}}}"#,
+        )
+        .unwrap();
+        let config = ClaudeConfig {
+            extra_env: vec![(
+                "CLAUDE_CONFIG_DIR".into(),
+                config_dir.to_string_lossy().into_owned(),
+            )],
+            ..ClaudeConfig::default()
+        };
+
+        let argv = config.argv_in(
+            &HarnessPolicy::default(),
+            AccessMode::Confirm,
+            None,
+            None,
+            None,
+            "id",
+            &project,
+        );
+        let at = argv.iter().position(|arg| arg == "--settings").unwrap();
+        assert_eq!(
+            serde_json::from_str::<Value>(&argv[at + 1]).unwrap(),
+            serde_json::json!({"enabledPlugins":{"chat@test":false,"telegram@claude-plugins-official":false}})
+        );
+        let title = title_spec(&config, &project, true, None);
+        let at = title
+            .args
+            .iter()
+            .position(|arg| arg == "--settings")
+            .unwrap();
+        assert_eq!(
+            serde_json::from_str::<Value>(&title.args[at + 1]).unwrap(),
+            serde_json::json!({"disableAllHooks": true, "enabledPlugins":{"chat@test":false,"telegram@claude-plugins-official":false}})
+        );
+    }
+
+    #[test]
+    fn personal_launches_always_disable_official_telegram() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = ClaudeConfig {
+            extra_env: vec![(
+                "CLAUDE_CONFIG_DIR".into(),
+                dir.path().join("missing").display().to_string(),
+            )],
+            ..ClaudeConfig::default()
+        };
+        let check = |args: &[String]| {
+            let settings: Vec<_> = args
+                .windows(2)
+                .filter(|pair| pair[0] == "--settings")
+                .collect();
+            assert_eq!(settings.len(), 1);
+            let value: Value = serde_json::from_str(&settings[0][1]).unwrap();
+            assert_eq!(
+                value["enabledPlugins"]["telegram@claude-plugins-official"],
+                false
+            );
+        };
+        for resume in [None, Some("existing")] {
+            check(&config.argv_in(
+                &HarnessPolicy::default(),
+                AccessMode::Confirm,
+                None,
+                None,
+                resume,
+                "new",
+                dir.path(),
+            ));
+            let launch = launch_for(&HarnessPolicy::default(), AccessMode::Confirm);
+            let mut trusted =
+                session_args(&launch, SettingSources::Personal, None, None, resume, "new");
+            channel_plugins::append_disabled_channels(
+                &mut trusted,
+                &config.extra_env,
+                dir.path(),
+                None,
+            );
+            check(&trusted);
+        }
+        check(&commands_probe_args(SettingSources::Personal));
+        for persistence in [true, false] {
+            check(&title_spec(&config, dir.path(), persistence, None).args);
+            check(&title_spec(&config, dir.path(), persistence, Some(dir.path())).args);
+        }
     }
 
     #[test]
@@ -870,11 +1734,12 @@ mod tests {
             for policy in [HarnessPolicy::default(), read_only, full_sandbox] {
                 for access in [AccessMode::Confirm, AccessMode::Full] {
                     for resume in [None, Some("old")] {
-                        let argv = config.argv(&policy, access, Some("opus"), resume, "new");
+                        let argv =
+                            config.argv(&policy, access, Some("opus"), Some("high"), resume, "new");
                         let mut expected = vec!["claude".to_owned()];
                         expected.extend(base_args());
                         expected.extend(config.launch_flags(&policy, access));
-                        expected.extend(["--model".to_owned(), "opus".to_owned()]);
+                        expected.extend(["--model", "opus", "--effort", "high"].map(str::to_owned));
                         match resume {
                             Some(id) => expected.extend(["--resume".to_owned(), id.to_owned()]),
                             None => expected.extend(["--session-id".to_owned(), "new".to_owned()]),
@@ -884,7 +1749,7 @@ mod tests {
                 }
             }
         }
-        // What the window shows for each mode, with the default sources (the human's settings).
+        // What the window shows for each mode before a folder has been trusted.
         let config = ClaudeConfig::default();
         assert_eq!(config.setting_sources, SettingSources::Personal);
         assert_eq!(
@@ -895,9 +1760,7 @@ mod tests {
                 "--setting-sources",
                 "user",
                 "--permission-prompt-tool",
-                "stdio",
-                "--disallowedTools",
-                "WebFetch,WebSearch"
+                "stdio"
             ]
         );
         assert_eq!(
@@ -937,11 +1800,25 @@ mod tests {
                 "",
                 "--strict-mcp-config",
                 "--permission-prompt-tool",
-                "stdio",
-                "--disallowedTools",
-                "WebFetch,WebSearch"
+                "stdio"
             ]
         );
+
+        // The web-tool exception is exactly Confirm. Persisted legacy auto modes keep the
+        // network-denied cap, while Full is already web-enabled.
+        for access in [
+            AccessMode::Confirm,
+            AccessMode::AutoAcceptEdits,
+            AccessMode::Auto,
+            AccessMode::Full,
+        ] {
+            let flags = config.launch_flags(&HarnessPolicy::default(), access);
+            assert_eq!(
+                flags.iter().any(|flag| flag == "--disallowedTools"),
+                matches!(access, AccessMode::AutoAcceptEdits | AccessMode::Auto),
+                "{access:?}: {flags:?}"
+            );
+        }
     }
 
     #[test]
@@ -951,16 +1828,98 @@ mod tests {
         assert_eq!(args[at + 1], "");
     }
 
+    /// CEO 23.11 00:07, T3 `ClaudeAdapterV2.ts:3395-3404`: the CLI's own mode for each of the
+    /// window's four, the two in between with confirm's question channel and closed network; a
+    /// read-only session stays confirm's read-only launch under them.
+    #[test]
+    fn each_mode_of_the_window_is_its_permission_mode() {
+        let policy = HarnessPolicy::default();
+        for (access, mode) in [
+            (AccessMode::Confirm, "default"),
+            (AccessMode::AcceptEdits, "acceptEdits"),
+            (AccessMode::Auto, "auto"),
+            (AccessMode::Full, "bypassPermissions"),
+        ] {
+            let launch = launch_for(&policy, access);
+            assert_eq!(launch.permission_mode, mode);
+            assert!(launch.permission_prompt);
+            assert_eq!(launch.bypass, access == AccessMode::Full);
+            assert_eq!(
+                launch.disallowed_tools,
+                matches!(
+                    access,
+                    AccessMode::AcceptEdits | AccessMode::AutoAcceptEdits | AccessMode::Auto
+                )
+                .then_some("WebFetch,WebSearch")
+            );
+        }
+        let read_only = HarnessPolicy {
+            sandbox: SandboxMode::ReadOnly,
+            ..HarnessPolicy::default()
+        };
+        for between in [AccessMode::AcceptEdits, AccessMode::Auto] {
+            let launch = launch_for(&read_only, between);
+            assert_eq!(launch.permission_mode, "default");
+            assert_eq!(
+                launch.tools,
+                launch_for(&read_only, AccessMode::Confirm).tools
+            );
+            assert!(!launch.bypass);
+        }
+    }
+
     #[test]
     fn default_model_adds_no_model_flag() {
         let launch = launch_for(&HarnessPolicy::default(), AccessMode::Confirm);
         let sources = DEFAULT_SETTING_SOURCES;
         assert!(
-            !session_args(&launch, sources, Some("default"), None, "id")
+            !session_args(&launch, sources, Some("default"), None, None, "id")
                 .contains(&"--model".into())
         );
         assert!(
-            session_args(&launch, sources, Some("opus"), None, "id").contains(&"--model".into())
+            session_args(&launch, sources, Some("opus"), None, None, "id")
+                .contains(&"--model".into())
         );
+    }
+    /// HOH-40: the level the window chose follows `--effort`; none, no switch (the CLI's own).
+    #[test]
+    fn the_effort_follows_its_switch() {
+        let launch = launch_for(&HarnessPolicy::default(), AccessMode::Confirm);
+        let sources = DEFAULT_SETTING_SOURCES;
+        for level in EFFORT_LEVELS {
+            let args = session_args(&launch, sources, None, Some(level), None, "id");
+            let at = args.iter().position(|a| a == "--effort").unwrap();
+            assert_eq!(args[at + 1], *level);
+        }
+        let args = session_args(&launch, sources, None, None, None, "id");
+        assert!(!args.contains(&"--effort".into()), "{args:?}");
+        assert_eq!(
+            ClaudeHarness::new(ClaudeConfig::default()).effort_levels(),
+            ["low", "medium", "high", "xhigh", "max"]
+        );
+    }
+
+    /// HOH-40: a level that is not Claude's is refused before anything starts.
+    #[tokio::test]
+    async fn a_level_claude_does_not_have_starts_nothing() {
+        let harness = ClaudeHarness::new(ClaudeConfig {
+            executable: PathBuf::from("/nonexistent/claude"),
+            ..ClaudeConfig::default()
+        });
+        let params = StartParams {
+            session_id: "s".into(),
+            cwd: "/".into(),
+            cwd_identity: None,
+            model: None,
+            effort: Some("--dangerously-skip-permissions".into()),
+            interaction_mode: InteractionMode::Default,
+            policy: HarnessPolicy::default(),
+            resume: None,
+        };
+        let failure = match harness.start_with_access(params, AccessMode::Confirm).await {
+            Err(failure) => failure,
+            Ok(_) => panic!("started"),
+        };
+        assert_eq!(failure.code, code::PROTOCOL, "{failure}");
     }
 }

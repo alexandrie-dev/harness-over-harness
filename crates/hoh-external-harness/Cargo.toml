@@ -17,6 +17,7 @@ never-mode = []
 
 [dependencies]
 hoh-agent = { path = "../hoh-agent" }
+hoh-attachment = { path = "../hoh-attachment" }
 hoh-atomic-write = { path = "../hoh-atomic-write" }
 hoh-brand = { path = "../hoh-brand" }
 hoh-destructive-classifier = { path = "../hoh-destructive-classifier" }
@@ -34,12 +35,14 @@ hoh-user-approval = { path = "../hoh-user-approval" }
 hoh-user-questions = { path = "../hoh-user-questions" }
 hoh-util-values = { path = "../hoh-util-values" }
 hoh-working-directory = { path = "../hoh-working-directory" }
+base64.workspace = true
 futures-util.workspace = true
 regex.workspace = true
 rustix = { workspace = true, features = ["process"] }
 schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+sha2.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
@@ -48,6 +51,8 @@ tokio-util.workspace = true
 tokio = { workspace = true, features = ["test-util"] }
 hoh-session-persistence-jsonl = { path = "../hoh-session-persistence-jsonl" }
 hoh-session-projection = { path = "../hoh-session-projection" }
+hoh-fs-local = { path = "../hoh-fs-local" }
+hoh-system-prompt = { path = "../hoh-system-prompt" }
 tempfile.workspace = true
 
 # The stub harness of the tests: a program that speaks the contract over stdio (tests/stub/).

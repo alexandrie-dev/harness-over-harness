@@ -11,6 +11,7 @@ export interface ApprovalView {
   risk: Risk | 'unassessed';
   /** Текст на языке пользователя, собран движком из структуры действия. */
   humanText: string;
+  folderTrust?: boolean;
   /** Объяснение, написанное моделью. Недоверенный текст: только показывать. */
   reason?: string;
   details?: string;
@@ -39,5 +40,5 @@ const tauri: ApprovalHost = {
 export function approvalHost(): ApprovalHost {
   if (window.__HOH_APPROVAL__) return window.__HOH_APPROVAL__;
   if (window.__TAURI_INTERNALS__) return tauri;
-  throw new Error('нет связи с ядром');
+  throw new Error('Cannot connect to the HoH core.');
 }

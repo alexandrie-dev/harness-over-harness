@@ -1,0 +1,7 @@
+--- a/web/components/chat/externalLinkContextMenu.ts
++++ b/web/components/chat/externalLinkContextMenu.ts
+@@ -50,2 +50,2 @@
+-          ? m(msg("Link to thread"))
+-          : m(msg("Unlink from thread")),
++          ? m(msg("Link to chat"))
++          : m(msg("Unlink from chat")),

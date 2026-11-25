@@ -28,6 +28,7 @@ pub struct ProcessSpec {
     pub program: PathBuf,
     pub args: Vec<String>,
     pub cwd: Option<PathBuf>,
+    pub cwd_identity: Option<[u64; 2]>,
     /// Added to the inherited environment.
     pub env: Vec<(String, String)>,
     /// Removed from the inherited environment.
@@ -143,7 +144,50 @@ impl Supervisor {
         for name in &spec.env_remove {
             command.env_remove(name);
         }
-        command.envs(spec.env.iter().map(|(k, v)| (k, v)));
+        command.envs(
+            spec.env
+                .iter()
+                .filter(|(k, _)| !is_telegram_env(k))
+                .map(|(k, v)| (k, v)),
+        );
+        for (name, _) in std::env::vars_os() {
+            if name.to_string_lossy().starts_with("TELEGRAM_") {
+                command.env_remove(name);
+            }
+        }
+        if let (Some(cwd), Some(expected)) = (&spec.cwd, spec.cwd_identity) {
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::MetadataExt;
+                let canonical = std::fs::canonicalize(cwd).map_err(|error| {
+                    HarnessFailure::new(
+                        code::IO,
+                        format!("The conversation folder is unavailable: {error}"),
+                    )
+                })?;
+                let metadata = std::fs::symlink_metadata(cwd).map_err(|error| {
+                    HarnessFailure::new(
+                        code::IO,
+                        format!("The conversation folder is unavailable: {error}"),
+                    )
+                })?;
+                if canonical != *cwd
+                    || !metadata.is_dir()
+                    || metadata.file_type().is_symlink()
+                    || [metadata.dev(), metadata.ino()] != expected
+                {
+                    return Err(HarnessFailure::new(
+                        code::IO,
+                        "The conversation folder has changed. Select it again before starting the executor.",
+                    ));
+                }
+            }
+            #[cfg(not(unix))]
+            return Err(HarnessFailure::new(
+                code::IO,
+                "The conversation folder identity cannot be verified on this platform.",
+            ));
+        }
         let mut child = command.spawn().map_err(|error| {
             let program = spec.program.display();
             match error.kind() {
@@ -262,6 +306,40 @@ impl Supervisor {
                 format!("cannot write to harness stdin: {error}"),
             )),
             // The writer stopped after an earlier failure.
+            Err(_) => Err(closed()),
+        }
+    }
+
+    /// Write one bounded, non-JSON input and close stdin after it. This is for isolated one-shot
+    /// provider requests whose CLI takes a prompt on stdin rather than the harness JSON-lines
+    /// protocol. Taking the sole sender makes the writer close the pipe after this input; a second
+    /// call cannot append data or keep the child waiting indefinitely.
+    pub async fn send_input_and_close(
+        &self,
+        input: &[u8],
+        max_bytes: usize,
+    ) -> Result<(), HarnessFailure> {
+        if input.len() > max_bytes {
+            return Err(HarnessFailure::new(
+                code::PROTOCOL,
+                format!("one-shot harness input exceeds {max_bytes} bytes"),
+            ));
+        }
+        let closed = || HarnessFailure::new(code::CLOSED, "harness stdin is closed");
+        let sender = lock(&self.stdin).take().ok_or_else(closed)?;
+        let (written, result) = oneshot::channel();
+        sender
+            .send((input.to_vec(), written))
+            .await
+            .map_err(|_| closed())?;
+        drop(sender);
+        match result.await {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(error)) if error.kind() == std::io::ErrorKind::BrokenPipe => Err(closed()),
+            Ok(Err(error)) => Err(HarnessFailure::new(
+                code::IO,
+                format!("cannot write one-shot harness input: {error}"),
+            )),
             Err(_) => Err(closed()),
         }
     }
@@ -644,6 +722,30 @@ mod tests {
     use crate::redact::REDACTED;
     use std::path::Path;
 
+    #[cfg(unix)]
+    #[test]
+    fn refuses_a_replaced_or_missing_working_directory_before_spawn() {
+        use std::os::unix::fs::{MetadataExt, symlink};
+        let tmp = tempfile::tempdir().unwrap();
+        let cwd = tmp.path().join("work");
+        let moved = tmp.path().join("moved");
+        let other = tmp.path().join("other");
+        std::fs::create_dir(&cwd).unwrap();
+        std::fs::create_dir(&other).unwrap();
+        let metadata = std::fs::metadata(&cwd).unwrap();
+        let spec = ProcessSpec {
+            program: "sh".into(),
+            cwd: Some(cwd.clone()),
+            cwd_identity: Some([metadata.dev(), metadata.ino()]),
+            ..Default::default()
+        };
+        std::fs::rename(&cwd, &moved).unwrap();
+        symlink(&other, &cwd).unwrap();
+        assert!(Supervisor::spawn(&spec, SupervisorLimits::default(), None).is_err());
+        std::fs::remove_file(&cwd).unwrap();
+        assert!(Supervisor::spawn(&spec, SupervisorLimits::default(), None).is_err());
+    }
+
     /// Review 221315, item 3: printing a spec shows the names of its environment, not the values.
     #[test]
     fn a_spec_prints_no_environment_values() {
@@ -694,6 +796,22 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn telegram_environment_is_removed_from_supervised_process() {
+        let _alone = SPAWNING.lock().await;
+        let spec = ProcessSpec {
+            program: PathBuf::from("sh"),
+            args: vec!["-c".into(), r#"if env | grep -q '^TELEGRAM_'; then echo '{"clean":false}'; else echo '{"clean":true}'; fi"#.into()],
+            env: vec![("TELEGRAM_U4_EXPLICIT".into(), "secret".into()), ("HOH_U4_ALLOWED".into(), "yes".into())],
+            ..ProcessSpec::default()
+        };
+        let supervisor = Supervisor::spawn(&spec, SupervisorLimits::default(), None).unwrap();
+        let mut frames = supervisor.take_frames().unwrap();
+        assert!(
+            matches!(next_frame(&mut frames).await, Some(Frame::Message(value)) if value["clean"] == true)
+        );
+    }
+
+    #[tokio::test]
     async fn the_first_send_to_a_process_that_closed_its_stdin_fails() {
         // The process closes its stdin, says so, and lives on; no other start meanwhile.
         let _alone = SPAWNING.lock().await;
@@ -725,6 +843,32 @@ mod tests {
         // The process is gone: a send now fails instead of vanishing.
         let gone = supervisor.send(&serde_json::json!({})).await;
         assert_eq!(gone.expect_err("exited").code, code::CLOSED);
+    }
+
+    #[tokio::test]
+    async fn one_shot_input_is_bounded_and_closes_stdin() {
+        let supervisor = shell(
+            "payload=$(cat); printf '{\"bytes\":%s}\\n' \"$(printf %s \"$payload\" | wc -c)\"",
+        )
+        .await;
+        let mut frames = supervisor.take_frames().expect("frames");
+        supervisor
+            .send_input_and_close(b"title prompt", 32)
+            .await
+            .expect("bounded input");
+        assert_eq!(
+            next_frame(&mut frames).await,
+            Some(Frame::Message(serde_json::json!({"bytes": 12})))
+        );
+        supervisor.wait_timeout(Duration::from_secs(10)).await;
+
+        let refused = spawn_shell("exec sleep 30");
+        let error = refused
+            .send_input_and_close(b"too long", 3)
+            .await
+            .expect_err("oversized one-shot input");
+        assert_eq!(error.code, code::PROTOCOL);
+        refused.terminate(Duration::from_millis(200)).await;
     }
 
     #[tokio::test]
@@ -916,4 +1060,9 @@ mod tests {
         let lines = stderr_lines(b"token=abc123def456 failed\n").await;
         assert_eq!(lines, [format!("token={REDACTED} failed")]);
     }
+}
+
+/// Telegram credentials and state are never inherited by external harnesses.
+pub fn is_telegram_env(name: &str) -> bool {
+    name.starts_with("TELEGRAM_")
 }

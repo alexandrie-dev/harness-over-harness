@@ -1,0 +1,12 @@
+--- a/contracts/orchestrationV2.ts
++++ b/contracts/orchestrationV2.ts
+@@ -1537 +1537 @@
+-    return `Rollback target ${this.target} is unavailable for thread ${this.threadId}.`;
++    return `Rollback target ${this.target} is unavailable for chat ${this.threadId}.`;
+@@ -3388,0 +3389 @@
++    interactionMode: Schema.optional(ProviderInteractionMode),
+@@ -3405,0 +3407 @@
++    runtimeMode: Schema.optional(RuntimeMode),
+@@ -4201 +4203 @@
+-      encode: SchemaGetter.forbidden(() => "Servers never send unknown thread events."),
++      encode: SchemaGetter.forbidden(() => "Servers never send unknown chat events."),

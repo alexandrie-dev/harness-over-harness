@@ -1,0 +1,12 @@
+/* Меню команд прикреплено к полю ввода, но в отличие от самого glass-поля должно закрывать
+   заголовок и сообщения под ним, как в T3 без пользовательской прозрачности стекла. */
+[data-composer-command-drawer="true"] {
+  --glass-opacity: 100%;
+}
+
+/* Agent/Task Markdown не получает внутренний max-height сырого <pre>: прокручивается вся лента.
+   Scroll margin оставляет последнюю строку выше плавающего composer при фокусе/поиске. */
+[data-v2-item-inspector="dynamic_tool"] [data-hoh-agent-markdown] {
+  scroll-margin-bottom: 10rem;
+  padding-bottom: 0.5rem;
+}

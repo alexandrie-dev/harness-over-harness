@@ -1,0 +1,10 @@
+--- a/client-runtime/state/threadExecution.ts
++++ b/client-runtime/state/threadExecution.ts
+@@ -134,0 +135,4 @@
++  // HoH may not expose provider turns, but streamed items prove that launch finished.
++  const providerHasResponded = projection.turnItems.some(
++    (item) => item.runId === run.id && (item.type === "reasoning" || item.type === "assistant_message"),
++  ) || projection.messages.some((message) => message.runId === run.id && message.role === "assistant");
+@@ -148 +152 @@
+-      ? PROVIDER_STARTING_RUN_STATUSES.has(run.status)
++      ? PROVIDER_STARTING_RUN_STATUSES.has(run.status) && !providerHasResponded

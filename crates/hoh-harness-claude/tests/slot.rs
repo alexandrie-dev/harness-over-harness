@@ -154,7 +154,10 @@ impl Slot {
         StartParams {
             session_id: "hoh-1".into(),
             cwd: self.dir.path().to_string_lossy().into_owned(),
+            cwd_identity: None,
             model: None,
+            effort: None,
+            interaction_mode: hoh_external_harness::InteractionMode::Default,
             policy,
             resume: None,
         }
@@ -215,6 +218,7 @@ fn send(started: &Started, text: &str) {
         session_id: "hoh-1".into(),
         turn_id: "t1".into(),
         text: text.into(),
+        ..Default::default()
     }));
 }
 
@@ -354,7 +358,23 @@ async fn the_launch_flags_are_the_flags_the_process_gets() {
                 let mut expected: Vec<String> = STREAM.map(str::to_owned).to_vec();
                 expected.extend(flags.iter().cloned());
                 expected.extend(["--session-id".to_owned(), native]);
-                assert_eq!(args, expected, "{config} {access:?} {policy:?}");
+                assert_eq!(
+                    &args[..expected.len()],
+                    expected,
+                    "{config} {access:?} {policy:?}"
+                );
+                let overlay = &args[expected.len()..];
+                if config.get("settingSources").and_then(|v| v.as_str()) == Some("isolated") {
+                    assert!(overlay.is_empty());
+                } else {
+                    assert_eq!(overlay.len(), 2);
+                    assert_eq!(overlay[0], "--settings");
+                    let settings: serde_json::Value = serde_json::from_str(&overlay[1]).unwrap();
+                    assert_eq!(
+                        settings["enabledPlugins"]["telegram@claude-plugins-official"],
+                        false
+                    );
+                }
                 started.session.terminate(Duration::from_millis(500)).await;
             }
         }
@@ -367,7 +387,7 @@ async fn the_launch_flags_are_the_flags_the_process_gets() {
     assert_eq!(
         words(confirm(CONFIRM_POLICY)),
         "--permission-mode default --setting-sources user \
-         --permission-prompt-tool stdio --disallowedTools WebFetch,WebSearch"
+         --permission-prompt-tool stdio"
     );
     assert_eq!(
         words(full(FULL_POLICY)),
@@ -429,20 +449,17 @@ async fn discover_with_status_places_the_version_against_the_checked_range() {
     slot.close().await;
 }
 
-/// (1) Confirm from the slot with the network denied: the CLI's two network tools stay off, even
-/// when the configuration says full.
+/// (1) Confirm from the slot with the network denied: WebFetch/WebSearch remain available but each
+/// use reaches the person's stdio permission prompt, even when the configuration says full.
 #[tokio::test]
 #[allow(clippy::await_holding_lock)]
-async fn confirm_from_the_slot_keeps_the_network_tools_off_whatever_the_configuration_says() {
+async fn confirm_from_the_slot_keeps_web_tools_behind_the_permission_prompt() {
     let _one = ONE_AT_A_TIME.lock().unwrap_or_else(|e| e.into_inner());
     let slot = mount_claude(json!({ "access": "full" }), None).await;
     let started = slot.start(CONFIRM_POLICY, AccessMode::Confirm).await;
     let args = slot.args();
-    assert_eq!(
-        flag_value(&args, "--disallowedTools"),
-        Some("WebFetch,WebSearch"),
-        "{args:?}"
-    );
+    assert_eq!(flag_value(&args, "--disallowedTools"), None, "{args:?}");
+    assert_eq!(flag_value(&args, "--permission-prompt-tool"), Some("stdio"));
     started.session.terminate(Duration::from_millis(500)).await;
     slot.close().await;
 }
@@ -599,7 +616,7 @@ impl Window {
     }
 }
 
-/// The human's user settings by default; none of them when the profile says `isolated`.
+/// Without folder trust, only user settings apply; the isolated profile reads none.
 const SOURCES: [(&str, &[&str]); 2] = [
     ("{}", &["--setting-sources", "user"]),
     (

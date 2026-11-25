@@ -1,0 +1,5 @@
+--- a/web/components/chat/useComposerResume.ts
++++ b/web/components/chat/useComposerResume.ts
+@@ -154 +154 @@
+-          thrownErrorMessage(error, m) ?? m(msg("Could not resume thread.")),
++          thrownErrorMessage(error, m) ?? m(msg("Could not resume chat.")),

@@ -1,0 +1,5 @@
+--- a/web/components/chat/QueuedRunsControl.tsx
++++ b/web/components/chat/QueuedRunsControl.tsx
+@@ -589 +589 @@
+-                <T>Open thread</T>
++                <T>Open chat</T>

@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "SessionWorkingDirectoryResult",
+  "type": "object",
+  "properties": {
+    "cwd": {
+      "type": "string"
+    },
+    "rootIdentity": {
+      "type": "object",
+      "properties": {
+        "device": {
+          "type": "string"
+        },
+        "inode": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "device",
+        "inode"
+      ]
+    }
+  },
+  "required": [
+    "cwd"
+  ],
+  "x-method": "session/working-directory/rebind"
+}

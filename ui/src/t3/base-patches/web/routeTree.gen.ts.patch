@@ -1,0 +1,61 @@
+--- a/web/routeTree.gen.ts
++++ b/web/routeTree.gen.ts
+@@ -914,2 +914,2 @@
+-const ChatSettingsRouteChildren: ChatSettingsRouteChildren = {
+-  ChatSettingsAboutRoute: ChatSettingsAboutRoute,
++// HoH (ui/T3-MAP.md): маршруты скрытых частей не регистрируются; их типы остаются, переход по ним — «не найдено».
++const ChatSettingsRouteChildren = {
+@@ -916,0 +917 @@
++  ChatSettingsArchivedRoute: ChatSettingsArchivedRoute,
+@@ -918,3 +918,0 @@
+-  ChatSettingsArchivedRoute: ChatSettingsArchivedRoute,
+-  ChatSettingsBetaRoute: ChatSettingsBetaRoute,
+-  ChatSettingsBrowserRoute: ChatSettingsBrowserRoute,
+@@ -922,4 +919,0 @@
+-  ChatSettingsConnectionsRoute: ChatSettingsConnectionsRoute,
+-  ChatSettingsDevicesRoute: ChatSettingsDevicesRoute,
+-  ChatSettingsDiagnosticsRoute: ChatSettingsDiagnosticsRoute,
+-  ChatSettingsDiffsRoute: ChatSettingsDiffsRoute,
+@@ -927,6 +920,0 @@
+-  ChatSettingsIntegrationsRoute: ChatSettingsIntegrationsRoute,
+-  ChatSettingsKeybindingsRoute: ChatSettingsKeybindingsRoute,
+-  ChatSettingsLabsRoute: ChatSettingsLabsRoute,
+-  ChatSettingsMaintenanceRoute: ChatSettingsMaintenanceRoute,
+-  ChatSettingsOpenSourceLicensesRoute: ChatSettingsOpenSourceLicensesRoute,
+-  ChatSettingsProjectsRoute: ChatSettingsProjectsRoute,
+@@ -934,9 +922 @@
+-  ChatSettingsScheduledTasksRoute: ChatSettingsScheduledTasksRoute,
+-  ChatSettingsSecretsRoute: ChatSettingsSecretsRoute,
+-  ChatSettingsSnapShotRoute: ChatSettingsSnapShotRoute,
+-  ChatSettingsSourceControlRoute: ChatSettingsSourceControlRoute,
+-  ChatSettingsStorageRoute: ChatSettingsStorageRoute,
+-  ChatSettingsThreadsRoute: ChatSettingsThreadsRoute,
+-  ChatSettingsVoiceRoute: ChatSettingsVoiceRoute,
+-  ChatSettingsWorktreesRoute: ChatSettingsWorktreesRoute,
+-}
++} as ChatSettingsRouteChildren
+@@ -959,2 +939,2 @@
+-const ChatRouteChildren: ChatRouteChildren = {
+-  ChatIssuesRoute: ChatIssuesRoute,
++// HoH (ui/T3-MAP.md): маршруты скрытых частей не регистрируются; их типы остаются, переход по ним — «не найдено».
++const ChatRouteChildren = {
+@@ -962 +941,0 @@
+-  ChatPullRequestsRoute: ChatPullRequestsRoute,
+@@ -964 +942,0 @@
+-  ChatUsageRoute: ChatUsageRoute,
+@@ -968 +946 @@
+-}
++} as ChatRouteChildren
+@@ -972 +950,2 @@
+-const rootRouteChildren: RootRouteChildren = {
++// HoH (ui/T3-MAP.md): маршруты скрытых частей не регистрируются; их типы остаются, переход по ним — «не найдено».
++const rootRouteChildren = {
+@@ -974,5 +952,0 @@
+-  ApproveAgentRoute: ApproveAgentRoute,
+-  ConnectRoute: ConnectRoute,
+-  ConnectAgentRoute: ConnectAgentRoute,
+-  GuestRoute: GuestRoute,
+-  PairRoute: PairRoute,
+@@ -982 +956 @@
+-}
++} as RootRouteChildren

@@ -1,0 +1,5 @@
+--- a/web/lib/openPullRequestLink.ts
++++ b/web/lib/openPullRequestLink.ts
+@@ -234 +234 @@
+-                title: m(msg("This commit is not in the thread's workspace")),
++                title: m(msg("This commit is not in the chat's workspace")),

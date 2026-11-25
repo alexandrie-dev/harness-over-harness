@@ -1,0 +1,19 @@
+--- a/web/components/settings/ProjectSettingsPanel.tsx
++++ b/web/components/settings/ProjectSettingsPanel.tsx
+@@ -559 +559 @@
+-              "The shared name for this project group in the sidebar and thread lists.",
++              "The shared name for this project group in the sidebar and chat lists.",
+@@ -667,2 +667,2 @@
+-                    ? gt("Hidden from project pickers. Threads and files are kept.")
+-                    : gt("Hides the project from project pickers. Threads and files are kept.")
++                    ? gt("Hidden from project pickers. Chats and files are kept.")
++                    : gt("Hides the project from project pickers. Chats and files are kept.")
+@@ -708 +708 @@
+-                    "Deletes the selected machine's checkout entries and their threads. Other machines and files on disk are not touched.",
++                    "Deletes the selected machine's checkout entries and their chats. Other machines and files on disk are not touched.",
+@@ -712 +712 @@
+-                      "{count, plural, other {Deletes all {count} checkout entries and their threads on every machine. Files on disk are not touched.}}",
++                      "{count, plural, other {Deletes all {count} checkout entries and their chats on every machine. Files on disk are not touched.}}",
+@@ -715 +715 @@
+-                  : gt("Deletes the project entry and its threads. Files on disk are not touched.")
++                  : gt("Deletes the project entry and its chats. Files on disk are not touched.")

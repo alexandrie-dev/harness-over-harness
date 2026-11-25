@@ -195,6 +195,12 @@
           "markdownDescription": "Enables the approval_history command without any pre-configured scope."
         },
         {
+          "description": "Enables the browse_folders command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-browse-folders",
+          "markdownDescription": "Enables the browse_folders command without any pre-configured scope."
+        },
+        {
           "description": "Enables the engine_request command without any pre-configured scope.",
           "type": "string",
           "const": "allow-engine-request",
@@ -213,10 +219,28 @@
           "markdownDescription": "Enables the pick_folder command without any pre-configured scope."
         },
         {
+          "description": "Enables the preview_html command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-preview-html",
+          "markdownDescription": "Enables the preview_html command without any pre-configured scope."
+        },
+        {
           "description": "Enables the question_answer command without any pre-configured scope.",
           "type": "string",
           "const": "allow-question-answer",
           "markdownDescription": "Enables the question_answer command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the read_image_asset command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-read-image-asset",
+          "markdownDescription": "Enables the read_image_asset command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the read_pasted_image command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-read-pasted-image",
+          "markdownDescription": "Enables the read_pasted_image command without any pre-configured scope."
         },
         {
           "description": "Denies the approval_current command without any pre-configured scope.",
@@ -237,6 +261,12 @@
           "markdownDescription": "Denies the approval_history command without any pre-configured scope."
         },
         {
+          "description": "Denies the browse_folders command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-browse-folders",
+          "markdownDescription": "Denies the browse_folders command without any pre-configured scope."
+        },
+        {
           "description": "Denies the engine_request command without any pre-configured scope.",
           "type": "string",
           "const": "deny-engine-request",
@@ -255,10 +285,28 @@
           "markdownDescription": "Denies the pick_folder command without any pre-configured scope."
         },
         {
+          "description": "Denies the preview_html command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-preview-html",
+          "markdownDescription": "Denies the preview_html command without any pre-configured scope."
+        },
+        {
           "description": "Denies the question_answer command without any pre-configured scope.",
           "type": "string",
           "const": "deny-question-answer",
           "markdownDescription": "Denies the question_answer command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the read_image_asset command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-read-image-asset",
+          "markdownDescription": "Denies the read_image_asset command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the read_pasted_image command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-read-pasted-image",
+          "markdownDescription": "Denies the read_pasted_image command without any pre-configured scope."
         },
         {
           "description": "Default core plugins set.\n#### This default permission set includes:\n\n- `core:path:default`\n- `core:event:default`\n- `core:window:default`\n- `core:webview:default`\n- `core:app:default`\n- `core:image:default`\n- `core:resources:default`\n- `core:menu:default`\n- `core:tray:default`",

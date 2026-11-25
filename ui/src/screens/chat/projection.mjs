@@ -211,6 +211,9 @@ export class ChatProjection {
     this.arguments = new Map();
     this.counter = 0;
     this.live = new Map();
+    // A start frame does not identify text vs reasoning. This legacy projection shows only text,
+    // so it cannot replace a text attempt until the first text-delta identifies the newcomer.
+    this.pendingLive = new Map();
     this.incomplete = new Map();
     this.retired = new Set();
   }
@@ -288,7 +291,8 @@ export class ChatProjection {
   }
   /**
    * Live text of the answer, as the engine publishes it while the model is still writing
-   * (`session.assistant-stream`: start | chunk{text-delta} | gap | end). It is process-local: the durable
+   * (`session.assistant-stream`: start | chunk{text-delta} | gap | end). Reasoning attempts are ignored
+   * without displacing text attempts. It is process-local: the durable
    * `assistant/message` that follows replaces it in place. Whatever arrived before a stop stays.
    */
   liveFrame(frame) {
@@ -303,13 +307,26 @@ export class ChatProjection {
     if (typeof attempt !== 'string' || !Number.isSafeInteger(revision) || this.retired.has(attempt)) return;
     if (type === 'start') {
       const known = [...this.live.values()].find(live => live.attemptId === attempt);
-      if (known) return;
-      const previous = this.live.get(key);
+      if (known || this.pendingLive.has(attempt)) return;
+      this.pendingLive.set(attempt, { key, revision });
+      return;
+    }
+    const pending = this.pendingLive.get(attempt);
+    if (pending) {
+      if (revision < pending.revision) return;
+      const chunk = record(frameRecord.chunk);
+      if (type !== 'chunk' || chunk.type !== 'text-delta' || typeof chunk.text !== 'string') {
+        this.pendingLive.delete(attempt);
+        this.retired.add(attempt);
+        return;
+      }
+      this.pendingLive.delete(attempt);
+      const textKey = pending.key;
+      const previous = this.live.get(textKey);
       // a retried attempt of the same step starts the text over; the replaced one never comes back
       if (previous) this.retired.add(previous.attemptId);
-      this.live.set(key, { attemptId: attempt, raw: '', last: -1, index: previous?.index, revision, gapped: false });
+      this.live.set(textKey, { attemptId: attempt, raw: '', last: -1, index: previous?.index, revision, gapped: false });
       if (previous?.index !== undefined) this.replace(previous.index, { ...this.#entries[previous.index], text: '', streaming: true });
-      return;
     }
     const found = [...this.live.entries()].find(([, live]) => live.attemptId === attempt);
     if (!found) return;

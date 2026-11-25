@@ -132,6 +132,38 @@
       "properties": {
         "method": {
           "type": "string",
+          "const": "session/working-directory/status"
+        },
+        "params": {
+          "$ref": "#/$defs/SessionResumeParams"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "type": "string",
+          "const": "session/working-directory/rebind"
+        },
+        "params": {
+          "$ref": "#/$defs/SessionWorkingDirectoryRebindParams"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "type": "string",
           "const": "shutdown"
         }
       },
@@ -177,6 +209,22 @@
         "method": {
           "type": "string",
           "const": "session/cancel"
+        },
+        "params": {
+          "$ref": "#/$defs/SessionResumeParams"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "type": "string",
+          "const": "session/delete"
         },
         "params": {
           "$ref": "#/$defs/SessionResumeParams"
@@ -752,6 +800,22 @@
       "properties": {
         "method": {
           "type": "string",
+          "const": "hoh/plugins/list"
+        },
+        "params": {
+          "$ref": "#/$defs/PluginListParams"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "type": "string",
           "const": "hoh/settings/get"
         },
         "params": {
@@ -816,6 +880,22 @@
       "properties": {
         "method": {
           "type": "string",
+          "const": "hoh/executor/limits"
+        },
+        "params": {
+          "$ref": "#/$defs/ExecutorParams"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "type": "string",
           "const": "hoh/executor/select"
         },
         "params": {
@@ -852,6 +932,102 @@
         },
         "params": {
           "$ref": "#/$defs/ExecutorAccessSetParams"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "type": "string",
+          "const": "hoh/executor/trust/get"
+        },
+        "params": {
+          "$ref": "#/$defs/ExecutorTrustGetParams"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "type": "string",
+          "const": "hoh/executor/trust/set"
+        },
+        "params": {
+          "$ref": "#/$defs/ExecutorTrustSetParams"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "type": "string",
+          "const": "hoh/executor/commands"
+        },
+        "params": {
+          "$ref": "#/$defs/ExecutorCommandsParams"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "type": "string",
+          "const": "hoh/workspace/entries"
+        },
+        "params": {
+          "$ref": "#/$defs/WorkspaceEntriesParams"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "type": "string",
+          "const": "hoh/workspace/add"
+        },
+        "params": {
+          "$ref": "#/$defs/WorkspaceAddParams"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "type": "string",
+          "const": "hoh/executor/title/generate"
+        },
+        "params": {
+          "$ref": "#/$defs/ExecutorTitleGenerateParams"
         }
       },
       "required": [
@@ -983,8 +1159,17 @@
           "items": {
             "$ref": "#/$defs/SdkPromptContentBlock"
           }
+        },
+        "interactionMode": {
+          "description": "T3's per-turn interaction mode. Missing is the ordinary chat mode.",
+          "type": "string",
+          "enum": [
+            "default",
+            "plan"
+          ]
         }
       },
+      "additionalProperties": false,
       "required": [
         "sessionId",
         "contentBlocks"
@@ -1285,6 +1470,40 @@
       "required": [
         "sessionId",
         "path"
+      ]
+    },
+    "SessionWorkingDirectoryRebindParams": {
+      "type": "object",
+      "properties": {
+        "sessionId": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "rootIdentity": {
+          "$ref": "#/$defs/WorkingDirectoryRootIdentity"
+        }
+      },
+      "required": [
+        "sessionId",
+        "path",
+        "rootIdentity"
+      ]
+    },
+    "WorkingDirectoryRootIdentity": {
+      "type": "object",
+      "properties": {
+        "device": {
+          "type": "string"
+        },
+        "inode": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "device",
+        "inode"
       ]
     },
     "SessionListParams": {
@@ -2200,6 +2419,18 @@
         "model"
       ]
     },
+    "PluginListParams": {
+      "type": "object",
+      "properties": {
+        "sessionId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
     "SettingsSetParams": {
       "type": "object",
       "properties": {
@@ -2342,6 +2573,22 @@
         },
         "mode": {
           "$ref": "#/$defs/ExecutorAccessMode"
+        },
+        "sessionId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "runtimeMode": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ExecutorRuntimeMode"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       },
       "required": [
@@ -2354,6 +2601,115 @@
       "enum": [
         "confirm",
         "full"
+      ]
+    },
+    "ExecutorRuntimeMode": {
+      "type": "string",
+      "enum": [
+        "confirm",
+        "auto-accept-edits",
+        "auto",
+        "full"
+      ]
+    },
+    "ExecutorTrustGetParams": {
+      "type": "object",
+      "properties": {
+        "executor": {
+          "type": "string"
+        },
+        "cwd": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "executor",
+        "cwd"
+      ]
+    },
+    "ExecutorTrustSetParams": {
+      "type": "object",
+      "properties": {
+        "executor": {
+          "type": "string"
+        },
+        "cwd": {
+          "type": "string"
+        },
+        "trust": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "executor",
+        "cwd",
+        "trust"
+      ]
+    },
+    "ExecutorCommandsParams": {
+      "type": "object",
+      "properties": {
+        "executor": {
+          "type": "string"
+        },
+        "cwd": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "executor"
+      ]
+    },
+    "WorkspaceEntriesParams": {
+      "type": "object",
+      "properties": {
+        "cwd": {
+          "type": "string"
+        },
+        "query": {
+          "type": "string"
+        },
+        "limit": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "cwd",
+        "query",
+        "limit"
+      ]
+    },
+    "WorkspaceAddParams": {
+      "type": "object",
+      "properties": {
+        "cwd": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "cwd"
+      ]
+    },
+    "ExecutorTitleGenerateParams": {
+      "type": "object",
+      "properties": {
+        "executor": {
+          "type": "string"
+        },
+        "prompt": {
+          "type": "string",
+          "maxLength": 16384
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "executor",
+        "prompt"
       ]
     },
     "ApprovalRequestParams": {

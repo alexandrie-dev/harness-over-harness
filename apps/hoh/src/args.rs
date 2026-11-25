@@ -1,4 +1,6 @@
 //! The launcher's flags stop at the first app argument.
+use crate::plugin_creator;
+pub use crate::plugin_creator::AuthorCommand;
 use hoh_commander::{
     Command, CommanderError, InvalidArgumentError, Options, Output, ParseError, ParseOptions,
 };
@@ -36,6 +38,13 @@ pub enum DshInvocation {
         profile: String,
         args: Vec<String>,
     },
+    PluginNew {
+        id: String,
+    },
+    PluginAuthor {
+        command: AuthorCommand,
+        json: bool,
+    },
 }
 const HELP_EXAMPLES: &str = r#"
 Примеры:
@@ -43,6 +52,7 @@ const HELP_EXAMPLES: &str = r#"
   hoh sdk-minimal --dump-config
   hoh sdk-minimal --dump-config-schema
   hoh sdk-minimal --patch ./extra.yml --dump-config
+  hoh plugin --help                 Команды создания и проверки плагинов
 "#;
 fn select_profile(value: &str, previous: Option<&Value>) -> Result<Value, InvalidArgumentError> {
     if previous.is_some() {
@@ -136,6 +146,9 @@ pub fn parse_dsh_args(
     manage_desktop_profile: bool,
     output: Output,
 ) -> Result<DshInvocation, ParseError> {
+    if let Some(invocation) = plugin_creator::parse(argv, &output) {
+        return invocation;
+    }
     let first = argv.first().map(String::as_str);
     let resolved = Arc::new(Mutex::new(None));
     let result = resolved.clone();
@@ -166,6 +179,7 @@ pub fn parse_dsh_args(
     if first == Some("plugin") {
         let result = resolved.clone();
         program.command("plugin").usage("[параметры] [аргументы…]").description("Управление пакетами профиля. В этой сборке команда недоступна.")
+            .add_help_text("after", plugin_creator::HELP)
             .help_option("-h, --help","Показать справку").pass_through_options(true)
             .required_option_with_parser("--profile <имя>","Имя профиля",select_profile)
             .allow_unknown_option(true).argument("[аргументы...]","Аргументы pnpm")

@@ -1,0 +1,5 @@
+--- a/web/components/chat/useMultipleModelSend.ts
++++ b/web/components/chat/useMultipleModelSend.ts
+@@ -231 +231 @@
+-                "{count, plural, one {Started {count} thread in background} other {Started {count} threads in background}}",
++                "{count, plural, one {Started {count} chat in background} other {Started {count} chats in background}}",

@@ -1,0 +1,4 @@
+--- a/web/components/auth/ConnectAgentSurface.logic.ts
++++ b/web/components/auth/ConnectAgentSurface.logic.ts
+@@ -19,0 +20 @@
++  if (ceiling?.maxRuntimeMode === "unknown") return "read-only";

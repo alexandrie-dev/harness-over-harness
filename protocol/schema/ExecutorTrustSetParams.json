@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ExecutorTrustSetParams",
+  "type": "object",
+  "properties": {
+    "executor": {
+      "type": "string"
+    },
+    "cwd": {
+      "type": "string"
+    },
+    "trust": {
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "executor",
+    "cwd",
+    "trust"
+  ]
+}

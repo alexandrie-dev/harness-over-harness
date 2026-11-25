@@ -133,6 +133,7 @@
     }
   },
   "exclude": [
+    "../t3-entry/hoh-screens",
     "shared/markdownMath.ts",
     "client-runtime/assemblyHighlighting.ts",
     "web/components/ChatMarkdown.tsx",
@@ -154,6 +155,7 @@
     "web/lib/diffRendering.ts",
     "web/lib/readableSyntaxTheme.ts",
     "web/lib/contextChipAccents.ts",
-    "web/components/ui/menu.tsx"
+    "web/components/ui/menu.tsx",
+    "base"
   ]
 }

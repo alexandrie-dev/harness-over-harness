@@ -1,0 +1,5 @@
+--- a/web/components/pullRequest/PullRequestReviewAnnotation.tsx
++++ b/web/components/pullRequest/PullRequestReviewAnnotation.tsx
+@@ -346 +346 @@
+-            {fixPending ? gt("Preparing...") : (fixLabel ?? gt("Fix in a thread"))}
++            {fixPending ? gt("Preparing...") : (fixLabel ?? gt("Fix in a chat"))}

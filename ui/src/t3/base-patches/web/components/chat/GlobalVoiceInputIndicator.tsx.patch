@@ -1,0 +1,5 @@
+--- a/web/components/chat/GlobalVoiceInputIndicator.tsx
++++ b/web/components/chat/GlobalVoiceInputIndicator.tsx
+@@ -39 +39 @@
+-          <span className="truncate">{target.label ?? gt("Untitled thread")}</span>
++          <span className="truncate">{target.label ?? gt("Untitled chat")}</span>

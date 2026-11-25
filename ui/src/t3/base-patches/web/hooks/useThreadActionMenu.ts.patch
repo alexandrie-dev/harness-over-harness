@@ -1,0 +1,88 @@
+--- a/web/hooks/useThreadActionMenu.ts
++++ b/web/hooks/useThreadActionMenu.ts
+@@ -2,0 +3,3 @@
++import { isScratchProject } from "@t3tools/client-runtime/state/projects";
++import { appAtomRegistry } from "../rpc/atomRegistry";
++import { environmentServerConfigsAtom } from "../state/server";
+@@ -99 +101,0 @@
+-  const confirmThreadDelete = useClientSettings((s) => s.confirmThreadDelete);
+@@ -100,0 +103 @@
++  const confirmThreadDelete = useClientSettings((s) => s.confirmThreadDelete);
+@@ -114 +117 @@
+-    onError: (error) => failureToast(m(msg("Failed to copy thread ID")), error),
++    onError: (error) => failureToast(m(msg("Failed to copy chat ID")), error),
+@@ -125,2 +128,2 @@
+-          m(msg("Thread actions unavailable")),
+-          new Error(m(msg("This thread has not loaded yet."))),
++          m(msg("Chat actions unavailable")),
++          new Error(m(msg("This chat has not loaded yet."))),
+@@ -144,0 +148,4 @@
++        hasProject: projects.some((project) =>
++          project.environmentId === thread.environmentId && project.id === thread.projectId &&
++          !isScratchProject(project, appAtomRegistry.get(environmentServerConfigsAtom).get(thread.environmentId)?.scratchWorkspaceRoot)
++        ),
+@@ -166,2 +173,2 @@
+-          m(msg("Thread action unavailable")),
+-          new Error(m(msg("This connection cannot change threads."))),
++          m(msg("Chat action unavailable")),
++          new Error(m(msg("This connection cannot change chats."))),
+@@ -184 +191 @@
+-          failureToast(m(msg("Failed to snooze thread")), squashAtomCommandFailure(result));
++          failureToast(m(msg("Failed to snooze chat")), squashAtomCommandFailure(result));
+@@ -226 +233 @@
+-            failureToast(m(msg("Could not create thread")), squashAtomCommandFailure(result));
++            failureToast(m(msg("Could not create chat")), squashAtomCommandFailure(result));
+@@ -231 +238 @@
+-          await reportFailure(m(msg("Failed to settle thread")), () => settleThread(threadRef));
++          await reportFailure(m(msg("Failed to settle chat")), () => settleThread(threadRef));
+@@ -234 +241 @@
+-          await reportFailure(m(msg("Failed to un-settle thread")), () =>
++          await reportFailure(m(msg("Failed to un-settle chat")), () =>
+@@ -239 +246 @@
+-          await reportFailure(m(msg("Failed to wake thread")), () => unsnoozeThread(threadRef));
++          await reportFailure(m(msg("Failed to wake chat")), () => unsnoozeThread(threadRef));
+@@ -242 +249 @@
+-          await reportFailure(m(msg("Failed to pin thread")), () => pinThread(threadRef));
++          await reportFailure(m(msg("Failed to pin chat")), () => pinThread(threadRef));
+@@ -245 +252 @@
+-          await reportFailure(m(msg("Failed to unpin thread")), () =>
++          await reportFailure(m(msg("Failed to unpin chat")), () =>
+@@ -286 +293 @@
+-              m(msg("Could not turn thread into a project")),
++              m(msg("Could not turn chat into a project")),
+@@ -299 +306 @@
+-                description: m(msg("This thread does not have a workspace path to copy.")),
++                description: m(msg("This chat does not have a workspace path to copy.")),
+@@ -323 +330 @@
+-              api.dialogs.confirm(m(msg('Archive thread "{title}"?', { title: thread.title }))),
++              api.dialogs.confirm(m(msg('Archive chat "{title}"?', { title: thread.title }))),
+@@ -336,2 +343,2 @@
+-                ? m(msg("Thread archived, but navigation failed"))
+-                : m(msg("Failed to archive thread")),
++                ? m(msg("Chat archived, but navigation failed"))
++                : m(msg("Failed to archive chat")),
+@@ -345,9 +352,4 @@
+-            const confirmed = await settlePromise(() =>
+-              api.dialogs.confirm(
+-                [
+-                  m(msg('Delete thread "{title}"?', { title: thread.title })),
+-                  m(msg("This permanently clears conversation history for this thread.")),
+-                ].join("\n"),
+-                { variant: "destructive" },
+-              ),
+-            );
++            const confirmed = await settlePromise(() => api.dialogs.confirm(
++              [m(msg('Delete chat "{title}"?', { title: thread.title })), m(msg("This moves the chat to the trash."))].join("\n"),
++              { variant: "destructive" },
++            ));
+@@ -357,8 +359,2 @@
+-          if (
+-            deleted._tag === "Failure" &&
+-            !isAtomCommandInterrupted(deleted) &&
+-            // A missing thread means cleanup failed after deletion; deleteThread already toasted that failure.
+-            readThreadShell(threadRef) !== null
+-          ) {
+-            failureToast(m(msg("Failed to delete thread")), squashAtomCommandFailure(deleted));
+-          }
++          if (deleted._tag === "Failure" && !isAtomCommandInterrupted(deleted) && readThreadShell(threadRef) !== null)
++            failureToast(m(msg("Failed to delete chat")), squashAtomCommandFailure(deleted));

@@ -1,0 +1,308 @@
+--- a/web/components/chat/ThreadDetailsPanel.tsx
++++ b/web/components/chat/ThreadDetailsPanel.tsx
+@@ -47,0 +48,2 @@
++import * as DateTime from "effect/DateTime";
++import type { ThreadStructure } from "@t3tools/client-runtime/state/models";
+@@ -94,0 +97 @@
++  projection: ThreadStructure | null;
+@@ -99,40 +102,9 @@
+-  const gt = useGT();
+-  const [menuPosition, setMenuPosition] = useState<{ x: number; y: number } | null>(null);
+-  const fileScripts = useT3ProjectFileScripts(
+-    props.environmentId,
+-    props.activeProjectScripts && visible.scripts ? props.gitCwd : null,
+-  );
+-  const activeThreadRef = { environmentId: props.environmentId, threadId: props.threadId };
+-  const project = useProject(scopeProjectRef(props.environmentId, props.projectId));
+-  const serverConfig = useServerConfigs().get(props.environmentId);
+-  // A No project thread's folder sits inside the shared scratch root, so it must never get git.
+-  // Until the config and project load, a No project thread looks like any other folder.
+-  const offersGit =
+-    props.gitCwd !== null &&
+-    serverConfig !== undefined &&
+-    project !== null &&
+-    !isScratchProject(project, serverConfig.scratchWorkspaceRoot);
+-  const branchToolbarProps = {
+-    showGitControls: props.isGitRepo,
+-    environmentId: props.environmentId,
+-    threadId: props.threadId,
+-    projectId: props.projectId,
+-    worktreePath: props.worktreePath,
+-    isServerThread: props.isServerThread,
+-    ...(props.draftId ? { draftId: props.draftId } : {}),
+-    onEnvModeChange: props.onEnvModeChange,
+-    startFromOrigin: props.startFromOrigin,
+-    onStartFromOriginChange: props.onStartFromOriginChange,
+-    envMode: props.envMode,
+-    ...(props.activeThreadBranchOverride !== undefined
+-      ? { activeThreadBranchOverride: props.activeThreadBranchOverride }
+-      : {}),
+-    ...(props.onActiveThreadBranchOverrideChange
+-      ? { onActiveThreadBranchOverrideChange: props.onActiveThreadBranchOverrideChange }
+-      : {}),
+-    envLocked: props.envLocked,
+-    forceNewWorktree: props.forceNewWorktree ?? false,
+-    onComposerFocusRequest: props.onComposerFocusRequest,
+-    ...(props.onCheckoutPullRequestRequest
+-      ? { onCheckoutPullRequestRequest: props.onCheckoutPullRequestRequest }
+-      : {}),
++  const projection = props.projection;
++  const turns = projection?.providerTurns ?? [];
++  const usageTurns = turns.filter((turn) => turn.tokenUsage != null);
++  const runs = projection?.runs ?? [];
++  const lastRun = runs.at(-1);
++  const current = turns.find((turn) => turn.ordinal === lastRun?.ordinal)?.tokenUsage;
++  const total = (key: "inputTokens" | "outputTokens" | "cachedInputTokens" | "reasoningOutputTokens") => {
++    const values = usageTurns.map((turn) => turn.tokenUsage?.[key]).filter((value): value is number => typeof value === "number");
++    return values.length ? values.reduce((sum, value) => sum + value, 0) : undefined;
+@@ -140 +112,23 @@
+-
++  const number = (value: number | null | undefined) => value == null ? "—" : value.toLocaleString("en-US");
++  const context = props.usage.contextWindow;
++  const goalItem = projection?.turnItems.find((item) => item.type === "user_message");
++  const goal = goalItem?.type === "user_message" ? goalItem.text.trim() : "";
++  const plan = projection?.plans.findLast((item) => item.status === "active" && item.kind === "proposed_plan");
++  const effort = projection?.thread.modelSelection.options?.find((option) => option.id === "effort" || option.id === "reasoningEffort")?.value;
++  const toolCalls = projection?.turnItems.filter((item) => ["command_execution", "file_change", "file_search", "web_search", "dynamic_tool", "proposed_plan"].includes(item.type)).length ?? 0;
++  const completed = runs.flatMap((run) => {
++    if (!run.startedAt || !run.completedAt) return [];
++    const duration = DateTime.toEpochMillis(run.completedAt) - DateTime.toEpochMillis(run.startedAt);
++    return Number.isFinite(duration) && duration >= 0 ? [duration] : [];
++  });
++  const rows = [
++    ["Input", current?.inputTokens, total("inputTokens")],
++    ["Output", current?.outputTokens, total("outputTokens")],
++    ["Cache read", current?.cachedInputTokens, total("cachedInputTokens")],
++  ].filter(([, last, sum]) => last != null || sum != null);
++  const row = (label: string, value: string) => (
++    <ThreadDetailsControl key={label} render={<div />} part="row" aria-label={`${label}: ${value}`}>
++      <span className={THREAD_DETAILS_PANEL_LABEL_CLASS}>{label}</span>
++      <span className="ml-auto max-w-44 truncate font-normal text-muted-foreground tabular-nums">{value}</span>
++    </ThreadDetailsControl>
++  );
+@@ -142,195 +136,30 @@
+-    <ThreadDetailsCard
+-      threadRef={{ environmentId: props.environmentId, threadId: props.threadId }}
+-      anchor={props.anchor}
+-      handle={props.handle}
+-      contentKey={THREAD_DETAILS_ITEMS.filter((item) => visible[item.id])
+-        .map((item) => item.id)
+-        .join(",")}
+-      onContextMenu={(event) => {
+-        // Popups the card opens bubble here through React; they, fields, links, and selected text
+-        // keep their own menus.
+-        const target = event.target;
+-        const selection = window.getSelection();
+-        if (
+-          !(target instanceof Element) ||
+-          !event.currentTarget.contains(target) ||
+-          target.closest("input, textarea, [contenteditable], a[href]") ||
+-          (selection &&
+-            !selection.isCollapsed &&
+-            (event.currentTarget.contains(selection.anchorNode) ||
+-              event.currentTarget.contains(selection.focusNode)))
+-        )
+-          return;
+-        event.preventDefault();
+-        setMenuPosition({ x: event.clientX, y: event.clientY });
+-      }}
+-    >
+-      {(density) => {
+-        // Section flags follow the rows that will render, so no empty section steals the divider rule.
+-        const show = {
+-          environment: density === "full" && visible.environment,
+-          openIn: density !== "essential" && visible.openIn && props.showOpenInPicker,
+-          scripts: visible.scripts && props.activeProjectScripts !== undefined,
+-          branch: offersGit && props.isGitRepo && visible.branch,
+-          // Without a branch selector, linked pull requests still need somewhere to show.
+-          pullRequests: !(offersGit && props.isGitRepo) && visible.branch,
+-          git:
+-            offersGit &&
+-            props.activeProjectName !== undefined &&
+-            (visible.gitActions || (visible.changes && props.isGitRepo)),
+-        };
+-        return (
+-          <>
+-            <div className="group/details-items">
+-              {show.environment || show.openIn || show.scripts ? (
+-                <ThreadDetailsSection
+-                  headingId="thread-details-workspace-heading"
+-                  title={gt("Workspace")}
+-                  separated={false}
+-                  showHeading={false}
+-                >
+-                  <div className="flex flex-col">
+-                    {show.environment ? (
+-                      <BranchToolbar
+-                        layout="panel"
+-                        panelSection="workspace"
+-                        availableEnvironments={props.availableEnvironments}
+-                        {...(props.onEnvironmentChange
+-                          ? { onEnvironmentChange: props.onEnvironmentChange }
+-                          : {})}
+-                        autoEnvironmentLabel={props.autoEnvironmentLabel}
+-                        onAutoEnvironment={props.onAutoEnvironment}
+-                        {...branchToolbarProps}
+-                      />
+-                    ) : null}
+-
+-                    {show.openIn ? (
+-                      <OpenInPicker
+-                        keybindings={props.keybindings}
+-                        environmentId={props.environmentId}
+-                        availableEditors={props.availableEditors}
+-                        openInCwd={props.gitCwd}
+-                        enableShortcut={props.openInShortcutEnabled}
+-                        displayMode="panel"
+-                      />
+-                    ) : null}
+-
+-                    {show.scripts && props.activeProjectScripts ? (
+-                      <ProjectScriptsControl
+-                        environmentId={props.environmentId}
+-                        displayMode="panel"
+-                        scripts={props.activeProjectScripts}
+-                        fileScripts={fileScripts}
+-                        preferredScriptId={props.preferredScriptId}
+-                        onRunScript={props.onRunProjectScript}
+-                        onAddScript={props.onAddProjectScript}
+-                        onUpdateScript={props.onUpdateProjectScript}
+-                        onDeleteScript={props.onDeleteProjectScript}
+-                      />
+-                    ) : null}
+-                  </div>
+-                </ThreadDetailsSection>
+-              ) : null}
+-
+-              {show.branch || show.pullRequests || show.git ? (
+-                <ThreadDetailsSection
+-                  headingId="thread-details-version-control-heading"
+-                  title={gt("Version Control")}
+-                  showHeading={false}
+-                  separated={density === "full"}
+-                >
+-                  <div className="flex flex-col">
+-                    {show.branch ? (
+-                      <BranchToolbar layout="panel" panelSection="branch" {...branchToolbarProps} />
+-                    ) : null}
+-                    {show.pullRequests ? (
+-                      <ThreadDetailsThreadPrRows
+-                        threadRef={activeThreadRef}
+-                        project={project}
+-                        composerTarget={props.composerDraftTarget}
+-                      />
+-                    ) : null}
+-                    {show.git && props.gitCwd ? (
+-                      <GitActionsControl
+-                        compact={density !== "full"}
+-                        showActions={visible.gitActions}
+-                        showChanges={visible.changes}
+-                        gitCwd={props.gitCwd}
+-                        workspaceMutationId={props.workspaceMutationId}
+-                        activeThreadRef={activeThreadRef}
+-                        {...(props.draftId ? { draftId: props.draftId } : {})}
+-                        {...(props.onOpenChanges ? { onOpenChanges: props.onOpenChanges } : {})}
+-                      />
+-                    ) : null}
+-                  </div>
+-                </ThreadDetailsSection>
+-              ) : null}
+-
+-              {density === "full" && !props.draftId && visible.servers ? (
+-                <ThreadServersPanel environmentId={props.environmentId} threadId={props.threadId} />
+-              ) : null}
+-
+-              {density === "full" && !props.draftId && visible.automations ? (
+-                <ThreadAutomationsPanel
+-                  environmentId={props.environmentId}
+-                  threadId={props.threadId}
+-                />
+-              ) : null}
+-
+-              {density === "full" && !props.draftId && (visible.lineage || visible.sideChats) ? (
+-                <ThreadRelationshipsPanel
+-                  environmentId={props.environmentId}
+-                  threadId={props.threadId}
+-                  showLineage={visible.lineage}
+-                  showSideChats={visible.sideChats}
+-                />
+-              ) : null}
+-
+-              {visible.usage ? <ThreadDetailsUsage {...props.usage} /> : null}
+-
+-              {visible.context && props.usage.contextWindow ? (
+-                <ThreadDetailsContext usage={props.usage.contextWindow} />
+-              ) : null}
+-
+-              {/* Shown only when no section above has content, so an emptied card can be refilled. */}
+-              <div className="p-2 group-has-[>section>:last-child:not(:empty)]/details-items:hidden">
+-                <ThreadDetailsControl
+-                  size="xs"
+-                  variant="ghost"
+-                  part="row"
+-                  panel
+-                  onClick={(event) => {
+-                    const rect = event.currentTarget.getBoundingClientRect();
+-                    setMenuPosition({ x: rect.left, y: rect.bottom });
+-                  }}
+-                >
+-                  <SlidersHorizontalIcon className={THREAD_DETAILS_PANEL_ICON_CLASS} aria-hidden />
+-                  <span className={cn("ml-0.5", THREAD_DETAILS_PANEL_LABEL_CLASS)}>
+-                    <T>Choose what to show</T>
+-                  </span>
+-                </ThreadDetailsControl>
+-              </div>
+-            </div>
+-
+-            <Menu
+-              open={menuPosition !== null}
+-              onOpenChange={(open) => !open && setMenuPosition(null)}
+-            >
+-              <MenuPopup
+-                anchor={
+-                  menuPosition
+-                    ? {
+-                        getBoundingClientRect: () =>
+-                          new DOMRect(menuPosition.x, menuPosition.y, 0, 0),
+-                      }
+-                    : undefined
+-                }
+-                align="start"
+-                side="bottom"
+-              >
+-                <ThreadDetailsItemsMenuItems />
+-              </MenuPopup>
+-            </Menu>
+-          </>
+-        );
+-      }}
++    <ThreadDetailsCard threadRef={{ environmentId: props.environmentId, threadId: props.threadId }}
++      anchor={props.anchor} handle={props.handle} contentKey={`hoh-stats:${turns.length}:${runs.length}:${visible.context}`}>
++      {() => <div className="group/details-items">
++        {!props.isServerThread && !projection ? <ThreadDetailsSection headingId="chat-details-new-heading" title="Chat details">
++          {row("Status", "New chat")}
++        </ThreadDetailsSection> : null}
++        {goal || (plan && plan.kind === "proposed_plan" && plan.markdown) ? <ThreadDetailsSection headingId="chat-details-goal-heading" title="Goal and plan">
++          {goal ? row("Goal", goal) : null}
++          {plan && plan.kind === "proposed_plan" && plan.markdown ? row("Plan", plan.markdown) : null}
++        </ThreadDetailsSection> : null}
++        {rows.length ? <ThreadDetailsSection headingId="chat-details-tokens-heading" title="Tokens">
++          <div className="grid grid-cols-[minmax(0,1fr)_auto_auto] gap-x-3 px-2.5 text-xs">
++            <span>Type</span><span>Last turn</span><span>Total</span>
++            {rows.map(([label, last, sum]) => <div key={String(label)} className="col-span-3 grid h-6 grid-cols-subgrid items-center">
++              <span>{label}</span><span className="text-end tabular-nums">{number(last as number | undefined)}</span><span className="text-end tabular-nums">{number(sum as number | undefined)}</span>
++            </div>)}
++          </div>
++        </ThreadDetailsSection> : null}
++        {visible.context && context ? <ThreadDetailsSection headingId="chat-details-context-heading" title="Context">
++          {row("Used", `${number(context.usedTokens)}${context.maxTokens == null ? "" : ` / ${number(context.maxTokens)}`}`)}
++        </ThreadDetailsSection> : null}
++        {projection ? <ThreadDetailsSection headingId="chat-details-other-heading" title="Details">
++          {projection.thread.modelSelection.model && projection.thread.modelSelection.model !== "unknown" ? row("Model", projection.thread.modelSelection.model) : null}
++          {typeof effort === "string" && effort ? row("Effort", effort) : null}
++          {projection.thread.runtimeMode && projection.thread.runtimeMode !== "unknown" ? row("Mode", ({ "approval-required": "Supervised", "full-access": "Full access", "auto-accept-edits": "Auto-accept edits", "plan": "Plan" } as Record<string, string>)[projection.thread.runtimeMode] ?? projection.thread.runtimeMode) : null}
++          {runs.length ? row("Turns", number(runs.length)) : null}
++          {toolCalls ? row("Tool calls", number(toolCalls)) : null}
++          {completed.length ? row("Run time", `${Math.floor(completed.reduce((a, b) => a + b, 0) / 1000)} s`) : null}
++        </ThreadDetailsSection> : null}
++      </div>}

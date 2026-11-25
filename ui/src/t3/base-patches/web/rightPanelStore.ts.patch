@@ -1,0 +1,61 @@
+--- a/web/rightPanelStore.ts
++++ b/web/rightPanelStore.ts
+@@ -240,0 +241,2 @@
++const HOH_GLOBAL_PANEL_KEY = "__hoh_global_panel__";
++
+@@ -242 +244 @@
+-  inlineOpen: true,
++  inlineOpen: false,
+@@ -417 +419 @@
+-  if (next.inlineOpen && !next.popoverOpen) {
++  if (!next.inlineOpen && !next.popoverOpen) {
+@@ -444 +446 @@
+-      threadKey,
++      HOH_GLOBAL_PANEL_KEY,
+@@ -450 +452 @@
+-      threadKey,
++      HOH_GLOBAL_PANEL_KEY,
+@@ -702,2 +704 @@
+-  const threadPanelVisibilityByThreadKey =
+-    "threadPanelVisibilityByThreadKey" in persistedState &&
++  const storedVisibility = "threadPanelVisibilityByThreadKey" in persistedState &&
+@@ -706,10 +707 @@
+-      ? Object.fromEntries(
+-          Object.entries(
+-            persistedState.threadPanelVisibilityByThreadKey as Record<string, unknown>,
+-          ).flatMap(([threadKey, value]) => {
+-            if (!value || typeof value !== "object" || !("inlineOpen" in value)) return [];
+-            return value.inlineOpen === false
+-              ? [[threadKey, { inlineOpen: false, popoverOpen: false }]]
+-              : [];
+-          }),
+-        )
++      ? persistedState.threadPanelVisibilityByThreadKey as Record<string, { inlineOpen?: boolean }>
+@@ -716,0 +709,6 @@
++  const globalVisibility = storedVisibility[HOH_GLOBAL_PANEL_KEY];
++  const wasOpen = globalVisibility ? globalVisibility.inlineOpen === true :
++    Object.values(storedVisibility).some((value) => value?.inlineOpen === true);
++  const threadPanelVisibilityByThreadKey = wasOpen
++    ? { [HOH_GLOBAL_PANEL_KEY]: { inlineOpen: true, popoverOpen: false } }
++    : {};
+@@ -1243 +1241 @@
+-      setThreadPanelOpen: (ref, presentation, open) =>
++      setThreadPanelOpen: (_ref, presentation, open) =>
+@@ -1247 +1245 @@
+-            scopedThreadKey(ref),
++            HOH_GLOBAL_PANEL_KEY,
+@@ -1254 +1252 @@
+-      toggleThreadPanel: (ref, presentation) =>
++      toggleThreadPanel: (_ref, presentation) =>
+@@ -1258 +1256 @@
+-            scopedThreadKey(ref),
++            HOH_GLOBAL_PANEL_KEY,
+@@ -1293 +1291 @@
+-      version: RIGHT_PANEL_STORAGE_VERSION,
++      version: RIGHT_PANEL_STORAGE_VERSION + 1,
+@@ -1313 +1311 @@
+-              visibility.inlineOpen ? [] : [[threadKey, { inlineOpen: false, popoverOpen: false }]],
++              visibility.inlineOpen ? [[threadKey, { inlineOpen: true, popoverOpen: false }]] : [],
+@@ -1361 +1359 @@
+-  return byThreadKey[scopedThreadKey(ref)] ?? DEFAULT_THREAD_PANEL_VISIBILITY;
++  return byThreadKey[HOH_GLOBAL_PANEL_KEY] ?? DEFAULT_THREAD_PANEL_VISIBILITY;

@@ -15,17 +15,19 @@
 
 mod agent;
 pub mod contract;
+mod entries;
 mod executor;
 mod harness;
 pub mod redact;
 mod stdio;
 pub mod supervisor;
+mod trust;
 mod window;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex, MutexGuard};
 
-use hoh_agent::{Agents, SessionExecutor};
+use hoh_agent::{AgentStatus, Agents, SessionExecutor};
 use hoh_destructive_classifier::DestructiveClassifier;
 use hoh_error::BoxError;
 use hoh_kernel::{Cfg, Context, Disposer, Inject, Plugin, Service, Undo};
@@ -40,9 +42,14 @@ use serde::{Deserialize, Serialize};
 pub use contract::*;
 pub use executor::BINDING_RECORD;
 pub use harness::{ExternalHarness, HarnessResult, HarnessSession, Started};
+pub use hoh_protocol::ExecutorLimitWindow;
 pub use stdio::{StdioHarness, StdioHarnessConfig};
 pub use supervisor::{ExitInfo, Frame, ProcessSpec, StderrSink, Supervisor, SupervisorLimits};
-pub use window::{CHOICES_FILE, ExternalHarnessWindowPlugin};
+pub use trust::settings_roots;
+
+pub use window::{
+    CHOICES_FILE, CODEX_SELECTION_FILE, ExternalHarnessWindowPlugin, SESSION_ACCESS_FILE,
+};
 
 use executor::{ExternalExecutor, Shared};
 
@@ -92,7 +99,40 @@ struct Inner {
 #[derive(Default)]
 pub(crate) struct Choices {
     access: Mutex<HashMap<String, AccessMode>>,
+    /// Exact access selected for a conversation. Unlike the executor-wide legacy default this
+    /// survives independently for each T3 thread.
+    session_access: Mutex<HashMap<String, SessionAccessChoice>>,
+    /// Exact choices are independent for each executor, even before a session is bound.
+    session_access_pairs: Mutex<HashMap<String, HashMap<String, AccessMode>>>,
+    /// For each conversation an external agent serves (by HoH session id), the levels its
+    /// prompts named, until their turns take them (HOH-40).
+    prompts: Mutex<HashMap<String, ServedPrompts>>,
+    /// Interaction modes are paired to the same message ids as prompt effort/access.
+    interactions: Mutex<HashMap<String, PromptInteractions>>,
 }
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct SessionAccessChoice {
+    pub executor: String,
+    pub mode: AccessMode,
+}
+
+/// Message-specific effort and access captured when the prompt was accepted.
+type PromptSettings = VecDeque<(
+    String,
+    Option<String>,
+    Option<(String, AccessMode)>,
+    HashMap<String, AccessMode>,
+    HashMap<String, AccessMode>,
+)>;
+
+#[derive(Default)]
+struct ServedPrompts {
+    executor: String,
+    pending: PromptSettings,
+}
+type PromptInteractions = VecDeque<(String, InteractionMode)>;
 
 impl Choices {
     pub(crate) fn access(&self, executor: &str) -> AccessMode {
@@ -108,6 +148,252 @@ impl Choices {
 
     pub(crate) fn all_access(&self) -> HashMap<String, AccessMode> {
         lock(&self.access).clone()
+    }
+
+    pub(crate) fn access_for(&self, executor: &str, session: &str) -> AccessMode {
+        lock(&self.session_access_pairs)
+            .get(session)
+            .and_then(|choices| choices.get(executor).copied())
+            .unwrap_or_else(|| self.access(executor))
+    }
+
+    pub(crate) fn set_session_access(&self, session: &str, executor: &str, mode: AccessMode) {
+        lock(&self.session_access).insert(
+            session.to_owned(),
+            SessionAccessChoice {
+                executor: executor.to_owned(),
+                mode,
+            },
+        );
+        lock(&self.session_access_pairs)
+            .entry(session.to_owned())
+            .or_default()
+            .insert(executor.to_owned(), mode);
+    }
+
+    pub(crate) fn all_session_access_pairs(&self) -> HashMap<String, HashMap<String, AccessMode>> {
+        lock(&self.session_access_pairs).clone()
+    }
+
+    pub(crate) fn restore_session_access_pair(
+        &self,
+        session: &str,
+        executor: &str,
+        mode: AccessMode,
+    ) {
+        lock(&self.session_access_pairs)
+            .entry(session.to_owned())
+            .or_default()
+            .insert(executor.to_owned(), mode);
+    }
+
+    pub(crate) fn all_session_access(&self) -> HashMap<String, SessionAccessChoice> {
+        lock(&self.session_access).clone()
+    }
+
+    /// An external agent serves `session`: the levels its prompts name are kept from now on.
+    /// Conversations of the engine's own model keep nothing.
+    pub(crate) fn serve_prompts(&self, session: &str, executor: &str) {
+        lock(&self.interactions)
+            .entry(session.to_owned())
+            .or_default();
+        let mut prompts = lock(&self.prompts);
+        match prompts.entry(session.to_owned()) {
+            std::collections::hash_map::Entry::Occupied(mut served) => {
+                // `session/prompt` can be accepted before the external agent is constructed.
+                // Keep those already snapshotted messages and bind later ones to the executor
+                // the engine actually selected for the session.
+                served.get_mut().executor = executor.to_owned();
+            }
+            std::collections::hash_map::Entry::Vacant(entry) => {
+                entry.insert(ServedPrompts {
+                    executor: executor.to_owned(),
+                    pending: VecDeque::new(),
+                });
+            }
+        }
+    }
+
+    /// The level and privileged per-session access in force when this prompt was accepted.
+    pub(crate) fn note_prompt(&self, session: &str, message: &str, effort: Option<String>) {
+        let mut prompts = lock(&self.prompts);
+        if !prompts.contains_key(session) {
+            // The prompt hook runs before agent construction. A session-specific choice already
+            // names the executor and exact access; a legacy/global selection does not, but its
+            // effort still has to survive until `serve_prompts` binds the eventual executor.
+            let choice = lock(&self.session_access).get(session).cloned();
+            prompts.insert(
+                session.to_owned(),
+                ServedPrompts {
+                    executor: choice.map_or_else(String::new, |choice| choice.executor),
+                    pending: VecDeque::new(),
+                },
+            );
+        }
+        let served = prompts.get_mut(session).expect("inserted above");
+        let access = (!served.executor.is_empty()).then(|| {
+            (
+                served.executor.clone(),
+                self.access_for(&served.executor, session),
+            )
+        });
+        let defaults = lock(&self.access).clone();
+        let per_executor = lock(&self.session_access_pairs)
+            .get(session)
+            .cloned()
+            .unwrap_or_default();
+        served
+            .pending
+            .push_back((message.to_owned(), effort, access, defaults, per_executor));
+    }
+
+    /// The prompt settings for `message`, with older abandoned prompts dropped.
+    pub(crate) fn take_prompt(
+        &self,
+        session: &str,
+        message: &str,
+    ) -> Option<(Option<String>, Option<AccessMode>)> {
+        let mut prompts = lock(&self.prompts);
+        let served = prompts.get_mut(session)?;
+        let executor = served.executor.clone();
+        let pending = &mut served.pending;
+        let at = pending.iter().position(|(id, _, _, _, _)| id == message)?;
+        pending
+            .remove(at)
+            .map(|(_, effort, access, defaults, per_executor)| {
+                (
+                    effort,
+                    per_executor
+                        .get(&executor)
+                        .copied()
+                        .or_else(|| {
+                            access
+                                .filter(|(owner, _)| owner == &executor)
+                                .map(|(_, mode)| mode)
+                        })
+                        .or_else(|| defaults.get(&executor).copied())
+                        .or(Some(AccessMode::Confirm)),
+                )
+            })
+    }
+
+    pub(crate) fn note_interaction(&self, session: &str, message: &str, mode: InteractionMode) {
+        lock(&self.interactions)
+            .entry(session.to_owned())
+            .or_default()
+            .push_back((message.to_owned(), mode));
+    }
+
+    pub(crate) fn take_interaction(&self, session: &str, message: &str) -> Option<InteractionMode> {
+        let mut interactions = lock(&self.interactions);
+        let pending = interactions.get_mut(session)?;
+        let at = pending.iter().position(|(id, _)| id == message)?;
+        pending.remove(at).map(|(_, mode)| mode)
+    }
+}
+
+#[cfg(test)]
+mod access_snapshot_tests {
+    use super::{AccessMode, Choices, InteractionMode};
+
+    #[test]
+    fn a_prebinding_snapshot_never_transfers_another_executors_access() {
+        let choices = Choices::default();
+        choices.set_access("claude", AccessMode::Confirm);
+        choices.set_session_access("chat", "claude", AccessMode::Confirm);
+        choices.set_session_access("chat", "codex", AccessMode::Full);
+        choices.note_prompt("chat", "message", None);
+        choices.serve_prompts("chat", "claude");
+        assert_eq!(
+            choices.take_prompt("chat", "message"),
+            Some((None, Some(AccessMode::Confirm)))
+        );
+    }
+
+    #[test]
+    fn out_of_order_preparation_keeps_each_messages_original_access() {
+        let choices = Choices::default();
+        choices.set_session_access("chat", "codex", AccessMode::Confirm);
+        choices.note_prompt("chat", "a", None);
+        choices.set_session_access("chat", "codex", AccessMode::Full);
+        choices.note_prompt("chat", "b", None);
+        choices.serve_prompts("chat", "codex");
+        assert_eq!(
+            choices.take_prompt("chat", "b"),
+            Some((None, Some(AccessMode::Full)))
+        );
+        assert_eq!(
+            choices.take_prompt("chat", "a"),
+            Some((None, Some(AccessMode::Confirm)))
+        );
+    }
+
+    #[test]
+    fn interaction_modes_remain_bound_when_preparation_finishes_out_of_order() {
+        let choices = Choices::default();
+        choices.note_interaction("chat", "a", InteractionMode::Plan);
+        choices.note_interaction("chat", "b", InteractionMode::Default);
+        assert_eq!(
+            choices.take_interaction("chat", "b"),
+            Some(InteractionMode::Default)
+        );
+        assert_eq!(
+            choices.take_interaction("chat", "a"),
+            Some(InteractionMode::Plan)
+        );
+    }
+
+    #[test]
+    fn parallel_sessions_keep_the_mode_bound_to_each_accepted_message() {
+        let choices = Choices::default();
+        choices.set_session_access("chat-a", "codex", AccessMode::AutoAcceptEdits);
+        choices.set_session_access("chat-b", "codex", AccessMode::Auto);
+        // The window prompt hook wins the race against agent construction.
+        choices.note_prompt("chat-a", "message-a1", Some("high".into()));
+        choices.note_prompt("chat-b", "message-b1", Some("low".into()));
+        choices.set_session_access("chat-a", "codex", AccessMode::Full);
+        choices.serve_prompts("chat-a", "codex");
+        choices.serve_prompts("chat-b", "codex");
+
+        assert_eq!(
+            choices.take_prompt("chat-b", "message-b1"),
+            Some((Some("low".into()), Some(AccessMode::Auto)))
+        );
+        assert_eq!(
+            choices.take_prompt("chat-a", "message-a1"),
+            Some((Some("high".into()), Some(AccessMode::AutoAcceptEdits)))
+        );
+
+        choices.note_prompt("chat-a", "message-a2", None);
+        assert_eq!(
+            choices.take_prompt("chat-a", "message-a2"),
+            Some((None, Some(AccessMode::Full)))
+        );
+    }
+
+    #[test]
+    fn a_prompt_before_legacy_agent_construction_keeps_its_effort() {
+        let choices = Choices::default();
+        choices.note_prompt("chat-a", "message-a1", Some("high".into()));
+        choices.serve_prompts("chat-a", "claude");
+
+        assert_eq!(
+            choices.take_prompt("chat-a", "message-a1"),
+            Some((Some("high".into()), Some(AccessMode::Confirm)))
+        );
+    }
+
+    #[test]
+    fn unbound_prompt_captures_the_provider_default_before_it_changes() {
+        let choices = Choices::default();
+        choices.set_access("claude", AccessMode::Full);
+        choices.note_prompt("chat", "a", None);
+        choices.set_access("claude", AccessMode::Confirm);
+        choices.serve_prompts("chat", "claude");
+        assert_eq!(
+            choices.take_prompt("chat", "a"),
+            Some((None, Some(AccessMode::Full)))
+        );
     }
 }
 
@@ -279,7 +565,8 @@ impl Plugin for ExternalHarnessPlugin {
                         && let Some(live) = known.inner.deps.agents.get(event.agent.id())
                         && let Some(chosen) = live.model().current()
                         && let Some(shared) = known.shared(&chosen.provider)
-                        && shared.started_in_folder(live.session())
+                        && (live.status() == AgentStatus::Running
+                            || shared.started_in_folder(live.session()))
                     {
                         return Err(folder_fixed(&chosen.provider));
                     }

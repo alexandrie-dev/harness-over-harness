@@ -1,0 +1,8 @@
+--- a/client-runtime/operations/commands.ts
++++ b/client-runtime/operations/commands.ts
+@@ -842,0 +843,2 @@
++        runtimeMode: input.runtimeMode,
++        interactionMode: input.interactionMode,
+@@ -871,0 +874,2 @@
++      runtimeMode: input.runtimeMode,
++      interactionMode: input.interactionMode,

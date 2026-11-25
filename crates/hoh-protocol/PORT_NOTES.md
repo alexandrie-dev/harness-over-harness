@@ -278,7 +278,9 @@ ui/src/protocol.ts — только разрешённые окну методы
 Четыре метода окна для внешнего исполнителя (Claude Code). Их обслуживает плагин
 `ExternalHarnessWindow` (`hoh-external-harness`) через таблицу `HohRpcMethods`:
 - `hoh/executor/discover` `{executor}` → `ExecutorDiscoverResult`. Поля `version` и `detail` —
-  строка или `null`; `versionStatus` — `supported`/`unsupported`/`unknown`.
+  строка или `null`; `versionStatus` — `supported`/`unsupported`/`unknown`. Необязательное `failure`
+  безопасно и машинно-читаемо называет timeout стадии `version`/`initialize` либо код выхода
+  `claude --version`; окно не разбирает локализованный `detail`.
 - `hoh/executor/select` `{executor: string|null, model}` → `ExecutorSelection`. Метод
   привилегированный.
 - `hoh/executor/access/get` `{executor}` → `{executor, mode, effective: {mode, flags, text},

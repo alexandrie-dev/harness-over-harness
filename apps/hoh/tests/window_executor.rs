@@ -171,6 +171,15 @@ impl Workspace {
             .collect()
     }
 
+    /// The content of every prompt the fake got, in order.
+    fn prompts(&self) -> Vec<Value> {
+        std::fs::read_to_string(self.root.path().join("claude-prompts.jsonl"))
+            .unwrap_or_default()
+            .lines()
+            .map(|line| serde_json::from_str(line).expect("prompt record"))
+            .collect()
+    }
+
     /// Every answer the fake got to a `can_use_tool`, in order.
     fn answers(&self) -> Vec<Answer> {
         std::fs::read_to_string(self.root.path().join("claude-answers.jsonl"))
@@ -210,8 +219,8 @@ impl Workspace {
 
 /// A stand-in for the `claude` CLI (`@STARTS@` and `@VERSION@` are filled in). Every start
 /// writes its arguments, folder and the names of its environment variables to its own file in
-/// `claude-starts`. It answers `--version`, `initialize` (a signed-in account, two models) and
-/// `interrupt`. A turn begins with `system/init` naming the model `claude-x-1`; the prompt picks
+/// `claude-starts`. It answers `--version`, `initialize` (a signed-in account, two models, two
+/// commands), `reload_skills` (one skill) and `interrupt`. A turn begins with `system/init` naming the model `claude-x-1`; the prompt picks
 /// the step:
 /// - `edit` / `run`: an `Edit` of `notes.txt` / a `Bash` `touch ran.txt`, asked with `can_use_tool`
 ///   (under `bypassPermissions` run without asking, as the CLI does);
@@ -233,7 +242,8 @@ impl Workspace {
 /// - anything else: a one-line answer.
 ///
 /// Every answer to a `can_use_tool` is appended to `claude-answers.jsonl`; a step runs only after
-/// `allow`.
+/// `allow`. The content of every prompt is appended to `claude-prompts.jsonl`; its last text block
+/// picks the step.
 const FAKE_CLAUDE: &str = r##"#!/usr/bin/python3 -I
 import json, os, shutil, subprocess, sys, time
 
@@ -290,11 +300,17 @@ def control(message):
     request = message.get("request") or {}
     response = {}
     if request.get("subtype") == "initialize" and os.path.exists(SLOW_START):
-        return
+        while os.path.exists(SLOW_START):
+            time.sleep(0.01)
     if request.get("subtype") == "initialize":
         response = {"models": [{"value": "default", "displayName": "Default"},
                                {"value": "sonnet", "displayName": "Sonnet"}],
-                    "account": {"email": "user@example.com", "tokenSource": "claude.ai"}}
+                    "account": {"email": "user@example.com", "tokenSource": "claude.ai"},
+                    "commands": [{"name": "review", "description": "Review the folder " + os.path.basename(CWD),
+                                  "argumentHint": "[pr]"},
+                                 {"name": "release-notes", "description": "Write the release notes"}]}
+    if request.get("subtype") == "reload_skills":
+        response = {"skills": [{"name": "release-notes", "description": "Write the release notes"}]}
     write({"type": "control_response",
            "response": {"subtype": "success", "request_id": message.get("request_id"), "response": response}})
 
@@ -408,7 +424,9 @@ def long_command(name):
 def short_answer():
     message_id = next_id("msg")
     stream = {"type": "stream_event", "session_id": SESSION, "parent_tool_use_id": None}
-    write(dict(stream, event={"type": "message_start", "message": {"id": message_id, "role": "assistant"}}))
+    write(dict(stream, event={"type": "message_start", "message": {
+        "id": message_id, "role": "assistant", "usage": {"input_tokens": 17, "cache_read_input_tokens": 23}
+    }}))
     write(dict(stream, event={"type": "content_block_delta", "index": 0,
                               "delta": {"type": "text_delta", "text": "ok1"}}))
     write({"type": "assistant", "session_id": SESSION, "parent_tool_use_id": None,
@@ -486,7 +504,10 @@ while True:
             write({"type": "result", "subtype": "success", "is_error": False, "result": "", "num_turns": 0,
                    "origin": {"kind": "task-notification"}, "session_id": SESSION})
         content = (message.get("message") or {}).get("content") or [{}]
-        turn(content[0].get("text", "") if isinstance(content[0], dict) else "")
+        with open(os.path.join(os.path.dirname(STARTS), "claude-prompts.jsonl"), "a") as file:
+            file.write(json.dumps(content) + "\n")
+        texts = [block.get("text", "") for block in content if isinstance(block, dict) and block.get("type") == "text"]
+        turn(texts[-1] if texts else "")
 "##;
 
 struct Host {
@@ -499,6 +520,8 @@ struct Host {
     frames: Vec<Value>,
     /// The label the host picks for every question of Claude (none: no question is expected).
     pick: Option<String>,
+    /// The `effort` every `session/prompt` names (HOH-40); null: none is named.
+    effort: Value,
     /// The `user-question/ask` requests the host was sent.
     questions: Vec<Value>,
 }
@@ -537,6 +560,7 @@ impl Host {
             next_id: 0,
             frames: Vec::new(),
             pick: None,
+            effort: Value::Null,
             questions: Vec::new(),
         }
     }
@@ -688,6 +712,29 @@ impl Host {
             .await
     }
 
+    /// The window binds Codex's four-state access choice to one conversation. The legacy
+    /// two-state field stays present so an older engine can still reject or project the call.
+    async fn set_session_access(
+        &mut self,
+        session: &str,
+        runtime_mode: &str,
+        outcome: &str,
+    ) -> Value {
+        let legacy = if runtime_mode == "full" {
+            "full"
+        } else {
+            "confirm"
+        };
+        let params = json!({
+            "executor": "claude",
+            "mode": legacy,
+            "sessionId": session,
+            "runtimeMode": runtime_mode,
+        });
+        self.privileged("hoh/executor/access/set", params, outcome)
+            .await
+    }
+
     async fn access(&mut self) -> Value {
         self.ok("hoh/executor/access/get", json!({"executor": "claude"}))
             .await
@@ -726,9 +773,22 @@ impl Host {
         text: &str,
         outcome: Option<&str>,
     ) -> Vec<HostApprovalRequest> {
+        let blocks = json!([{"type": "text", "text": text}]);
+        self.turn_with(session, blocks, outcome).await
+    }
+
+    /// [`turn`](Self::turn) with the prompt's content blocks as they are.
+    async fn turn_with(
+        &mut self,
+        session: &str,
+        blocks: Value,
+        outcome: Option<&str>,
+    ) -> Vec<HostApprovalRequest> {
         let from = self.frames.len();
-        let params =
-            json!({"sessionId": session, "contentBlocks": [{"type": "text", "text": text}]});
+        let mut params = json!({"sessionId": session, "contentBlocks": blocks});
+        if !self.effort.is_null() {
+            params["effort"] = self.effort.clone();
+        }
         let id = self.send("session/prompt", params).await;
         let mut asked = Vec::new();
         let (mut answered, mut running, mut index) = (false, false, from);
@@ -827,6 +887,8 @@ fn access_switches(words: &[String]) -> Vec<Vec<String>> {
 fn mode_of(start: &Start) -> &'static str {
     match start.value_of("--permission-mode") {
         Some("default") => "confirm",
+        Some("acceptEdits") => "acceptEdits",
+        Some("auto") => "auto",
         Some("bypassPermissions" | "dontAsk") => "full",
         other => panic!("unexpected permission mode {other:?}: {start:?}"),
     }
@@ -858,7 +920,7 @@ fn assert_confirm(start: &Start) {
         Some("stdio"),
         "{start:?}"
     );
-    // The human's own settings only: not the folder's (`project`, `local`).
+    // Without folder trust, only the human's settings apply.
     assert_eq!(
         start.value_of("--setting-sources"),
         Some("user"),
@@ -894,6 +956,70 @@ fn assert_full(start: &Start) {
     assert_clean_environment(start);
 }
 
+/// The two modes between confirm and full (CEO 23.11 00:07, as T3): Claude's own mode
+/// (`acceptEdits`, `auto`) with confirm's question channel and closed network, never a bypass.
+fn assert_asking(start: &Start, permission_mode: &str) {
+    assert_eq!(
+        start.value_of("--permission-mode"),
+        Some(permission_mode),
+        "{start:?}"
+    );
+    assert_eq!(
+        start.value_of("--permission-prompt-tool"),
+        Some("stdio"),
+        "{start:?}"
+    );
+    assert_eq!(
+        start.value_of("--disallowedTools"),
+        Some("WebFetch,WebSearch"),
+        "{start:?}"
+    );
+    assert_eq!(
+        start.value_of("--setting-sources"),
+        Some("user"),
+        "{start:?}"
+    );
+    for wide in [
+        "--allow-dangerously-skip-permissions",
+        "--dangerously-skip-permissions",
+        "--tools",
+    ] {
+        assert!(
+            !start.has(wide),
+            "{wide} under {permission_mode}: {start:?}"
+        );
+    }
+    assert_clean_environment(start);
+}
+
+/// The command line of `mode` (the window's name for it).
+fn assert_mode(start: &Start, mode: &str) {
+    match mode {
+        "confirm" => assert_confirm(start),
+        "acceptEdits" => assert_asking(start, "acceptEdits"),
+        "auto" => assert_asking(start, "auto"),
+        "full" => assert_full(start),
+        other => panic!("no mode {other}"),
+    }
+    assert_eq!(mode_of(start), mode, "{start:?}");
+}
+
+fn runtime_mode(mode: &str) -> &str {
+    if mode == "acceptEdits" {
+        "auto-accept-edits"
+    } else {
+        mode
+    }
+}
+
+fn legacy_mode(mode: &str) -> &str {
+    if matches!(mode, "confirm" | "acceptEdits" | "auto") {
+        "confirm"
+    } else {
+        "full"
+    }
+}
+
 /// What `hoh/executor/access/get` shows is what Claude runs with: the mode and the switches of
 /// the recorded command line.
 async fn assert_effective_is_the_launch(host: &mut Host, start: &Start) {
@@ -926,18 +1052,46 @@ fn assert_session(access: &Value, mode: &str, running: &str, context: &str) {
     let session = &access["session"];
     assert_eq!(session["executor"], "claude", "{context}: {access}");
     assert_eq!(session["privacy"], "remote", "{context}: {access}");
-    assert_eq!(session["mode"], mode, "{context}: {access}");
-    assert_eq!(session["running"], running, "{context}: {access}");
+    assert_eq!(session["mode"], legacy_mode(mode), "{context}: {access}");
+    assert_eq!(
+        session["running"],
+        legacy_mode(running),
+        "{context}: {access}"
+    );
+    assert_eq!(
+        session["runtimeMode"],
+        runtime_mode(mode),
+        "{context}: {access}"
+    );
+    assert_eq!(
+        session["runningRuntimeMode"],
+        runtime_mode(running),
+        "{context}: {access}"
+    );
     assert_eq!(session["pending"], mode != running, "{context}: {access}");
 }
 
 /// The chat's idle process ended with the choice of `mode`: nothing runs, nothing waits.
 fn assert_no_process(access: &Value, mode: &str, context: &str) {
     let session = &access["session"];
-    assert_eq!(session["mode"], mode, "{context}: {access}");
+    assert_eq!(session["mode"], legacy_mode(mode), "{context}: {access}");
+    assert_eq!(
+        session["runtimeMode"],
+        runtime_mode(mode),
+        "{context}: {access}"
+    );
     assert_eq!(session["running"], Value::Null, "{context}: {access}");
+    assert_eq!(
+        session["runningRuntimeMode"],
+        Value::Null,
+        "{context}: {access}"
+    );
     assert_eq!(session["pending"], false, "{context}: {access}");
-    assert_eq!(access["effective"]["mode"], mode, "{context}: {access}");
+    assert_eq!(
+        access["effective"]["mode"],
+        legacy_mode(mode),
+        "{context}: {access}"
+    );
 }
 
 /// The switches and mode `effective` shows are those of `start`, the process of this conversation.
@@ -951,7 +1105,7 @@ fn assert_effective_of(access: &Value, start: &Start, context: &str) {
     );
     assert_eq!(
         access["effective"]["mode"],
-        mode_of(start),
+        legacy_mode(mode_of(start)),
         "{context}: {access}"
     );
 }
@@ -1007,7 +1161,7 @@ async fn the_window_engine_discovers_claude_and_keeps_its_access_without_the_hos
     assert!(
         access["effective"]["text"]
             .as_str()
-            .is_some_and(|text| text.starts_with("С подтверждением")),
+            .is_some_and(|text| text.starts_with("Supervised: Claude asks")),
         "{access}"
     );
     assert_eq!(access["selected"]["executor"], Value::Null, "{access}");
@@ -1294,24 +1448,19 @@ async fn p4_full_what_even_bypass_refuses_reaches_the_human() {
     host.shutdown().await;
 }
 
-/// 5. In confirm the network is closed: the CLI gets `--disallowedTools WebFetch,WebSearch`.
+/// 5. In Confirm Claude's web tools stay available behind the same user permission callback.
 #[tokio::test]
-async fn p5_confirm_closes_the_network_of_claude() {
+async fn p5_confirm_keeps_claude_web_tools_behind_confirmation() {
     let workspace = Workspace::new();
     let mut host = engine_with_claude(&workspace, "confirm").await;
     host.prompt("hello").await;
     let start = only_session(&workspace, &host);
-    assert_eq!(
-        start.value_of("--disallowedTools"),
-        Some("WebFetch,WebSearch"),
-        "{start:?}"
-    );
+    assert_eq!(start.value_of("--disallowedTools"), None, "{start:?}");
+    assert_eq!(start.value_of("--permission-prompt-tool"), Some("stdio"));
     let flags = host.access().await["effective"]["flags"].clone();
     let flags: Vec<String> = serde_json::from_value(flags).expect("flags");
-    let at = flags.iter().position(|flag| flag == "--disallowedTools");
-    assert_eq!(
-        at.and_then(|at| flags.get(at + 1)).map(String::as_str),
-        Some("WebFetch,WebSearch"),
+    assert!(
+        !flags.iter().any(|flag| flag == "--disallowedTools"),
         "{flags:?}"
     );
     host.shutdown().await;
@@ -1767,7 +1916,11 @@ impl Host {
                 running |= frame["params"]["status"] == "running";
             }
             // The fake has said it is working: the turn is in the middle.
-            worked |= frame["method"] == "session.event" && frame.to_string().contains("working");
+            worked |= frame["method"] == "session.event"
+                && frame["params"]["event"]["type"] == "assistant/message"
+                && frame["params"]["event"]["data"]
+                    .to_string()
+                    .contains("working");
         }
         let cancel = self
             .send("session/cancel", json!({"sessionId": session}))
@@ -1923,10 +2076,7 @@ async fn t4_the_request_of_claude_is_worded_for_a_person_and_its_risk_is_not_cla
 
     let asked = host.turn(SESSION, "run", Some("allowed-once")).await;
     assert_eq!(asked.len(), 1, "{asked:?}");
-    assert_eq!(
-        asked[0].human_text,
-        "Claude просит выполнить команду: touch ran.txt"
-    );
+    assert_eq!(asked[0].human_text, "Claude asks to run: touch ran.txt");
     assert_eq!(
         asked[0].risk,
         hoh_protocol::Risk::Unassessed,
@@ -1952,7 +2102,7 @@ async fn t4_the_request_of_claude_is_worded_for_a_person_and_its_risk_is_not_cla
     let path = workspace.folder.join("notes.txt");
     assert_eq!(
         asked[0].human_text,
-        format!("Claude просит изменить файл {}", path.display())
+        format!("Claude asks to edit file {}", path.display())
     );
     for request in host
         .frames
@@ -1982,16 +2132,16 @@ async fn t4b_an_invisible_character_keeps_the_request_worded_for_a_person() {
     let cases = [
         (
             "run: echo \"ok \u{2714}\u{fe0f}\"",
-            "Claude просит выполнить команду: echo \"ok \u{2714} \"".to_owned(),
+            "Claude asks to run: echo \"ok \u{2714} \"".to_owned(),
         ),
         (
             "run: echo a\u{a0}b",
-            "Claude просит выполнить команду: echo a b".to_owned(),
+            "Claude asks to run: echo a b".to_owned(),
         ),
         (
             "edit: no\u{200b}tes.txt",
             format!(
-                "Claude просит изменить файл {}",
+                "Claude asks to edit file {}",
                 workspace.folder.join("no tes.txt").display()
             ),
         ),
@@ -2054,6 +2204,331 @@ async fn t5_a_chat_with_claude_does_not_take_a_change_of_folder() {
     assert_eq!(
         workspace.sessions().last().expect("started").cwd,
         workspace.folder
+    );
+    host.shutdown().await;
+}
+
+#[tokio::test]
+async fn replaced_working_directory_is_refused_before_native_executor_launch() {
+    let workspace = Workspace::new();
+    let mut host = engine_with_claude(&workspace, "confirm").await;
+    // A read no longer records identity. Explicitly select the folder before replacing it.
+    let selected = host
+        .privileged(
+            "session/working-directory/set",
+            json!({"sessionId": SESSION, "path": workspace.folder}),
+            "allowed-once",
+        )
+        .await;
+    assert!(selected.get("error").is_none(), "{selected}");
+    let original = workspace.root.path().join("moved-work");
+    std::fs::rename(&workspace.folder, &original).unwrap();
+    std::fs::create_dir(&workspace.folder).unwrap();
+    host.turn(SESSION, "hello", None).await;
+    let end = host.turn_end(SESSION);
+    assert_eq!(end["kind"], "error", "{end}");
+    assert!(
+        end["error"]["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("folder") && message.contains("changed")),
+        "{end}"
+    );
+    assert!(
+        workspace.sessions().is_empty(),
+        "native executor ran in the replacement directory"
+    );
+    host.shutdown().await;
+}
+
+#[tokio::test]
+async fn explicit_trust_revocation_restarts_fake_claude_without_project_settings() {
+    let workspace = Workspace::new();
+    let mut host = engine_with_claude(&workspace, "confirm").await;
+    let params = |trust| json!({"executor": "claude", "cwd": workspace.folder, "trust": trust});
+    let granted = host
+        .privileged("hoh/executor/trust/set", params(true), "allowed-once")
+        .await;
+    assert!(granted.get("error").is_none(), "{granted}");
+    host.turn(SESSION, "first", None).await;
+    assert_eq!(
+        workspace
+            .sessions()
+            .last()
+            .unwrap()
+            .value_of("--setting-sources"),
+        Some("user,project,local")
+    );
+    let revoked = host
+        .privileged("hoh/executor/trust/set", params(false), "allowed-once")
+        .await;
+    assert!(revoked.get("error").is_none(), "{revoked}");
+    assert!(
+        until_dead(workspace.sessions()[0].pid).await,
+        "trusted idle process survived revocation"
+    );
+    host.turn(SESSION, "second", None).await;
+    let starts = workspace.sessions();
+    assert_eq!(starts.len(), 2, "{starts:?}");
+    assert_eq!(starts[1].value_of("--setting-sources"), Some("user"));
+    host.shutdown().await;
+}
+
+#[tokio::test]
+async fn rebind_rejects_a_changed_folder_while_the_real_agent_is_running() {
+    let workspace = Workspace::new();
+    let mut host = engine_with_claude(&workspace, "confirm").await;
+    hang_turn(&mut host, SESSION, "hang").await;
+    std::fs::rename(
+        &workspace.folder,
+        workspace.root.path().join("old-running-folder"),
+    )
+    .unwrap();
+    std::fs::create_dir(&workspace.folder).unwrap();
+    let status = host
+        .ok(
+            "session/working-directory/status",
+            json!({"sessionId": SESSION}),
+        )
+        .await;
+    assert_eq!(status["changed"], true);
+    let params = json!({"sessionId": SESSION, "path": status["cwd"], "rootIdentity": status["rootIdentity"]});
+    let result = host
+        .privileged("session/working-directory/rebind", params, "allowed-once")
+        .await;
+    assert!(result.get("error").is_some(), "{result}");
+    assert_eq!(
+        host.ok(
+            "session/working-directory/status",
+            json!({"sessionId": SESSION})
+        )
+        .await["changed"],
+        true
+    );
+    stop_turn(&mut host, SESSION).await;
+    host.shutdown().await;
+}
+
+#[tokio::test]
+async fn revoking_folder_trust_during_a_turn_is_refused() {
+    let workspace = Workspace::new();
+    let mut host = engine_with_claude(&workspace, "confirm").await;
+    let grant = json!({"executor": "claude", "cwd": workspace.folder, "trust": true});
+    assert!(
+        host.privileged("hoh/executor/trust/set", grant, "allowed-once")
+            .await
+            .get("error")
+            .is_none()
+    );
+    hang_turn(&mut host, SESSION, "hang").await;
+    let revoke = json!({"executor": "claude", "cwd": workspace.folder, "trust": false});
+    let result = host
+        .privileged("hoh/executor/trust/set", revoke, "allowed-once")
+        .await;
+    assert!(result.get("error").is_some(), "{result}");
+    let status = host
+        .ok(
+            "hoh/executor/trust/get",
+            json!({"executor":"claude", "cwd":workspace.folder}),
+        )
+        .await;
+    assert_eq!(status["trusted"], true);
+    stop_turn(&mut host, SESSION).await;
+    host.shutdown().await;
+}
+
+/// Move the complete data home as a person restoring a backup would, without touching the project.
+#[tokio::test]
+async fn copied_profile_opens_all_chats_after_original_is_renamed() {
+    let workspace = Workspace::new();
+    let mut host = engine_with_claude(&workspace, "confirm").await;
+    for id in ["copied-chat-a", "copied-chat-b"] {
+        host.turn(id, "before backup", None).await;
+    }
+    host.shutdown().await;
+    let home = workspace.root.path().join("home");
+    let copied = workspace.root.path().join("copied-home");
+    assert!(
+        std::process::Command::new("cp")
+            .args(["-a", home.to_str().unwrap(), copied.to_str().unwrap()])
+            .status()
+            .unwrap()
+            .success()
+    );
+    std::fs::rename(&home, workspace.root.path().join("old-home")).unwrap();
+    let copied_env = copied.to_str().unwrap();
+    let mut host = Host::start_with_env(&workspace, &[("DSH_HOME", copied_env)]);
+    host.initialize(&workspace).await;
+    for id in ["copied-chat-a", "copied-chat-b"] {
+        host.ok("session/resume", json!({"sessionId": id})).await;
+        let status = host
+            .ok("session/working-directory/status", json!({"sessionId": id}))
+            .await;
+        assert_eq!(status["changed"], false, "{status}");
+        host.turn(id, "after backup", None).await;
+        assert_eq!(host.turn_end(id)["kind"], "completed");
+    }
+    host.shutdown().await;
+}
+
+#[tokio::test]
+async fn copied_profile_and_replaced_project_require_confirmed_rebind() {
+    let workspace = Workspace::new();
+    let mut host = engine_with_claude(&workspace, "confirm").await;
+    host.turn(SESSION, "before backup", None).await;
+    host.shutdown().await;
+    let home = workspace.root.path().join("home");
+    let copied = workspace.root.path().join("restored-home");
+    assert!(
+        std::process::Command::new("cp")
+            .args(["-a", home.to_str().unwrap(), copied.to_str().unwrap()])
+            .status()
+            .unwrap()
+            .success()
+    );
+    std::fs::rename(&home, workspace.root.path().join("old-home")).unwrap();
+    let project_copy = workspace.root.path().join("project-copy");
+    assert!(
+        std::process::Command::new("cp")
+            .args([
+                "-a",
+                workspace.folder.to_str().unwrap(),
+                project_copy.to_str().unwrap()
+            ])
+            .status()
+            .unwrap()
+            .success()
+    );
+    std::fs::rename(&workspace.folder, workspace.root.path().join("old-project")).unwrap();
+    std::fs::rename(&project_copy, &workspace.folder).unwrap();
+    let mut host = Host::start_with_env(&workspace, &[("DSH_HOME", copied.to_str().unwrap())]);
+    host.initialize(&workspace).await;
+    host.ok("session/resume", json!({"sessionId": SESSION}))
+        .await;
+    let status = host
+        .ok(
+            "session/working-directory/status",
+            json!({"sessionId": SESSION}),
+        )
+        .await;
+    assert_eq!(status["changed"], true, "{status}");
+    let id = host
+        .send(
+            "session/working-directory/get",
+            json!({"sessionId": SESSION}),
+        )
+        .await;
+    let (refusal, _) = host.response(&id, None).await;
+    assert_eq!(refusal["error"]["code"], -32021, "{refusal}");
+    let params = json!({"sessionId": SESSION, "path": status["cwd"], "rootIdentity": status["rootIdentity"]});
+    let denied = host
+        .privileged(
+            "session/working-directory/rebind",
+            params.clone(),
+            "rejected",
+        )
+        .await;
+    assert!(denied.get("error").is_some(), "{denied}");
+    assert_eq!(
+        host.ok(
+            "session/working-directory/status",
+            json!({"sessionId": SESSION})
+        )
+        .await["changed"],
+        true
+    );
+    let other = workspace.root.path().join("old-project");
+    let mut wrong = params.clone();
+    wrong["path"] = json!(other);
+    let refused = host
+        .privileged("session/working-directory/rebind", wrong, "allowed-once")
+        .await;
+    assert!(refused.get("error").is_some(), "{refused}");
+    let mut stale = params.clone();
+    stale["rootIdentity"]["inode"] = json!("0");
+    let refused = host
+        .privileged("session/working-directory/rebind", stale, "allowed-once")
+        .await;
+    assert!(refused.get("error").is_some(), "{refused}");
+    let accepted = host
+        .privileged("session/working-directory/rebind", params, "allowed-once")
+        .await;
+    assert!(accepted.get("error").is_none(), "{accepted}");
+    host.turn(SESSION, "after restore", None).await;
+    assert_eq!(host.turn_end(SESSION)["kind"], "completed");
+    host.shutdown().await;
+    let mut host = Host::start_with_env(&workspace, &[("DSH_HOME", copied.to_str().unwrap())]);
+    host.initialize(&workspace).await;
+    host.ok("session/resume", json!({"sessionId": SESSION}))
+        .await;
+    assert_eq!(
+        host.ok(
+            "session/working-directory/status",
+            json!({"sessionId": SESSION})
+        )
+        .await["changed"],
+        false
+    );
+    host.turn(SESSION, "after restart", None).await;
+    assert_eq!(host.turn_end(SESSION)["kind"], "completed");
+    host.shutdown().await;
+}
+
+#[tokio::test]
+async fn missing_selected_directory_never_falls_back_to_the_original_folder() {
+    let workspace = Workspace::new();
+    let mut host = engine_with_claude(&workspace, "confirm").await;
+    host.ok(
+        "session/working-directory/get",
+        json!({"sessionId": SESSION}),
+    )
+    .await;
+    let selected = workspace.root.path().join("selected-work");
+    std::fs::create_dir(&selected).unwrap();
+    let result = host
+        .privileged(
+            "session/working-directory/set",
+            json!({"sessionId": SESSION, "path": selected}),
+            "allowed-once",
+        )
+        .await;
+    assert!(result.get("error").is_none(), "{result}");
+    std::fs::remove_dir(&selected).unwrap();
+    host.turn(SESSION, "hello", None).await;
+    let end = host.turn_end(SESSION);
+    assert_eq!(end["kind"], "error", "{end}");
+    assert!(
+        end["error"]["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("папка")),
+        "{end}"
+    );
+    assert!(
+        workspace.sessions().is_empty(),
+        "executor fell back to the old folder"
+    );
+    host.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_removed_directory_is_refused_even_when_the_native_process_is_idle() {
+    let workspace = Workspace::new();
+    let mut host = engine_with_claude(&workspace, "confirm").await;
+    host.turn(SESSION, "hello", None).await;
+    assert_eq!(host.turn_end(SESSION)["kind"], "completed");
+    std::fs::rename(&workspace.folder, workspace.root.path().join("moved-work")).unwrap();
+    host.turn(SESSION, "hello", None).await;
+    let end = host.turn_end(SESSION);
+    assert_eq!(end["kind"], "error", "{end}");
+    assert!(
+        end["error"]["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("папка")),
+        "{end}"
+    );
+    assert_eq!(
+        workspace.prompts().len(),
+        1,
+        "the idle process must receive no second prompt"
     );
     host.shutdown().await;
 }
@@ -2155,6 +2630,68 @@ async fn t7_after_the_engine_restarts_a_claude_chat_keeps_its_model_and_its_mode
     let after = host.access_of("chat-m").await;
     assert_eq!(after["session"]["model"], "sonnet", "{after}");
     assert_session(&after, "full", "full", "after the next turn");
+    host.shutdown().await;
+}
+
+/// The window reopens a Claude log containing context snapshots and a stopped turn.
+#[tokio::test]
+async fn a_cold_claude_conversation_keeps_usage_and_stopped_turns_and_can_continue() {
+    let workspace = Workspace::new();
+    let mut host = engine_with_claude(&workspace, "confirm").await;
+    host.prompt("short").await;
+    host.turn_then_stop(SESSION, "hang").await;
+    let session = json!({"sessionId": SESSION});
+    let page = json!({"sessionId": SESSION, "limit": 1000});
+    let history = host.ok("session/events", page.clone()).await;
+    let events = history["events"].as_array().expect("history");
+    assert!(
+        events
+            .iter()
+            .any(|event| event["type"] == "plugin:hoh/context-usage"
+                && event["ignorable"] == true
+                && event["data"]["usage"]["inputTokens"] == 17
+                && event["data"]["usage"]["cacheReadInputTokens"] == 23)
+    );
+    assert!(
+        events.iter().any(
+            |event| event["type"] == "turn/end" && event["data"]["reason"]["kind"] == "aborted"
+        )
+    );
+    host.shutdown().await;
+
+    let mut host = Host::start(&workspace);
+    host.initialize(&workspace).await;
+    let list = host.ok("session/list", json!({"limit": 20})).await;
+    assert!(
+        list["sessions"]
+            .as_array()
+            .expect("sessions")
+            .iter()
+            .any(|row| row["id"] == SESSION)
+    );
+    let access = host.access_of(SESSION).await;
+    assert_eq!(access["session"]["executor"], "claude", "{access}");
+    assert_no_process(&access, "confirm", "cold conversation");
+    host.ok("session/resume", session.clone()).await;
+    let reopened = host.ok("session/events", page).await;
+    // A clean shutdown can append end-seed after the first read.
+    assert!(
+        reopened["events"]
+            .as_array()
+            .expect("reopened history")
+            .starts_with(events)
+    );
+    let working_directory = host.ok("session/working-directory/get", session).await;
+    assert_eq!(working_directory["cwd"], json!(workspace.folder));
+    host.prompt("hello").await;
+    assert_eq!(host.turn_end(SESSION)["kind"], "completed");
+    assert!(
+        workspace
+            .sessions()
+            .last()
+            .expect("Claude resumed")
+            .has("--resume")
+    );
     host.shutdown().await;
 }
 
@@ -2260,7 +2797,10 @@ async fn hang_turn(host: &mut Host, session: &str, text: &str) {
     while !host.frames.iter().any(|frame| {
         frame["method"] == "session.event"
             && frame["params"]["sessionId"] == session
-            && frame.to_string().contains("working")
+            && frame["params"]["event"]["type"] == "assistant/message"
+            && frame["params"]["event"]["data"]
+                .to_string()
+                .contains("working")
     }) {
         host.next().await;
     }
@@ -2684,4 +3224,988 @@ async fn t16_stop_right_after_a_message_to_a_resumed_claude_ends_it() {
         starts[2]
     );
     host.shutdown().await;
+}
+
+/// HOH-40: the effort the window names in `session/prompt` follows `--effort` of the start of
+/// Claude (without folder trust, `--setting-sources user`). The same
+/// level keeps the process; another one starts Claude anew on the same conversation (`--resume`),
+/// as T3; a level Claude does not have is not passed on (the engine's log says so; the window
+/// profile does not export it); a prompt without one runs at Claude's own level.
+#[tokio::test]
+async fn t18_the_effort_of_a_prompt_reaches_the_start_of_claude() {
+    let workspace = Workspace::new();
+    let mut host = engine_with_claude(&workspace, "confirm").await;
+    host.effort = json!("high");
+    host.prompt("hello").await;
+    let first = only_session(&workspace, &host);
+    assert_eq!(first.value_of("--effort"), Some("high"), "{first:?}");
+    assert_eq!(
+        first.value_of("--setting-sources"),
+        Some("user"),
+        "{first:?}"
+    );
+    let native = first
+        .value_of("--session-id")
+        .expect("a new session")
+        .to_owned();
+
+    host.prompt("again").await;
+    assert_eq!(
+        workspace.sessions().len(),
+        1,
+        "the same level, the same process"
+    );
+
+    host.effort = json!("max");
+    host.prompt("more").await;
+    let starts = workspace.sessions();
+    assert_eq!(starts.len(), 2, "{starts:?}");
+    assert_eq!(
+        starts[1].value_of("--effort"),
+        Some("max"),
+        "{:?}",
+        starts[1]
+    );
+    assert_eq!(
+        starts[1].value_of("--resume"),
+        Some(native.as_str()),
+        "{:?}",
+        starts[1]
+    );
+    assert_eq!(mode_of(&starts[1]), "confirm", "{:?}", starts[1]);
+
+    host.effort = json!("turbo");
+    host.prompt("odd").await;
+    let starts = workspace.sessions();
+    assert_eq!(starts.len(), 3, "{starts:?}");
+    assert!(!starts[2].has("--effort"), "{:?}", starts[2]);
+
+    host.effort = Value::Null;
+    host.prompt("plain").await;
+    assert_eq!(workspace.sessions().len(), 3, "no level, as the last start");
+    let end = host.turn_end(SESSION);
+    assert_eq!(end["kind"], "completed", "{end}\n{}", host.context());
+    host.shutdown().await;
+}
+
+/// HOH-40 (i7's report, «два запроса в очереди»): prompts queued behind a running turn each run
+/// at the level they named, not at the level of the last one sent. The first turn waits for the
+/// host's answer to its edit while two more prompts, `high` then `max`, queue behind it.
+#[tokio::test]
+async fn t19_a_queued_prompt_runs_at_its_own_effort() {
+    let workspace = Workspace::new();
+    let mut host = engine_with_claude(&workspace, "confirm").await;
+    let prompt = |text: &str, effort: &str| {
+        json!({
+            "sessionId": SESSION,
+            "contentBlocks": [{"type": "text", "text": text}],
+            "effort": effort,
+        })
+    };
+    let from = host.frames.len();
+    host.send("session/prompt", prompt("edit", "low")).await;
+    let request = loop {
+        let frame = host.next().await;
+        if frame["method"] == "approval/request" {
+            break frame;
+        }
+    };
+    for (text, effort) in [("hello", "high"), ("again", "max")] {
+        let id = host.send("session/prompt", prompt(text, effort)).await;
+        let (frame, asked) = host.response(&id, None).await;
+        assert!(frame["result"]["messageId"].is_string(), "{frame}");
+        assert_eq!(asked, 0, "{}", host.context());
+    }
+    host.answer_approval(&request, Some("allowed-once")).await;
+    let ended = |host: &Host| {
+        host.frames[from..]
+            .iter()
+            .filter(|frame| {
+                frame["method"] == "session.event"
+                    && frame["params"]["sessionId"] == SESSION
+                    && frame["params"]["event"]["type"] == "turn/end"
+            })
+            .count()
+    };
+    while ended(&host) < 3 {
+        host.next().await;
+    }
+    assert_eq!(
+        host.turn_end(SESSION)["kind"],
+        "completed",
+        "{}",
+        host.context()
+    );
+    let starts = workspace.sessions();
+    let efforts: Vec<_> = starts
+        .iter()
+        .map(|start| start.value_of("--effort"))
+        .collect();
+    assert_eq!(
+        efforts,
+        [Some("low"), Some("high"), Some("max")],
+        "{starts:?}"
+    );
+    let native = starts[0].value_of("--session-id").expect("a new session");
+    for start in &starts[1..] {
+        assert_eq!(start.value_of("--resume"), Some(native), "{start:?}");
+    }
+    assert_eq!(notes(&workspace), "notes\nedited\n");
+    host.shutdown().await;
+}
+
+#[tokio::test]
+async fn queued_turn_keeps_the_access_selected_when_it_was_accepted() {
+    let workspace = Workspace::new();
+    let mut host = engine_with_claude(&workspace, "confirm").await;
+    let from = host.frames.len();
+    host.send(
+        "session/prompt",
+        json!({"sessionId":SESSION,"contentBlocks":[{"type":"text","text":"edit"}]}),
+    )
+    .await;
+    let request = loop {
+        let frame = host.next().await;
+        if frame["method"] == "approval/request" {
+            break frame;
+        }
+    };
+    let id = host
+        .send(
+            "session/prompt",
+            json!({"sessionId":SESSION,"contentBlocks":[{"type":"text","text":"hello"}]}),
+        )
+        .await;
+    let (response, _) = host.response(&id, None).await;
+    assert!(response["result"]["messageId"].is_string());
+    host.set_session_access(SESSION, "full", "allowed-once")
+        .await;
+    host.answer_approval(&request, Some("allowed-once")).await;
+    while host.frames[from..]
+        .iter()
+        .filter(|frame| {
+            frame["method"] == "session.event" && frame["params"]["event"]["type"] == "turn/end"
+        })
+        .count()
+        < 2
+    {
+        host.next().await;
+    }
+    let starts = workspace.sessions();
+    assert!(
+        starts.iter().all(|start| mode_of(start) == "confirm"),
+        "{starts:?}"
+    );
+    host.shutdown().await;
+}
+
+// ---------------------------------------------------------------- pictures (HOH-41 package 1)
+
+/// A red 2×2 PNG.
+const RED_PNG: &str = "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAEElEQVR4nGP4z8AARAwQCgAf7gP9i18U1AAAAABJRU5ErkJggg==";
+
+/// 15. A picture the window sends with the prompt is kept by the engine's attachment store (a copy
+/// under the window's data, not a path the page named) and reaches Claude's stdin as T3's Claude
+/// adapter sends it: a base64 image block first, then the text.
+#[tokio::test]
+async fn p15_a_picture_reaches_claude_as_a_base64_block_before_the_text() {
+    let workspace = Workspace::new();
+    let mut host = engine_with_claude(&workspace, "confirm").await;
+    let blocks = json!([
+        {"type": "image", "data": RED_PNG, "mimeType": "image/png", "name": "red.png"},
+        {"type": "text", "text": "what is on it?"},
+    ]);
+    let asked = host.turn_with(SESSION, blocks, None).await;
+    assert!(asked.is_empty(), "{asked:?}");
+    let prompts = workspace.prompts();
+    assert_eq!(prompts.len(), 1, "{prompts:?}");
+    let content = prompts[0].as_array().expect("content blocks");
+    assert_eq!(content.len(), 2, "{content:?}");
+    assert_eq!(content[0]["type"], "image", "{content:?}");
+    assert_eq!(content[0]["source"]["type"], "base64", "{content:?}");
+    assert_eq!(
+        content[0]["source"]["media_type"], "image/png",
+        "{content:?}"
+    );
+    let data = content[0]["source"]["data"].as_str().expect("base64 data");
+    assert!(data.starts_with("iVBORw0KGgo"), "not a PNG: {data}");
+    assert_eq!(
+        content[1],
+        json!({"type": "text", "text": "what is on it?"})
+    );
+    // The copy lives in the window's data folder.
+    let kept = workspace
+        .files()
+        .into_iter()
+        .filter(|(path, _)| {
+            path.starts_with(workspace.root.path().join("home").join("attachments"))
+        })
+        .count();
+    assert!(kept >= 1, "no copy of the picture in the window's data");
+    host.shutdown().await;
+}
+
+/// 15 (refusals). A picture over T3's 10 MiB or whose bytes do not match its type is refused by the
+/// store; an unsupported SVG is rejected earlier by the strict SDK wire. Claude is never started.
+#[tokio::test]
+async fn p15_an_oversized_or_mistyped_picture_is_refused_and_claude_gets_nothing() {
+    let workspace = Workspace::new();
+    let mut host = engine_with_claude(&workspace, "confirm").await;
+    // 10 MiB and 2 bytes of zeros: the size is checked before the bytes are looked at.
+    let big = "AAAA".repeat((10 * 1024 * 1024_usize).div_ceil(3));
+    for (data, mime, reason) in [
+        (big.as_str(), "image/png", "byte limit"),
+        (RED_PNG, "image/jpeg", "does not match"),
+        (
+            RED_PNG,
+            "image/svg+xml",
+            "data did not match any variant of untagged enum SdkPromptContentBlock",
+        ),
+    ] {
+        let blocks = json!([
+            {"type": "image", "data": data, "mimeType": mime, "name": "x"},
+            {"type": "text", "text": "hello"},
+        ]);
+        let id = host
+            .send(
+                "session/prompt",
+                json!({"sessionId": SESSION, "contentBlocks": blocks}),
+            )
+            .await;
+        let (frame, _) = host.response(&id, None).await;
+        let message = frame["error"]["message"].as_str().unwrap_or_default();
+        assert!(message.contains(reason), "{mime}: {frame}");
+    }
+    assert!(workspace.prompts().is_empty(), "{:?}", workspace.prompts());
+    assert!(workspace.sessions().is_empty());
+    host.shutdown().await;
+}
+
+// ------------------------------------------------- `/`, `$` and `@` of the window (HOH-41 package 1)
+
+/// 16. Before any turn, `/` and `$` are what Claude itself declares for the folder: the commands of
+/// its `initialize` and the skills of its `reload_skills`, from a probe in that folder that starts
+/// no conversation.
+#[tokio::test]
+async fn p16_commands_and_skills_come_from_claude_before_the_first_turn() {
+    let workspace = Workspace::new();
+    let mut host = Host::start(&workspace);
+    host.initialize(&workspace).await;
+    let result = host
+        .ok(
+            "hoh/executor/commands",
+            json!({"executor": "claude", "cwd": workspace.folder}),
+        )
+        .await;
+    assert_eq!(
+        result["commands"],
+        json!([
+            {"name": "review", "description": "Review the folder work", "argumentHint": "[pr]"},
+            {"name": "release-notes", "description": "Write the release notes"},
+        ]),
+        "{result}"
+    );
+    assert_eq!(
+        result["skills"],
+        json!([{"name": "release-notes", "description": "Write the release notes"}])
+    );
+    assert!(
+        workspace.sessions().is_empty(),
+        "{:?}",
+        workspace.sessions()
+    );
+    let probe = workspace.starts().pop().expect("the probe");
+    assert_eq!(probe.cwd.canonicalize().expect("cwd"), workspace.folder);
+    assert!(probe.has("--no-session-persistence"), "{probe:?}");
+    assert!(workspace.prompts().is_empty());
+    host.shutdown().await;
+}
+
+/// 16 (folders). `/`, `$` and `@` answer only for a folder the engine knows: the default one or
+/// that of a conversation. Another folder, a relative path, a `..` out of the folder or a link to
+/// another folder is refused before anything is read or started; a link or `..` back to a known
+/// folder is that folder.
+#[tokio::test]
+async fn p16_only_a_folder_the_engine_knows_is_searched_or_probed() {
+    let workspace = Workspace::new();
+    let mut host = Host::start(&workspace);
+    host.initialize(&workspace).await;
+    let other = workspace.root.path().join("elsewhere");
+    std::fs::create_dir_all(&other).expect("another folder");
+    std::fs::write(other.join("secret.txt"), "x").expect("a file elsewhere");
+    let other = other.canonicalize().expect("canonical");
+    let link_out = workspace.root.path().join("link-out");
+    std::os::unix::fs::symlink(&other, &link_out).expect("link");
+    let link_in = workspace.root.path().join("link-in");
+    std::os::unix::fs::symlink(&workspace.folder, &link_in).expect("link");
+    let refused = [
+        other.display().to_string(),
+        "work".to_owned(),
+        format!("{}/..", workspace.folder.display()),
+        format!("{}/../elsewhere", workspace.folder.display()),
+        link_out.display().to_string(),
+        "/".to_owned(),
+    ];
+    let starts = workspace.starts().len();
+    for cwd in &refused {
+        for (method, params) in [
+            (
+                "hoh/workspace/entries",
+                json!({"cwd": cwd, "query": "", "limit": 80}),
+            ),
+            (
+                "hoh/executor/commands",
+                json!({"executor": "claude", "cwd": cwd}),
+            ),
+        ] {
+            let id = host.send(method, params).await;
+            let (frame, _) = host.response(&id, None).await;
+            let message = frame["error"]["message"].as_str().unwrap_or_default();
+            // A folder around the engine's data (`/`, the parent) is refused for that.
+            assert!(
+                message.contains("is not the folder of a conversation")
+                    || message.contains("holds the data of HoH"),
+                "{method} {cwd}: {frame}"
+            );
+        }
+    }
+    assert_eq!(
+        workspace.starts().len(),
+        starts,
+        "a refused folder started claude"
+    );
+    for cwd in [
+        link_in.display().to_string(),
+        format!("{}/../work", workspace.folder.display()),
+    ] {
+        let found = host
+            .ok(
+                "hoh/workspace/entries",
+                json!({"cwd": cwd, "query": "", "limit": 80}),
+            )
+            .await;
+        assert_eq!(
+            found["entries"],
+            json!([{"path": "build", "kind": "directory"}, {"path": "notes.txt", "kind": "file"}]),
+            "{cwd}: {found}"
+        );
+    }
+
+    // A conversation moved to the other folder makes it known.
+    host.select_claude().await;
+    host.ok(
+        "session/working-directory/get",
+        json!({"sessionId": "chat-other"}),
+    )
+    .await;
+    host.privileged(
+        "session/working-directory/set",
+        json!({"sessionId": "chat-other", "path": other}),
+        "allowed-once",
+    )
+    .await;
+    let found = host
+        .ok(
+            "hoh/workspace/entries",
+            json!({"cwd": other, "query": "secr", "limit": 80}),
+        )
+        .await;
+    assert_eq!(
+        found["entries"],
+        json!([{"path": "secret.txt", "kind": "file"}])
+    );
+
+    // An active-only session path is a canonical identity accepted by working-directory/set.
+    // Replacing that spelling with a link must not authorize the link's new target.
+    let active_moved = workspace.root.path().join("elsewhere-moved");
+    let active_swapped = workspace.root.path().join("active-swapped");
+    std::fs::create_dir(&active_swapped).expect("replacement active target");
+    std::fs::write(active_swapped.join("must-not-leak.txt"), "x").expect("secret");
+    std::fs::rename(&other, &active_moved).expect("move active folder");
+    std::os::unix::fs::symlink(&active_swapped, &other).expect("replace active folder");
+    let id = host
+        .send(
+            "hoh/workspace/entries",
+            json!({"cwd": other, "query": "leak", "limit": 80}),
+        )
+        .await;
+    let (frame, _) = host.response(&id, None).await;
+    assert!(
+        frame.get("error").is_some(),
+        "active symlink swap passed: {frame}"
+    );
+
+    // The default identity is frozen when the window plugin starts. A later replacement of the
+    // configured spelling likewise cannot silently register a different target.
+    let default_moved = workspace.root.path().join("work-moved");
+    let default_swapped = workspace.root.path().join("default-swapped");
+    std::fs::create_dir(&default_swapped).expect("replacement default target");
+    std::fs::write(default_swapped.join("must-not-leak.txt"), "x").expect("secret");
+    std::fs::rename(&workspace.folder, &default_moved).expect("move default folder");
+    std::os::unix::fs::symlink(&default_swapped, &workspace.folder)
+        .expect("replace default folder");
+    let id = host
+        .send(
+            "hoh/workspace/entries",
+            json!({"cwd": workspace.folder, "query": "leak", "limit": 80}),
+        )
+        .await;
+    let (frame, _) = host.response(&id, None).await;
+    assert!(
+        frame.get("error").is_some(),
+        "default symlink swap passed: {frame}"
+    );
+    host.shutdown().await;
+}
+
+// ---------------------------------------------------------------- four modes (CEO 23.11 00:07)
+
+/// The four modes from the narrowest; every switch between two of them, each once, in one walk
+/// (each mode is left for each other mode exactly once).
+const MODES: [&str; 4] = ["confirm", "acceptEdits", "auto", "full"];
+const EVERY_SWITCH: [&str; 13] = [
+    "confirm",
+    "acceptEdits",
+    "confirm",
+    "auto",
+    "confirm",
+    "full",
+    "acceptEdits",
+    "auto",
+    "acceptEdits",
+    "full",
+    "auto",
+    "full",
+    "confirm",
+];
+
+/// m1. From every mode to every other one: the first message after the switch starts Claude with
+/// that mode's command line (`default`, `acceptEdits`, `auto`, `bypassPermissions`), the live
+/// process of the old mode having ended at the switch; `access/get` says the same.
+#[tokio::test]
+async fn m1_every_switch_between_the_four_modes_reaches_the_first_message_after_it() {
+    let switches: std::collections::BTreeSet<(&str, &str)> = EVERY_SWITCH
+        .windows(2)
+        .map(|pair| (pair[0], pair[1]))
+        .collect();
+    assert_eq!(switches.len(), 12, "every ordered pair once");
+    assert!(
+        switches
+            .iter()
+            .all(|(from, to)| from != to && MODES.contains(to))
+    );
+
+    let workspace = Workspace::new();
+    let mut host = Host::start(&workspace);
+    host.initialize(&workspace).await;
+    host.select_claude().await;
+    host.turn("chat-m", "hello", None).await;
+    assert_mode(&only_session(&workspace, &host), "confirm");
+
+    for (n, pair) in EVERY_SWITCH.windows(2).enumerate() {
+        let (from, to) = (pair[0], pair[1]);
+        let before = workspace.sessions();
+        let chosen = host
+            .set_session_access("chat-m", runtime_mode(to), "allowed-once")
+            .await;
+        assert_eq!(
+            chosen["result"]["runtimeMode"],
+            runtime_mode(to),
+            "{from} → {to}: {chosen}"
+        );
+        let last = before.last().expect("a start");
+        assert!(
+            until_dead(last.pid).await,
+            "{from} → {to}: {last:?} still runs"
+        );
+        let waiting = host.access_of("chat-m").await;
+        assert_no_process(&waiting, to, &format!("{from} → {to}, not yet sent"));
+
+        host.turn("chat-m", &format!("message {n}"), None).await;
+        let starts = workspace.sessions();
+        assert_eq!(starts.len(), before.len() + 1, "{from} → {to}: {starts:?}");
+        let start = starts.last().expect("the new start");
+        assert_mode(start, to);
+        assert!(start.has("--resume"), "{from} → {to}: {start:?}");
+        let access = host.access_of("chat-m").await;
+        assert_session(&access, to, to, &format!("{from} → {to}"));
+        assert_effective_of(&access, start, &format!("{from} → {to}"));
+    }
+    host.shutdown().await;
+}
+
+/// m2. Creating a conversation changes no mode: a new chat starts in the mode in effect (not a
+/// wider one) and the mode stays; a mode in the composition widens nothing. Under the two new
+/// modes what Claude asks still reaches the human: the engine allows nothing by itself.
+#[tokio::test]
+async fn m2_a_new_chat_starts_in_the_mode_in_effect_and_the_new_modes_still_ask_the_human() {
+    let workspace = Workspace::with("    access: full\n", "");
+    let mut host = Host::start(&workspace);
+    host.initialize(&workspace).await;
+    host.select_claude().await;
+    for mode in ["acceptEdits", "auto"] {
+        let chat = format!("chat-{mode}");
+        host.set_session_access(&chat, runtime_mode(mode), "allowed-once")
+            .await;
+        host.turn(&chat, "hello", None).await;
+        assert_mode(workspace.sessions().last().expect("a start"), mode);
+        assert_eq!(
+            host.access_of(&chat).await["session"]["runtimeMode"],
+            runtime_mode(mode),
+            "a new chat changed the mode"
+        );
+        let asked = host.turn(&chat, "edit", Some("allowed-once")).await;
+        assert_eq!(asked.len(), 1, "{mode}: {asked:?}");
+        assert_eq!(asked[0].tool_name, "edit_file", "{mode}: {asked:?}");
+    }
+    let answers = workspace.answers();
+    assert_eq!(
+        answers
+            .iter()
+            .map(|answer| (answer.tool.as_str(), answer.behavior.as_str()))
+            .collect::<Vec<_>>(),
+        [("Edit", "allow"), ("Edit", "allow")],
+        "{answers:?}"
+    );
+    host.shutdown().await;
+}
+
+/// 16 (limits). `@` takes at most 200 entries and 256 characters of query, as T3; the answer says
+/// when there were more.
+#[tokio::test]
+async fn p16_the_search_keeps_t3s_limits() {
+    let workspace = Workspace::new();
+    for index in 0..30 {
+        std::fs::write(workspace.folder.join(format!("file-{index:02}.txt")), "").expect("file");
+    }
+    let mut host = Host::start(&workspace);
+    host.initialize(&workspace).await;
+    for params in [
+        json!({"cwd": workspace.folder, "query": "", "limit": 0}),
+        json!({"cwd": workspace.folder, "query": "", "limit": 201}),
+        json!({"cwd": workspace.folder, "query": "x".repeat(257), "limit": 80}),
+    ] {
+        let id = host.send("hoh/workspace/entries", params.clone()).await;
+        let (frame, _) = host.response(&id, None).await;
+        assert!(frame.get("error").is_some(), "{params}: {frame}");
+    }
+    let found = host
+        .ok(
+            "hoh/workspace/entries",
+            json!({"cwd": workspace.folder, "query": "file", "limit": 10}),
+        )
+        .await;
+    assert_eq!(found["entries"].as_array().map(Vec::len), Some(10));
+    assert_eq!(found["truncated"], true);
+    assert_eq!(found["entries"][0]["path"], "file-00.txt");
+    host.shutdown().await;
+}
+
+/// 17. A folder the person adds as a project (`hoh/workspace/add`, privileged: the host confirms
+/// the exact call) is known before its first conversation, and after a restart of the engine; a
+/// folder that does not exist, a relative path, the engine's own data, or an add the host refuses
+/// is not.
+#[tokio::test]
+async fn p17_a_project_folder_the_person_adds_is_known_before_its_first_conversation() {
+    let workspace = Workspace::new();
+    let project = workspace.root.path().join("project");
+    std::fs::create_dir_all(project.join("src")).expect("project folder");
+    std::fs::write(project.join("src").join("main.rs"), "").expect("a file");
+    let project = project.canonicalize().expect("canonical");
+    let hidden = workspace.root.path().join(".ssh");
+    std::fs::create_dir(&hidden).expect("hidden home folder");
+    let hidden_link = workspace.root.path().join("hidden-link");
+    std::os::unix::fs::symlink(&hidden, &hidden_link).expect("hidden link");
+    let system_link = workspace.root.path().join("system-link");
+    std::os::unix::fs::symlink("/etc", &system_link).expect("system link");
+    let entries = json!({"cwd": project, "query": "main", "limit": 80});
+    let mut host = Host::start(&workspace);
+    host.initialize(&workspace).await;
+    let id = host.send("hoh/workspace/entries", entries.clone()).await;
+    let (frame, _) = host.response(&id, None).await;
+    assert!(
+        frame.get("error").is_some(),
+        "known before it was added: {frame}"
+    );
+
+    // Refused by the host: nothing changes.
+    let refused = host
+        .privileged("hoh/workspace/add", json!({"cwd": project}), "rejected")
+        .await;
+    assert!(refused.get("error").is_some(), "{refused}");
+    let id = host.send("hoh/workspace/entries", entries.clone()).await;
+    assert!(host.response(&id, None).await.0.get("error").is_some());
+
+    let added = host
+        .privileged("hoh/workspace/add", json!({"cwd": project}), "allowed-once")
+        .await;
+    assert_eq!(added["result"]["cwd"], json!(project), "{added}");
+    let found = host.ok("hoh/workspace/entries", entries.clone()).await;
+    assert_eq!(
+        found["entries"],
+        json!([{"path": "src/main.rs", "kind": "file"}])
+    );
+    let commands = host
+        .ok(
+            "hoh/executor/commands",
+            json!({"executor": "claude", "cwd": project}),
+        )
+        .await;
+    assert_eq!(commands["cwd"], json!(project.display().to_string()));
+    assert_eq!(
+        commands["commands"][0]["description"],
+        "Review the folder project"
+    );
+    // Without a folder: the engine's default one.
+    let default = host
+        .ok("hoh/executor/commands", json!({"executor": "claude"}))
+        .await;
+    assert_eq!(
+        PathBuf::from(default["cwd"].as_str().expect("cwd"))
+            .canonicalize()
+            .expect("canonical"),
+        workspace.folder
+    );
+
+    let home = workspace.root.path().join("home");
+    for cwd in [
+        workspace.root.path().join("missing").display().to_string(),
+        "project".to_owned(),
+        home.display().to_string(),
+        home.join("profiles").display().to_string(),
+        workspace.root.path().display().to_string(),
+        hidden_link.display().to_string(),
+        system_link.display().to_string(),
+    ] {
+        let frame = host
+            .privileged("hoh/workspace/add", json!({"cwd": cwd}), "allowed-once")
+            .await;
+        assert!(frame.get("error").is_some(), "{cwd}: {frame}");
+    }
+    host.shutdown().await;
+    assert!(workspace.sessions().is_empty());
+
+    // The next engine on this profile knows the folder.
+    let mut host = Host::start(&workspace);
+    host.initialize(&workspace).await;
+    let found = host.ok("hoh/workspace/entries", entries).await;
+    assert_eq!(
+        found["entries"],
+        json!([{"path": "src/main.rs", "kind": "file"}])
+    );
+    host.shutdown().await;
+
+    // A saved path is checked again on every use. Replacing it with a link to a protected folder
+    // does not turn that protected folder into a known workspace after an engine restart.
+    std::fs::remove_dir_all(&project).expect("remove old project");
+    std::os::unix::fs::symlink("/etc", &project).expect("replace project with a system link");
+    let mut host = Host::start(&workspace);
+    host.initialize(&workspace).await;
+    for method in ["hoh/workspace/entries", "hoh/executor/commands"] {
+        let params = if method == "hoh/workspace/entries" {
+            json!({"cwd": project, "query": "", "limit": 80})
+        } else {
+            json!({"executor": "claude", "cwd": project})
+        };
+        let id = host.send(method, params).await;
+        let (frame, _) = host.response(&id, None).await;
+        assert!(
+            frame["error"]["message"]
+                .as_str()
+                .is_some_and(|message| message.contains("protected")),
+            "{method}: {frame}"
+        );
+    }
+    host.shutdown().await;
+}
+
+/// 17 (HOME). A configured but unusable HOME is unknown, not a trusted protection root. The
+/// conventional home tree remains fail-closed exactly as when HOME is absent.
+#[tokio::test]
+async fn p17_an_unusable_home_still_protects_the_conventional_home_tree() {
+    let workspace = Workspace::new();
+    let missing = workspace.root.path().join("missing-home");
+    let mut host = Host::start_with_env(&workspace, &[("HOME", missing.to_str().unwrap())]);
+    host.initialize(&workspace).await;
+    let frame = host
+        .privileged("hoh/workspace/add", json!({"cwd": "/home"}), "allowed-once")
+        .await;
+    assert!(
+        frame["error"]["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("protected")),
+        "an unusable HOME allowed /home: {frame}"
+    );
+    host.shutdown().await;
+}
+
+/// 18. The engine's own data is never a folder of `@`, `/` or `$`: an engine that runs in its data
+/// folder (as the desktop runs it) answers neither for that folder nor for its default one.
+#[tokio::test]
+async fn p18_the_engines_own_data_is_not_a_folder_of_the_composer() {
+    let workspace = Workspace::new();
+    std::fs::write(workspace.folder.join("secret-name.json"), "{}").expect("a file");
+    let home = workspace.folder.display().to_string();
+    let mut host = Host::start_with_env(&workspace, &[("DSH_HOME", home.as_str())]);
+    host.initialize(&workspace).await;
+    for (method, params) in [
+        ("hoh/executor/commands", json!({"executor": "claude"})),
+        (
+            "hoh/executor/commands",
+            json!({"executor": "claude", "cwd": workspace.folder}),
+        ),
+        (
+            "hoh/workspace/entries",
+            json!({"cwd": workspace.folder, "query": "", "limit": 80}),
+        ),
+    ] {
+        let id = host.send(method, params.clone()).await;
+        let (frame, _) = host.response(&id, None).await;
+        let error = frame["error"]["message"].as_str().unwrap_or_default();
+        assert!(
+            error.contains("holds the data of HoH"),
+            "{method} {params}: {frame}"
+        );
+        assert!(!frame.to_string().contains("secret-name"), "{frame}");
+    }
+    assert!(
+        workspace
+            .starts()
+            .iter()
+            .all(|start| start.has("--version") || !start.cwd.starts_with(&workspace.folder)),
+        "claude was asked in the engine's data"
+    );
+    host.shutdown().await;
+}
+
+/// 19. Expensive composer lookups have one in-flight call per canonical folder and keep successful
+/// identical answers for 30 seconds. While one Claude probe is held at its initialization barrier,
+/// a second probe and `@` wait without starting another process or answering; a cached `@` answer
+/// does not rescan a file added immediately afterwards.
+#[tokio::test]
+async fn p19_composer_folder_calls_share_the_inflight_result_and_thirty_second_cache() {
+    let workspace = Workspace::new();
+    let mut host = Host::start(&workspace);
+    host.initialize(&workspace).await;
+
+    let slow = workspace.root.path().join("slow-initialize");
+    std::fs::write(&slow, "").expect("hold the first probe");
+    let command_params = json!({"executor": "claude", "cwd": workspace.folder});
+    let first_command = host
+        .send("hoh/executor/commands", command_params.clone())
+        .await;
+    let deadline = std::time::Instant::now() + FRAME_TIMEOUT;
+    let probe_count = || {
+        workspace
+            .starts()
+            .into_iter()
+            .filter(|start| start.has("--no-session-persistence") && !start.has("--version"))
+            .count()
+    };
+    while probe_count() == 0 {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the held probe did not start"
+        );
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    let second_command = host.send("hoh/executor/commands", command_params).await;
+    let entry_params = json!({"cwd": workspace.folder, "query": "fresh", "limit": 80});
+    let first_entry = host
+        .send("hoh/workspace/entries", entry_params.clone())
+        .await;
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert_eq!(probe_count(), 1, "a waiter started a second Claude probe");
+    assert!(
+        tokio::time::timeout(Duration::from_millis(100), host.next())
+            .await
+            .is_err(),
+        "a same-folder request answered while the first probe held its gate"
+    );
+    std::fs::remove_file(&slow).expect("release the first probe");
+
+    let command_ids = [first_command, second_command];
+    let mut command_answers = Vec::new();
+    let mut first_entry_answer = None;
+    while command_answers.len() < command_ids.len() || first_entry_answer.is_none() {
+        let frame = host.next().await;
+        if command_ids
+            .iter()
+            .any(|id| frame["id"].as_str() == Some(id))
+        {
+            assert!(frame.get("error").is_none(), "{frame}");
+            command_answers.push(frame["result"].clone());
+        }
+        if frame["id"].as_str() == Some(&first_entry) {
+            assert!(frame.get("error").is_none(), "{frame}");
+            first_entry_answer = Some(frame["result"].clone());
+        }
+    }
+    assert_eq!(command_answers[0], command_answers[1]);
+    assert_eq!(probe_count(), 1, "two requests must share one Claude probe");
+
+    let first = first_entry_answer.expect("the first @ answer");
+    assert!(first["entries"].as_array().is_some_and(Vec::is_empty));
+    std::fs::write(workspace.folder.join("fresh.txt"), "new").expect("new file");
+    let cached = host.ok("hoh/workspace/entries", entry_params).await;
+    assert_eq!(cached, first, "the answer is cached for thirty seconds");
+
+    host.shutdown().await;
+}
+
+/// A mode change does not alter a native turn that is already running; only that chat is
+/// retired for its following message, which uses the current choice.
+#[tokio::test]
+async fn cx1_session_access_is_bound_to_the_message_without_a_cross_chat_race() {
+    let workspace = Workspace::new();
+    let mut host = Host::start(&workspace);
+    host.initialize(&workspace).await;
+    host.select_claude().await;
+
+    let chosen = host
+        .set_session_access("chat-a", "auto", "allowed-once")
+        .await;
+    assert_eq!(chosen["result"]["runtimeMode"], "auto", "{chosen}");
+
+    // Wait for the native process before changing the mode; the running turn keeps its own mode,
+    // and the next one uses the current selection.
+    let from = host.frames.len();
+    let prompt = host
+        .send(
+            "session/prompt",
+            json!({"sessionId":"chat-a","contentBlocks":[{"type":"text","text":"edit"}]}),
+        )
+        .await;
+    let request = loop {
+        let frame = host.next().await;
+        if frame["method"] == "approval/request" {
+            break frame;
+        }
+    };
+    host.set_session_access("chat-a", "full", "allowed-once")
+        .await;
+    host.answer_approval(&request, Some("allowed-once")).await;
+
+    let (mut answered, mut running, mut idle, mut index) = (false, false, false, from);
+    while !(answered && running && idle) {
+        while index < host.frames.len() {
+            let frame = &host.frames[index];
+            index += 1;
+            answered |= frame["id"] == prompt && frame.get("method").is_none();
+            if frame["method"] == "session.status" && frame["params"]["sessionId"] == "chat-a" {
+                running |= frame["params"]["status"] == "running";
+                idle |= running && frame["params"]["status"] == "idle";
+            }
+        }
+        if !(answered && running && idle) {
+            host.next().await;
+        }
+    }
+
+    let starts = workspace.sessions();
+    assert_eq!(starts.len(), 1, "{starts:?}");
+    assert_asking(&starts[0], "auto");
+    let access = host.access_of("chat-a").await;
+    assert_eq!(access["session"]["runtimeMode"], "full", "{access}");
+    assert_eq!(access["session"]["runningRuntimeMode"], "auto", "{access}");
+    assert_eq!(access["session"]["pending"], true, "{access}");
+
+    host.turn("chat-a", "next", None).await;
+    let starts = workspace.sessions();
+    assert_eq!(starts.len(), 2, "{starts:?}");
+    assert_full(&starts[1]);
+    let access = host.access_of("chat-a").await;
+    assert_eq!(access["session"]["runtimeMode"], "full", "{access}");
+    assert_eq!(access["session"]["runningRuntimeMode"], "full", "{access}");
+    host.shutdown().await;
+}
+
+/// HOH-18. Conversation choices neither overwrite one another nor depend on the old global file.
+/// The separate versioned file survives a restart; if it is unreadable the legacy choices still
+/// load and the safe global default is used for the conversation.
+#[tokio::test]
+async fn cx2_session_access_is_isolated_persistent_and_downgrade_safe() {
+    let workspace = Workspace::new();
+    let mut host = Host::start(&workspace);
+    host.initialize(&workspace).await;
+    host.select_claude().await;
+    host.set_session_access("chat-a", "auto-accept-edits", "allowed-once")
+        .await;
+    host.set_session_access("chat-b", "auto", "allowed-once")
+        .await;
+    host.turn("chat-a", "hello", None).await;
+    host.turn("chat-b", "hello", None).await;
+    let a = host.access_of("chat-a").await;
+    let b = host.access_of("chat-b").await;
+    assert_eq!(a["session"]["runtimeMode"], "auto-accept-edits", "{a}");
+    assert_eq!(b["session"]["runtimeMode"], "auto", "{b}");
+    host.shutdown().await;
+
+    let saved = workspace
+        .profile()
+        .join("external-harness-session-access.json");
+    let document: Value = serde_json::from_slice(&std::fs::read(&saved).expect("session access"))
+        .expect("session access JSON");
+    assert_eq!(document["version"], 1, "{document}");
+    assert_eq!(
+        document["sessions"]["chat-a"]["mode"], "auto-accept-edits",
+        "{document}"
+    );
+    assert_eq!(document["sessions"]["chat-b"]["mode"], "auto", "{document}");
+
+    let mut host = Host::start(&workspace);
+    host.initialize(&workspace).await;
+    let a = host.access_of("chat-a").await;
+    let b = host.access_of("chat-b").await;
+    assert_eq!(a["session"]["runtimeMode"], "auto-accept-edits", "{a}");
+    assert_eq!(b["session"]["runtimeMode"], "auto", "{b}");
+    host.shutdown().await;
+
+    std::fs::write(&saved, "{ not json").expect("damage only session access");
+    let mut host = Host::start(&workspace);
+    host.initialize(&workspace).await;
+    let a = host.access_of("chat-a").await;
+    assert_eq!(a["session"]["runtimeMode"], "confirm", "{a}");
+    assert_eq!(a["selected"]["executor"], "claude", "{a}");
+    host.shutdown().await;
+}
+
+/// m3. The two new modes outlive «Стоп» and a restart of the engine: the message after a Stop and
+/// the first message after the restart start Claude in the same mode, on the same conversation.
+#[tokio::test]
+async fn m3_the_new_modes_outlive_stop_and_a_restart() {
+    for (runtime_mode, native_mode) in [("auto-accept-edits", "acceptEdits"), ("auto", "auto")] {
+        let workspace = Workspace::new();
+        let mut host = Host::start(&workspace);
+        host.initialize(&workspace).await;
+        host.select_claude().await;
+        host.set_session_access("chat-s", runtime_mode, "allowed-once")
+            .await;
+        hang_turn(&mut host, "chat-s", "hang").await;
+        stop_turn(&mut host, "chat-s").await;
+        host.turn("chat-s", "after the stop", None).await;
+        let starts = workspace.sessions();
+        assert_eq!(starts.len(), 2, "{runtime_mode}: {starts:?}");
+        for start in &starts {
+            assert_mode(start, native_mode);
+        }
+        assert!(starts[1].has("--resume"), "{runtime_mode}: {:?}", starts[1]);
+        host.shutdown().await;
+
+        let mut host = Host::start(&workspace);
+        host.initialize(&workspace).await;
+        assert_eq!(
+            host.access_of("chat-s").await["session"]["runtimeMode"],
+            runtime_mode,
+            "{runtime_mode} after the restart"
+        );
+        host.ok("session/resume", json!({"sessionId": "chat-s"}))
+            .await;
+        host.turn("chat-s", "after the restart", None).await;
+        let starts = workspace.sessions();
+        assert_eq!(starts.len(), 3, "{runtime_mode}: {starts:?}");
+        assert_mode(&starts[2], native_mode);
+        assert!(starts[2].has("--resume"), "{runtime_mode}: {:?}", starts[2]);
+        host.shutdown().await;
+    }
 }

@@ -1,0 +1,24 @@
+--- a/web/components/ChatMarkdown.tsx
++++ b/web/components/ChatMarkdown.tsx
+@@ -1207,0 +1208 @@
++      expandMedia,
+@@ -1246 +1247 @@
+-        <span>{label ?? gt("Thread")}</span>
++        <span>{label ?? gt("Chat")}</span>
+@@ -1517,0 +1519,16 @@
++    if (mediaKindFromPath(fileLinkMeta.filePath) === "image" && threadRef) {
++      return (
++        <ChatMarkdownAssetImage
++          environmentId={threadRef.environmentId}
++          resource={{
++            _tag: "media-file",
++            threadId: threadRef.threadId,
++            path: fileLinkMeta.filePath,
++          }}
++          alt={label || fileLinkMeta.basename}
++          copyMarkdown={copyMarkdown}
++          workspaceRoot={cwd}
++          onImageExpand={expandMedia}
++        />
++      );
++    }

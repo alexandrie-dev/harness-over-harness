@@ -32,6 +32,55 @@
         "string",
         "null"
       ]
+    },
+    "failure": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "timeout"
+            },
+            "operation": {
+              "$ref": "#/$defs/ExecutorDiscoveryOperation"
+            },
+            "timeoutSeconds": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "kind",
+            "operation",
+            "timeoutSeconds"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "exit"
+            },
+            "operation": {
+              "$ref": "#/$defs/ExecutorDiscoveryOperation"
+            },
+            "exitCode": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int32"
+            }
+          },
+          "required": [
+            "kind",
+            "operation"
+          ]
+        }
+      ]
     }
   },
   "required": [
@@ -75,10 +124,49 @@
             "boolean",
             "null"
           ]
+        },
+        "effortLevels": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "$ref": "#/$defs/ExecutorEffort"
+          }
+        },
+        "defaultEffort": {
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "required": [
         "id"
+      ]
+    },
+    "ExecutorEffort": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "description": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id"
+      ]
+    },
+    "ExecutorDiscoveryOperation": {
+      "type": "string",
+      "enum": [
+        "version",
+        "initialize"
       ]
     }
   },

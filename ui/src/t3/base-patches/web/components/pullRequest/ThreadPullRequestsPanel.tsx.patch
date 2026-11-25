@@ -1,0 +1,14 @@
+--- a/web/components/pullRequest/ThreadPullRequestsPanel.tsx
++++ b/web/components/pullRequest/ThreadPullRequestsPanel.tsx
+@@ -70 +70 @@
+-  created: msg("Created from this thread"),
++  created: msg("Created from this chat"),
+@@ -383 +383 @@
+-              {link.source === "stack" ? gt("Dismiss from thread") : gt("Unlink from thread")}
++              {link.source === "stack" ? gt("Dismiss from chat") : gt("Unlink from chat")}
+@@ -413 +413 @@
+-        error={gt("The thread's environment is not available.")}
++        error={gt("The chat's environment is not available.")}
+@@ -522 +522 @@
+-            Pull requests the agent opens from this thread land here. Link one yourself from a URL
++            Pull requests the agent opens from this chat land here. Link one yourself from a URL

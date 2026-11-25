@@ -1,0 +1,49 @@
+--- a/shared/t3McpToolPresentation.ts
++++ b/shared/t3McpToolPresentation.ts
+@@ -229,6 +229,6 @@
+-  create_threads: tool(["Create", "Creating", "Created", "T3 threads"], "thread-create"),
+-  t3_thread_start: tool(["Start", "Starting", "Started", "a T3 thread"], "thread-create"),
+-  t3_thread_list: tool(["List", "Listing", "Listed", "T3 threads"], "thread-list"),
+-  t3_thread_read: tool(["Read", "Reading", "Read", "a T3 thread"], "thread-read"),
+-  t3_thread_send: tool(["Send", "Sending", "Sent", "to a T3 thread"], "thread-send"),
+-  t3_thread_wait: tool(["Wait", "Waiting", "Waited", "for a T3 thread"], "thread-wait"),
++  create_threads: tool(["Create", "Creating", "Created", "T3 chats"], "thread-create"),
++  t3_thread_start: tool(["Start", "Starting", "Started", "a T3 chat"], "thread-create"),
++  t3_thread_list: tool(["List", "Listing", "Listed", "T3 chats"], "thread-list"),
++  t3_thread_read: tool(["Read", "Reading", "Read", "a T3 chat"], "thread-read"),
++  t3_thread_send: tool(["Send", "Sending", "Sent", "to a T3 chat"], "thread-send"),
++  t3_thread_wait: tool(["Wait", "Waiting", "Waited", "for a T3 chat"], "thread-wait"),
+@@ -244 +244 @@
+-    ["Interrupt", "Interrupting", "Requested an interrupt of", "a T3 thread"],
++    ["Interrupt", "Interrupting", "Requested an interrupt of", "a T3 chat"],
+@@ -248 +248 @@
+-    ["Hand off", "Handing off", "Handed off", "thread to a git worktree"],
++    ["Hand off", "Handing off", "Handed off", "chat to a git worktree"],
+@@ -251 +251 @@
+-  t3_worktree_status: tool(["Get", "Getting", "Got", "thread worktree status"], "worktree-status"),
++  t3_worktree_status: tool(["Get", "Getting", "Got", "chat worktree status"], "worktree-status"),
+@@ -384 +384 @@
+-    ["Read", "Reading", "Read", "thread configuration"],
++    ["Read", "Reading", "Read", "chat configuration"],
+@@ -387,3 +387,3 @@
+-  t3_thread_configure: tool(["Use", "Using", "Used", "thread model settings"], "thread-configure"),
+-  t3_thread_transfer: tool(["Use", "Using", "Used", "thread transfers"], "thread-fork"),
+-  t3_thread_fork: tool(["Fork", "Forking", "Requested a fork of", "this thread"], "thread-fork"),
++  t3_thread_configure: tool(["Use", "Using", "Used", "chat model settings"], "thread-configure"),
++  t3_thread_transfer: tool(["Use", "Using", "Used", "chat transfers"], "thread-fork"),
++  t3_thread_fork: tool(["Fork", "Forking", "Requested a fork of", "this chat"], "thread-fork"),
+@@ -391 +391 @@
+-    ["Merge", "Merging", "Requested a merge of", "thread context"],
++    ["Merge", "Merging", "Requested a merge of", "chat context"],
+@@ -394,4 +394,4 @@
+-  t3_thread_search: tool(["Search", "Searching", "Searched", "thread content"], "thread-search"),
+-  t3_thread_transfers: tool(["Read", "Reading", "Read", "thread transfers"], "thread-transfers"),
+-  t3_thread_organize: tool(["Organize", "Organizing", "Organized", "a thread"], "thread-organize"),
+-  t3_thread_update: tool(["Update", "Updating", "Updated", "T3 thread metadata"], "thread-update"),
++  t3_thread_search: tool(["Search", "Searching", "Searched", "chat content"], "thread-search"),
++  t3_thread_transfers: tool(["Read", "Reading", "Read", "chat transfers"], "thread-transfers"),
++  t3_thread_organize: tool(["Organize", "Organizing", "Organized", "a chat"], "thread-organize"),
++  t3_thread_update: tool(["Update", "Updating", "Updated", "T3 chat metadata"], "thread-update"),
+@@ -423 +423 @@
+-  t3_thread_launch: tool(["Launch", "Launching", "Launched", "a project thread"], "thread-create"),
++  t3_thread_launch: tool(["Launch", "Launching", "Launched", "a project chat"], "thread-create"),

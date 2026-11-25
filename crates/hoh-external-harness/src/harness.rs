@@ -7,8 +7,8 @@ use futures_util::future::BoxFuture;
 use tokio::sync::mpsc;
 
 use crate::contract::{
-    AccessMode, Discovery, HarnessEvent, HarnessFailure, HarnessPolicy, PromptParams,
-    RespondParams, StartParams, StartResult, VersionStatus, code,
+    AccessMode, Discovery, HarnessCommands, HarnessEvent, HarnessFailure, HarnessPolicy,
+    PromptParams, RespondParams, StartParams, StartResult, VersionStatus, code,
 };
 
 pub type HarnessResult<T> = Result<T, HarnessFailure>;
@@ -18,6 +18,13 @@ pub type HarnessResult<T> = Result<T, HarnessFailure>;
 pub trait ExternalHarness: Send + Sync + 'static {
     /// Installed, signed in, models — without reading secrets.
     fn discover(&self) -> BoxFuture<'static, HarnessResult<Discovery>>;
+    /// Read the account's live quota windows when the provider exposes them.
+    fn rate_limits(
+        &self,
+    ) -> BoxFuture<'static, HarnessResult<Option<Vec<crate::ExecutorLimitWindow>>>> {
+        Box::pin(std::future::ready(Ok(None)))
+    }
+
     /// Start a native session for one HoH session, or continue `params.resume`. A `resume` the
     /// harness no longer knows fails with [`crate::code::SESSION_NOT_FOUND`].
     fn start_or_resume(&self, params: StartParams) -> BoxFuture<'static, HarnessResult<Started>>;
@@ -40,6 +47,16 @@ pub trait ExternalHarness: Send + Sync + 'static {
         self.start_or_resume(params)
     }
 
+    /// Start with folder trust determined by the host, never by a prompt or session parameters.
+    fn start_with_folder_trust(
+        &self,
+        params: StartParams,
+        access: AccessMode,
+        _trusted: bool,
+    ) -> BoxFuture<'static, HarnessResult<Started>> {
+        self.start_with_access(params, access)
+    }
+
     /// The command-line switches that decide what a native session started with `policy` under
     /// `access` may do without asking (permission mode, permission prompt, tool limits), exactly
     /// as [`start_with_access`](Self::start_with_access) passes them: the window shows the mode
@@ -49,11 +66,82 @@ pub trait ExternalHarness: Send + Sync + 'static {
         Vec::new()
     }
 
+    fn launch_flags_for_folder_trust(
+        &self,
+        policy: &HarnessPolicy,
+        access: AccessMode,
+        _trusted: bool,
+    ) -> Vec<String> {
+        self.launch_flags(policy, access)
+    }
+
+    fn launch_flags_for_turn(
+        &self,
+        policy: &HarnessPolicy,
+        access: AccessMode,
+        interaction: crate::InteractionMode,
+    ) -> Vec<String> {
+        let _ = interaction;
+        self.launch_flags(policy, access)
+    }
+
+    fn launch_flags_for_turn_and_trust(
+        &self,
+        policy: &HarnessPolicy,
+        access: AccessMode,
+        interaction: crate::InteractionMode,
+        trusted: bool,
+    ) -> Vec<String> {
+        let _ = interaction;
+        self.launch_flags_for_folder_trust(policy, access, trusted)
+    }
+
     /// Whether «Стоп» ends the process of the session, with every process under it, instead of
     /// trusting the native interrupt: for a harness whose interrupt may leave a command running.
     /// The next turn starts the process again on the same native session. Default: no.
     fn stop_ends_process(&self) -> bool {
         false
+    }
+
+    /// The effort levels the harness takes in [`StartParams::effort`], lowest first: the window
+    /// names one in `session/prompt` (`effort`, HOH-40), and another level than the running
+    /// process has starts the session anew. Default: none, so a level is not passed.
+    fn effort_levels(&self) -> &'static [&'static str] {
+        &[]
+    }
+
+    /// Whether a level supplied by the model catalog may be forwarded. Most harnesses use their
+    /// fixed list above; catalog-driven harnesses can accept the value they just advertised.
+    fn accepts_effort(&self, effort: &str) -> bool {
+        self.effort_levels().contains(&effort)
+    }
+
+    /// The slash commands and skills the harness declares for the folder `cwd` (HOH-41), asked
+    /// without a turn: the window's `/` and `$` before the first message. The caller has checked
+    /// that the engine knows the folder. Default: none.
+    fn commands(
+        &self,
+        cwd: std::path::PathBuf,
+    ) -> BoxFuture<'static, HarnessResult<HarnessCommands>> {
+        let _ = cwd;
+        Box::pin(std::future::ready(Ok(HarnessCommands::default())))
+    }
+
+    /// The revision of [`commands`](Self::commands) available without starting a probe. A harness
+    /// increments it when a real session supplies a newer snapshot for `cwd`, so the window can
+    /// replace its short-lived pre-turn cache immediately. Default: no revisions.
+    fn commands_revision(&self, cwd: &std::path::Path) -> u64 {
+        let _ = cwd;
+        0
+    }
+
+    /// One isolated, no-tools title request. The default harness does not provide it.
+    fn generate_title(&self, prompt: String) -> BoxFuture<'static, HarnessResult<String>> {
+        let _ = prompt;
+        Box::pin(std::future::ready(Err(HarnessFailure::new(
+            code::HARNESS,
+            "this harness cannot generate conversation titles",
+        ))))
     }
 
     /// [`discover`](Self::discover), and where the found version stands against the range the

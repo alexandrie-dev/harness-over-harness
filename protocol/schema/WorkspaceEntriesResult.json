@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "WorkspaceEntriesResult",
+  "type": "object",
+  "properties": {
+    "entries": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/WorkspaceEntry"
+      }
+    },
+    "truncated": {
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "entries",
+    "truncated"
+  ],
+  "$defs": {
+    "WorkspaceEntry": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/WorkspaceEntryKind"
+        }
+      },
+      "required": [
+        "path",
+        "kind"
+      ]
+    },
+    "WorkspaceEntryKind": {
+      "type": "string",
+      "enum": [
+        "file",
+        "directory"
+      ]
+    }
+  },
+  "x-method": "hoh/workspace/entries"
+}

@@ -1,0 +1,5 @@
+--- a/client-runtime/markdownImages.ts
++++ b/client-runtime/markdownImages.ts
+@@ -13 +13 @@
+-const DIRECT_IMAGE_SOURCE_PATTERN = /^(?:https?:|data:|blob:|\/\/)/i;
++const DIRECT_IMAGE_SOURCE_PATTERN = /^(?:https?:|blob:|\/\/)/i;

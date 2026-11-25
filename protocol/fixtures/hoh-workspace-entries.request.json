@@ -1,0 +1,1 @@
+{"jsonrpc":"2.0","id":"hoh/workspace/entries","method":"hoh/workspace/entries","params":{"cwd":"/home/user/project","query":"src/ma","limit":80}}

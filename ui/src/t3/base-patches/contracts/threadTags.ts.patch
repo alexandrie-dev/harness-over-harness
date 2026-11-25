@@ -1,0 +1,5 @@
+--- a/contracts/threadTags.ts
++++ b/contracts/threadTags.ts
+@@ -10 +10 @@
+-    /[\p{Cc}]/u.test(value) ? "A thread tag must be a single line of text." : true,
++    /[\p{Cc}]/u.test(value) ? "A chat tag must be a single line of text." : true,

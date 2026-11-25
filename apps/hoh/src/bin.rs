@@ -1,6 +1,7 @@
 //! Native CLI dispatch. Environment and streams are supplied by main or an embedding test.
 use super::{
     args::{DshInvocation, parse_dsh_args},
+    plugin_creator::{self, AuthorCommand},
     process_shutdown::Exit,
     profile_boot::{ProfileHost, RunProfileOptions, ShippedBundles, prepare_profile, run_profile},
 };
@@ -152,6 +153,13 @@ where
         }
     };
     match invocation {
+        DshInvocation::PluginNew { id } => {
+            let command = AuthorCommand::New { id, template: Default::default() };
+            plugin_creator::run(command, false, &host).await
+        }
+        DshInvocation::PluginAuthor { command, json } => {
+            plugin_creator::run(command, json, &host).await
+        }
         DshInvocation::Plugin { .. } => Err(
             "HoH: управление пакетами плагинов недоступно в этой сборке"
                 .into(),

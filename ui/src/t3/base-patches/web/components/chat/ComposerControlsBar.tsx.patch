@@ -1,0 +1,69 @@
+--- a/web/components/chat/ComposerControlsBar.tsx
++++ b/web/components/chat/ComposerControlsBar.tsx
+@@ -60,0 +61,5 @@
++  currentRuntimeMode?: RuntimeMode | undefined;
++  planAvailable: boolean;
++  planActive: boolean;
++  currentPlanActive: boolean;
++  onPlanToggle: () => void;
+@@ -110,2 +114,0 @@
+-    restingHiddenBlockCount: measuredHiddenBlockCount,
+-    iconOnlyBlockCount,
+@@ -135 +138,3 @@
+-  const accessMatchesDefault = compatibleRuntimeMode === defaultRuntimeMode;
++  const runtimeModesAvailable = compatibleRuntimeModeOptions.length > 0;
++  const accessMatchesDefault =
++    compatibleRuntimeMode !== "unknown" && (!runtimeModesAvailable || compatibleRuntimeMode === defaultRuntimeMode);
+@@ -144,3 +149,3 @@
+-    matchesDefault: accessMatchesDefault || props.permissionsShownInStrip,
+-    collapsed: composerControlsCollapsed,
+-    measuredHiddenBlockCount,
++    matchesDefault: false,
++    collapsed: false,
++    measuredHiddenBlockCount: 0,
+@@ -174,0 +180,5 @@
++              currentRuntimeMode={props.currentRuntimeMode}
++              planAvailable={props.planAvailable}
++              planActive={props.planActive}
++              currentPlanActive={props.currentPlanActive}
++              onPlanToggle={props.onPlanToggle}
+@@ -225 +235,3 @@
+-        pickerOwnsModeShortcut ? "composer.effort composer.mode" : "composer.effort"
++        runtimeModesAvailable && pickerOwnsModeShortcut
++          ? "composer.effort composer.mode"
++          : "composer.effort"
+@@ -229,6 +241,8 @@
+-        <ComposerPickerFooter
+-          traits={traitsInput}
+-          runtimeMode={compatibleRuntimeMode}
+-          runtimeModeOptions={compatibleRuntimeModeOptions}
+-          onRuntimeModeChange={handleRuntimeModeChange}
+-        />
++        traitsInput || runtimeModesAvailable ? (
++          <ComposerPickerFooter
++            traits={traitsInput}
++            runtimeMode={compatibleRuntimeMode}
++            runtimeModeOptions={compatibleRuntimeModeOptions}
++            onRuntimeModeChange={handleRuntimeModeChange}
++          />
++        ) : null
+@@ -251,2 +265,3 @@
+-  return showProviderUnavailable ? (
+-    <ComposerControl
++  return (
++    <>
++      {showProviderUnavailable ? <ComposerControl
+@@ -265,4 +280 @@
+-    </ComposerControl>
+-  ) : (
+-    <>
+-      {composerModelPicker}
++    </ComposerControl> : composerModelPicker}
+@@ -277,3 +289 @@
+-              data-composer-block-icon-only={
+-                index >= restingBlockDefs.length - iconOnlyBlockCount ? "true" : "false"
+-              }
++              data-composer-block-icon-only="false"
+@@ -285,2 +294,0 @@
+-                index >= restingBlockDefs.length - iconOnlyBlockCount &&
+-                  "[&_[data-composer-control-label]]:pointer-events-none [&_[data-composer-control-label]]:invisible [&_[data-composer-control-label]]:absolute [&_[data-composer-control-label]]:w-max [&_[data-composer-control-label]]:max-w-none [&_[data-composer-control-compact-icon]]:[visibility:inherit] [&_[data-composer-control-compact-icon]]:relative",

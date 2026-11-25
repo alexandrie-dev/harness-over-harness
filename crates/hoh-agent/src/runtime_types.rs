@@ -12,7 +12,11 @@ use hoh_llm::{
 use hoh_scope::ScopeKey;
 use hoh_session::{AgentCancelCause, Session, SessionId, SessionSeq};
 use hoh_timeout::AbortSignal;
-use std::{any::Any, fmt, sync::Arc};
+use std::{
+    any::Any,
+    fmt,
+    sync::{Arc, Mutex},
+};
 
 /// An option the driver reads at call time: a constant or a live accessor.
 #[derive(Clone)]
@@ -216,6 +220,48 @@ pub type MaintenanceFuture = BoxFuture<'static, Result<Box<dyn Any + Send>, BoxE
 /// A one-shot non-turn maintenance task (type-erased result).
 pub type MaintenanceTask = Box<dyn FnOnce(AbortSignal) -> MaintenanceFuture + Send>;
 
+/// Serializes deletion with admission of input from every caller, including schedulers.
+#[derive(Default)]
+pub struct DeletionGate(Mutex<DeletionGateState>);
+#[derive(Default)]
+struct DeletionGateState {
+    blocked: bool,
+    admissions: usize,
+}
+pub struct InputAdmission<'a>(&'a DeletionGate);
+impl Drop for InputAdmission<'_> {
+    fn drop(&mut self) {
+        self.0
+            .0
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .admissions -= 1;
+    }
+}
+impl DeletionGate {
+    pub fn enter(&self) -> Result<InputAdmission<'_>, BoxError> {
+        let mut state = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        if state.blocked {
+            return Err("Chat is being deleted".into());
+        }
+        state.admissions += 1;
+        Ok(InputAdmission(self))
+    }
+    pub fn reserve(&self, idle: impl FnOnce() -> bool) -> Result<(), BoxError> {
+        let mut state = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        if state.blocked || state.admissions != 0 || !idle() {
+            return Err(
+                "Chat is running or waiting for a response. Stop it before deleting.".into(),
+            );
+        }
+        state.blocked = true;
+        Ok(())
+    }
+    pub fn release(&self) {
+        self.0.lock().unwrap_or_else(|e| e.into_inner()).blocked = false;
+    }
+}
+
 /// The live-agent handle. `Agent` of `@deepseek-ai/dsh-agent` with the runtime face merged in.
 pub trait Agent: Send + Sync + 'static {
     /// Session-backed Agent identity.
@@ -232,6 +278,12 @@ pub trait Agent: Send + Sync + 'static {
     fn status(&self) -> AgentStatus;
     /// Agent-scoped context; its contributions are agent-local and unwind on disposal.
     fn ctx(&self) -> &Context;
+    /// Atomically refuse new input and reserve an idle agent for deletion.
+    fn reserve_deletion(&self) -> Result<(), BoxError> {
+        Err("Agent does not support safe deletion".into())
+    }
+    /// Release a reservation when deletion fails before disposal.
+    fn release_deletion(&self) {}
 
     /// Clear queued and steering work — unless `keep_inbox` — and abort the active turn or
     /// between-turn task with `cause` as the signal reason ([`CancelCauseError`]). The first cause

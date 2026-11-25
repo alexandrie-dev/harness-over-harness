@@ -1,0 +1,1 @@
+{"jsonrpc":"2.0","id":"hoh/executor/limits","result":{"state":"available","windows":[{"name":null,"remainingPercent":43,"windowMinutes":10080,"resetsAt":1796176800}]}}

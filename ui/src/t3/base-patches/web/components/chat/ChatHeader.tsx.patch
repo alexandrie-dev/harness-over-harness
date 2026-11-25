@@ -1,0 +1,30 @@
+--- a/web/components/chat/ChatHeader.tsx
++++ b/web/components/chat/ChatHeader.tsx
+@@ -0,0 +1 @@
++import { FolderTrust as HohFolderTrust } from "../../../../../t3-entry/hoh-screens/FolderTrust";
+@@ -184 +185 @@
+-      toastManager.add({ type: "warning", title: gt("Thread title cannot be empty") });
++      toastManager.add({ type: "warning", title: gt("Chat title cannot be empty") });
+@@ -196 +197 @@
+-          title: gt("Failed to rename thread"),
++          title: gt("Failed to rename chat"),
+@@ -259,0 +261 @@
++      <HohFolderTrust threadId={activeThreadId} fallbackCwd={activeProjectCwd} isServerThread={isServerThread} />
+@@ -261 +263 @@
+-        ariaLabel={gt("Thread breadcrumb")}
++        ariaLabel={gt("Chat breadcrumb")}
+@@ -272 +274 @@
+-                      aria-label={gt("New thread in {project}", { project: activeProjectName })}
++                      aria-label={gt("New chat in {project}", { project: activeProjectName })}
+@@ -288 +290 @@
+-                    New thread in <Var>{activeProjectName}</Var>
++                    New chat in <Var>{activeProjectName}</Var>
+@@ -306 +308 @@
+-                      aria-label={gt("Open parent thread: {title}", {
++                      aria-label={gt("Open parent chat: {title}", {
+@@ -339 +341 @@
+-              aria-label={gt("Thread title")}
++              aria-label={gt("Chat title")}
+@@ -362 +364 @@
+-                    aria-label={gt("Thread actions for {title}", { title: activeThreadTitle })}
++                    aria-label={gt("Chat actions for {title}", { title: activeThreadTitle })}

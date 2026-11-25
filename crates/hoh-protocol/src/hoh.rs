@@ -507,16 +507,73 @@ object!(SettingsRulesSetParams {
 // External agent harnesses in the window (HOH-18): the access mode of an executor (Claude Code),
 // chosen only by the user; discovery and the choice of the executor that new chats go to.
 choices!(ExecutorAccessMode { Confirm => "confirm", Full => "full" });
+// Exact T3 runtime mode. `ExecutorAccessMode` remains the downgrade-safe two-value projection
+// used by older hosts and by the privileged approval copy; each executor translates the middle
+// choices to its native spelling (`auto-accept-edits` for Codex, `acceptEdits` for Claude).
+choices!(ExecutorRuntimeMode {
+    Confirm => "confirm",
+    AutoAcceptEdits => "auto-accept-edits",
+    Auto => "auto",
+    Full => "full"
+});
+// A running Plan is a Claude process policy, not a selectable access/set value.
+choices!(ExecutorRunningRuntimeMode {
+    Confirm => "confirm",
+    AutoAcceptEdits => "auto-accept-edits",
+    Auto => "auto",
+    Full => "full",
+    Plan => "plan"
+});
 choices!(ExecutorVersionStatus { Supported => "supported", Unsupported => "unsupported", Unknown => "unknown" });
 choices!(ExecutorAuth { Authenticated => "authenticated", Unauthenticated => "unauthenticated", Unknown => "unknown" });
 object!(ExecutorParams { executor: String });
-object!(ExecutorAccessSetParams {
+object!(ExecutorTrustGetParams {
     executor: String,
-    mode: ExecutorAccessMode
+    cwd: String
 });
-object!(ExecutorAccessSetResult {
+object!(ExecutorTrustSetParams {
     executor: String,
-    mode: ExecutorAccessMode
+    cwd: String,
+    trust: bool
+});
+object!(ExecutorTrustResult {
+    executor: String,
+    cwd: String,
+    trusted: bool,
+    changed: bool
+});
+pub const EXECUTOR_TITLE_PROMPT_MAX_CHARS: usize = 16 * 1024;
+
+fn title_prompt<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<String, D::Error> {
+    let prompt = String::deserialize(deserializer)?;
+    if prompt.chars().count() > EXECUTOR_TITLE_PROMPT_MAX_CHARS {
+        return Err(serde::de::Error::custom("title prompt is too long"));
+    }
+    Ok(prompt)
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ExecutorTitleGenerateParams {
+    pub executor: String,
+    #[serde(deserialize_with = "title_prompt")]
+    #[schemars(length(max = 16384))]
+    pub prompt: String,
+}
+object!(ExecutorTitleGenerateResult { title: String });
+optional!(ExecutorAccessSetParams {
+    executor: String,
+    mode: ExecutorAccessMode,
+    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "crate::present")]
+    session_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "crate::present")]
+    runtime_mode: Option<ExecutorRuntimeMode>,
+});
+optional!(ExecutorAccessSetResult {
+    executor: String,
+    mode: ExecutorAccessMode,
+    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "crate::present")]
+    runtime_mode: Option<ExecutorRuntimeMode>,
 });
 object!(ExecutorEffectiveAccess {
     mode: ExecutorAccessMode,
@@ -537,12 +594,18 @@ optional!(ExecutorAccessGetParams {
 // What one conversation runs with, from its own binding in the engine (not from the choice for
 // new chats). `executor` is null for a conversation the agent loop drives; then `model`, `mode`
 // and `running` are null and `pending` is false.
-object!(ExecutorSessionAccess {
+optional!(ExecutorSessionAccess {
     executor: Option<String>,
     model: Option<String>,
     privacy: Option<String>,
     mode: Option<ExecutorAccessMode>,
     running: Option<ExecutorAccessMode>,
+    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "crate::present")]
+    runtime_mode: Option<ExecutorRuntimeMode>,
+    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "crate::present")]
+    running_runtime_mode: Option<ExecutorRunningRuntimeMode>,
+    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "crate::present")]
+    builtin: Option<bool>,
     pending: bool
 });
 optional!(ExecutorAccessGetResult {
@@ -557,19 +620,106 @@ object!(ExecutorSelectParams {
     executor: Option<String>,
     model: String
 });
+optional!(ExecutorEffort {
+    id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "crate::present")]
+    description: Option<String>,
+});
 optional!(ExecutorModel {
     id: String,
     #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "crate::present")]
     display_name: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "crate::present")]
     is_default: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "crate::present")]
+    effort_levels: Option<Vec<ExecutorEffort>>,
+    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "crate::present")]
+    default_effort: Option<String>,
 });
-object!(ExecutorDiscoverResult {
+choices!(ExecutorDiscoveryOperation { Version => "version", Initialize => "initialize" });
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "lowercase")]
+pub enum ExecutorDiscoveryFailure {
+    Timeout {
+        operation: ExecutorDiscoveryOperation,
+        #[serde(rename = "timeoutSeconds")]
+        timeout_seconds: u64,
+    },
+    Exit {
+        operation: ExecutorDiscoveryOperation,
+        #[serde(rename = "exitCode")]
+        exit_code: Option<i32>,
+    },
+}
+optional!(ExecutorDiscoverResult {
     executor: String,
     installed: bool,
     version: Option<String>,
     version_status: ExecutorVersionStatus,
     auth: ExecutorAuth,
     models: Vec<ExecutorModel>,
-    detail: Option<String>
+    detail: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "crate::present")]
+    #[schemars(required)]
+    failure: Option<ExecutorDiscoveryFailure>,
+});
+choices!(ExecutorLimitsState {
+    Available => "available",
+    Unavailable => "unavailable",
+    Failed => "failed",
+});
+object!(ExecutorLimitWindow {
+    name: Option<String>,
+    remaining_percent: u8,
+    window_minutes: Option<u32>,
+    resets_at: Option<u64>,
+});
+object!(ExecutorLimitsResult {
+    state: ExecutorLimitsState,
+    windows: Vec<ExecutorLimitWindow>,
+});
+// `hoh/executor/commands` (HOH-41): the slash commands and skills the executor itself declares
+// for a folder the engine knows (its default one when `cwd` is absent, a project added with
+// `hoh/workspace/add`, or the folder of an open conversation), asked before the first turn without
+// starting one. Nothing here is read from the executor's files by HoH. The answer names the
+// folder it is for.
+optional!(ExecutorCommandsParams {
+    executor: String,
+    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "crate::present")]
+    cwd: Option<String>,
+});
+optional!(ExecutorCommand {
+    name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "crate::present")]
+    description: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "crate::present")]
+    argument_hint: Option<String>,
+});
+object!(ExecutorCommandsResult {
+    executor: String,
+    cwd: String,
+    commands: Vec<ExecutorCommand>,
+    skills: Vec<ExecutorCommand>
+});
+// `hoh/workspace/add` (HOH-41): a folder the person added as a project in the main window; the
+// engine keeps it (next to its profile) as a folder `/`, `$` and `@` answer for before the
+// project's first conversation. Privileged. The answer is the folder as the engine resolved it.
+object!(WorkspaceAddParams { cwd: String });
+object!(WorkspaceAddResult { cwd: String });
+// `hoh/workspace/entries` (HOH-41): files and folders of a folder the engine knows whose relative
+// path matches `query` (the window's `@`), at most `limit` (1..=200) of them. Names and relative
+// paths only, never contents.
+object!(WorkspaceEntriesParams {
+    cwd: String,
+    query: String,
+    limit: u32
+});
+choices!(WorkspaceEntryKind { File => "file", Directory => "directory" });
+object!(WorkspaceEntry {
+    path: String,
+    kind: WorkspaceEntryKind
+});
+object!(WorkspaceEntriesResult {
+    entries: Vec<WorkspaceEntry>,
+    truncated: bool
 });

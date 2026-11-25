@@ -1,0 +1,51 @@
+--- a/web/components/threadActionMenu.logic.ts
++++ b/web/components/threadActionMenu.logic.ts
+@@ -98,0 +99 @@
++  readonly hasProject?: boolean;
+@@ -148 +149 @@
+-      ? [{ id: "find" as const, label: resolve(msg("Find in thread")), icon: "text-search" }]
++      ? [{ id: "find" as const, label: resolve(msg("Find in chat")), icon: "text-search" }]
+@@ -154 +155 @@
+-            label: resolve(msg("New thread on {branch}", { branch: state.branch })),
++            label: resolve(msg("New chat on {branch}", { branch: state.branch })),
+@@ -162,2 +163,2 @@
+-            ? { id: "unpin" as const, label: resolve(msg("Unpin thread")), icon: "pin-off" }
+-            : { id: "pin" as const, label: resolve(msg("Pin thread")), icon: "pin" },
++            ? { id: "unpin" as const, label: resolve(msg("Unpin chat")), icon: "pin-off" }
++            : { id: "pin" as const, label: resolve(msg("Pin chat")), icon: "pin" },
+@@ -171 +172 @@
+-                label: resolve(msg("Un-settle thread")),
++                label: resolve(msg("Un-settle chat")),
+@@ -174 +175 @@
+-            : { id: "settle" as const, label: resolve(msg("Settle thread")), icon: "circle-check" },
++            : { id: "settle" as const, label: resolve(msg("Settle chat")), icon: "circle-check" },
+@@ -180 +181 @@
+-            ? { id: "unsnooze" as const, label: resolve(msg("Wake thread")), icon: "clock" }
++            ? { id: "unsnooze" as const, label: resolve(msg("Wake chat")), icon: "clock" }
+@@ -201 +202 @@
+-    { id: "rename", label: resolve(msg("Rename thread")), icon: "pencil", separatorBefore: true },
++    { id: "rename", label: resolve(msg("Rename chat")), icon: "pencil", separatorBefore: true },
+@@ -214 +214,0 @@
+-    { id: "mark-unread", label: resolve(msg("Mark unread")), icon: "mail-open" },
+@@ -282 +282 @@
+-          label: resolve(msg("Thread", { $context: "copy the thread contents" })),
++          label: resolve(msg("Chat", { $context: "copy the thread contents" })),
+@@ -285 +285 @@
+-        { id: "copy-thread-id", label: resolve(msg("Thread ID")), icon: "hash" },
++        { id: "copy-thread-id", label: resolve(msg("Chat ID")), icon: "hash" },
+@@ -288 +288 @@
+-    { id: "project-settings", label: resolve(msg("Project settings")), icon: "settings" },
++    ...(state.hasProject ? [{ id: "project-settings" as const, label: resolve(msg("Project settings")), icon: "settings" }] : []),
+@@ -291 +291 @@
+-      label: resolve(msg("Archive thread")),
++      label: resolve(msg("Archive chat")),
+@@ -298 +298 @@
+-      label: resolve(msg("Delete", { $context: "verb, delete the thread" })),
++      label: resolve(msg("Delete")),
+@@ -302,0 +303 @@
++  const availableItems = items.filter((item) => !["regenerate-title", "settle", "unsettle", "snooze", "unsnooze", "auto-settle"].includes(item.id));
+@@ -304,2 +305,2 @@
+-    ? items
+-    : items.map((item) =>
++    ? availableItems
++    : availableItems.map((item) =>

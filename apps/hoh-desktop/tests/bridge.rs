@@ -92,6 +92,17 @@ impl Transport for MemoryTransport {
                 .unwrap();
             return Ok(());
         }
+        if frame["method"] == "session/delete" {
+            let error = framing::error(
+                frame["id"].clone(),
+                -32000,
+                "CHAT_DELETE_BUSY: private engine detail /secret",
+            );
+            self.inbox
+                .send(Message::Incoming(self.generation, classify(error).unwrap()))
+                .unwrap();
+            return Ok(());
+        }
         if frame["method"] == "hoh/test/folder-fixed-prefix" {
             // Exactly what the engine sends: the code in front of the text, no `data`.
             let error = framing::error(
@@ -123,6 +134,8 @@ impl Transport for MemoryTransport {
             json!({"serverInfo":{"name":"deepseek-harness-sdk-runtime","version":"test"},"hoh":{"protocolVersion":1,"approvals":"host"}})
         } else if frame["method"] == "initialize" {
             json!({"serverInfo":{"name":"deepseek-harness-sdk-runtime","version":"legacy"}})
+        } else if frame["method"] == "hoh/executor/access/set" {
+            frame["params"].clone()
         } else {
             json!({})
         };
@@ -246,6 +259,16 @@ fn the_window_gets_codes_for_the_engine_and_host_refusals() {
         json!({"code": "refused", "message": "Помощник отклонил запрос"})
     );
     assert!(!refused.to_string().contains("id_rsa"), "{refused}");
+    let busy = sent(
+        engine
+            .request("session/delete", json!({"sessionId":"busy"}))
+            .unwrap_err(),
+    );
+    assert_eq!(
+        busy,
+        json!({"code":"chat-delete-busy","message":"chat-delete-busy"})
+    );
+    assert!(!busy.to_string().contains("secret"));
     // The bridge's own refusals of the confirmation (what `native.rs` returns for «Отклонить» and for a timeout).
     for (message, code) in [
         (hoh_desktop::errors::REJECTED, "rejected"),
@@ -561,7 +584,7 @@ fn real_stub_child_accepts_host_handshake_serves_settings_and_stops() {
 }
 
 #[test]
-fn window_may_call_exactly_the_four_executor_methods_and_no_new_ones() {
+fn window_may_call_exactly_the_nine_executor_methods_and_no_new_ones() {
     let mut executor: Vec<&str> = bridge::WINDOW_METHODS
         .iter()
         .copied()
@@ -573,16 +596,304 @@ fn window_may_call_exactly_the_four_executor_methods_and_no_new_ones() {
         [
             "hoh/executor/access/get",
             "hoh/executor/access/set",
+            "hoh/executor/commands",
             "hoh/executor/discover",
-            "hoh/executor/select"
+            "hoh/executor/limits",
+            "hoh/executor/select",
+            "hoh/executor/title/generate",
+            "hoh/executor/trust/get",
+            "hoh/executor/trust/set"
         ]
     );
-    // 47 methods before the executor ones; a new window method must be a deliberate change of this number.
-    assert_eq!(bridge::WINDOW_METHODS.len(), 47 + 4);
-    for method in ["hoh/executor/access/get", "hoh/executor/discover"] {
+    // 47 methods before the executor ones, the nine executor ones, `hoh/workspace/entries` and
+    // `hoh/workspace/add` (HOH-41), delete, two folder-rebinding methods, and plugin inventory.
+    assert_eq!(bridge::WINDOW_METHODS.len(), 47 + 9 + 2 + 1 + 2 + 1);
+    assert!(bridge::WINDOW_METHODS.contains(&"session/working-directory/status"));
+    assert!(bridge::WINDOW_METHODS.contains(&"session/working-directory/rebind"));
+    assert!(bridge::needs_approval(
+        "session/working-directory/rebind",
+        &json!({})
+    ));
+    for method in [
+        "hoh/executor/access/get",
+        "hoh/executor/discover",
+        "hoh/executor/limits",
+        "hoh/executor/title/generate",
+        "hoh/executor/trust/get",
+    ] {
         assert!(!bridge::needs_approval(
             method,
             &json!({"executor":"claude"})
         ));
     }
+    assert!(bridge::needs_approval(
+        "hoh/executor/trust/set",
+        &json!({"executor":"claude","cwd":"/work","trust":true})
+    ));
+}
+
+#[test]
+fn plugin_inventory_is_a_typed_read_for_the_main_window() {
+    let method = "hoh/plugins/list";
+    let params = json!({"sessionId": "chat"});
+    assert!(bridge::check_main("main", method, &params).is_ok());
+    assert!(bridge::check_main("other", method, &params).is_err());
+    assert!(bridge::check_main("main", method, &json!({"sessionId": 1})).is_err());
+    assert!(!bridge::needs_approval(method, &params));
+}
+
+/// The access mode goes from the main window straight to the engine (no confirmation window): the
+/// main window's own action is journaled as the person's. Any other window is refused before
+/// anything is confirmed or sent.
+#[test]
+fn access_mode_from_the_main_window_goes_without_a_window_and_from_others_is_refused() {
+    let (controls, _control_rx) = mpsc::channel();
+    let (events, event_rx) = mpsc::channel();
+    let frames: Frames = Arc::default();
+    let engine = Engine::start(
+        Arc::new(MemoryConnector {
+            host: true,
+            frames: frames.clone(),
+            launches: Arc::default(),
+            controls,
+        }),
+        json!({}),
+        Arc::new(move |event| {
+            let _ = events.send(event);
+        }),
+    );
+    wait_memory_ready(&event_rx);
+    let broker = Arc::new(Broker::new([0x21; 32]).unwrap());
+    let send = |label: &str, params: &Value| {
+        let arm = {
+            let (broker, params) = (broker.clone(), params.clone());
+            Box::new(move |generation: u64, id: &str| {
+                broker.arm_in_flight("hoh/executor/access/set", &params, generation, id, now_ms());
+            })
+        };
+        bridge::request_with_approval_armed(
+            &engine,
+            label,
+            "hoh/executor/access/set",
+            params.clone(),
+            |params| {
+                broker.confirm_from_main_window("hoh/executor/access/set", params, None, now_ms())
+            },
+            Some(arm),
+        )
+    };
+    let sent = |expected: &Value| {
+        frames.lock().unwrap().iter().any(|frame| {
+            frame["method"] == "hoh/executor/access/set" && frame["params"] == *expected
+        })
+    };
+    // The four exact T3 modes take the same protected path. Intermediate modes are scoped to a
+    // concrete conversation and retain the downgrade-safe `mode: confirm` projection.
+    let cases = [
+        json!({"executor":"claude","mode":"full","runtimeMode":"full"}),
+        json!({"executor":"claude","sessionId":"chat-edits","mode":"confirm","runtimeMode":"auto-accept-edits"}),
+        json!({"executor":"claude","sessionId":"chat-auto","mode":"confirm","runtimeMode":"auto"}),
+        json!({"executor":"claude","mode":"confirm","runtimeMode":"confirm"}),
+    ];
+    let mut params = json!({});
+    for (n, case) in cases.into_iter().enumerate() {
+        params = case;
+        let mode = params["runtimeMode"].as_str().unwrap();
+        for label in ["approval-1", "executor", "claude"] {
+            assert!(send(label, &params).is_err(), "{mode} from {label}");
+        }
+        assert_eq!(
+            broker.audit_log().len(),
+            n,
+            "{mode}: nothing journaled for a refusal"
+        );
+        assert!(
+            !sent(&params),
+            "{mode} reached the engine from another window"
+        );
+        send("main", &params).unwrap();
+        assert!(sent(&params), "{mode} from the main window");
+        let log = broker.audit_log();
+        assert_eq!(log.len(), n + 1, "{mode}");
+        assert_eq!((log[n].who, log[n].via), ("human", "main-window"), "{mode}");
+        assert_eq!(log[n].method, "hoh/executor/access/set", "{mode}");
+    }
+    // The plain path without the host's confirmation step stays closed.
+    assert!(bridge::request(&engine, "main", "hoh/executor/access/set", params.clone()).is_err());
+    // Lead 22.11 20:43: choosing Claude and the folder of its conversation — the same rule; from
+    // any other window they are refused before the person's confirmation is even considered.
+    for (method, params, session_executor) in [
+        (
+            "hoh/executor/select",
+            json!({"executor":"claude","model":"default"}),
+            None,
+        ),
+        (
+            "session/working-directory/set",
+            json!({"sessionId":"s-claude","path":"/home/u/work"}),
+            Some("claude"),
+        ),
+        (
+            "hoh/executor/select",
+            json!({"executor":"codex","model":"gpt"}),
+            None,
+        ),
+        (
+            "session/working-directory/set",
+            json!({"sessionId":"s-codex","path":"/home/u/work"}),
+            Some("codex"),
+        ),
+        ("hoh/workspace/add", json!({"cwd":"/home/u/work"}), None),
+    ] {
+        for label in ["approval-1", "executor", "claude"] {
+            let sent = bridge::request_with_approval_armed(
+                &engine,
+                label,
+                method,
+                params.clone(),
+                |params| {
+                    broker.confirm_from_main_window(method, params, session_executor, now_ms())
+                },
+                None,
+            );
+            assert!(sent.is_err(), "{label} {method}");
+        }
+        assert!(
+            !frames
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|frame| frame["method"] == method)
+        );
+    }
+    assert_eq!(broker.audit_log().len(), 4, "the four modes, nothing more");
+    // HOH-41: "Add project" in the main window is the person's confirmation of that folder.
+    let add = json!({"cwd":"/home/u/work"});
+    assert!(bridge::needs_approval("hoh/workspace/add", &add));
+    assert!(bridge::request(&engine, "main", "hoh/workspace/add", add.clone()).is_err());
+    let _ = bridge::request_with_approval_armed(
+        &engine,
+        "main",
+        "hoh/workspace/add",
+        add.clone(),
+        |params| broker.confirm_from_main_window("hoh/workspace/add", params, None, now_ms()),
+        None,
+    );
+    assert!(
+        frames
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|frame| frame["method"] == "hoh/workspace/add")
+    );
+    let log = broker.audit_log();
+    assert_eq!(log.len(), 5);
+    assert_eq!((log[4].who, log[4].via), ("human", "main-window"));
+    assert_eq!(log[4].human_text, "Add folder «/home/u/work» as a project?");
+    engine.stop();
+}
+
+/// HOH-41: the composer's `/`, `$` and `@` reach the engine only from the main window, with
+/// parameters of the protocol, and without a confirmation (they only read); from any other window
+/// nothing is sent.
+#[test]
+fn commands_and_folder_entries_go_only_from_the_main_window() {
+    let (controls, _control_rx) = mpsc::channel();
+    let (events, event_rx) = mpsc::channel();
+    let frames: Frames = Arc::default();
+    let engine = Engine::start(
+        Arc::new(MemoryConnector {
+            host: true,
+            frames: frames.clone(),
+            launches: Arc::default(),
+            controls,
+        }),
+        json!({}),
+        Arc::new(move |event| {
+            let _ = events.send(event);
+        }),
+    );
+    wait_memory_ready(&event_rx);
+    let calls = [
+        (
+            "hoh/workspace/entries",
+            json!({"cwd":"/home/u/work","query":"src","limit":80}),
+        ),
+        (
+            "hoh/executor/commands",
+            json!({"executor":"claude","cwd":"/home/u/work"}),
+        ),
+    ];
+    let sent = |method: &str| {
+        frames
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|frame| frame["method"] == method)
+            .count()
+    };
+    for (method, params) in &calls {
+        assert!(!bridge::needs_approval(method, params), "{method}");
+        for label in ["approval-1", "executor", "claude", "preview", ""] {
+            assert!(
+                bridge::request(&engine, label, method, params.clone()).is_err(),
+                "{label} {method}"
+            );
+        }
+        assert_eq!(
+            sent(method),
+            0,
+            "{method} left a window that is not the main one"
+        );
+    }
+    for (method, params) in [
+        (
+            "hoh/workspace/entries",
+            json!({"cwd":"/home/u/work","query":"src"}),
+        ),
+        (
+            "hoh/workspace/entries",
+            json!({"cwd":1,"query":"src","limit":80}),
+        ),
+        (
+            "hoh/workspace/entries",
+            json!({"cwd":"/w","query":"src","limit":-1}),
+        ),
+        ("hoh/executor/commands", json!({"cwd":"/home/u/work"})),
+    ] {
+        assert!(
+            bridge::request(&engine, "main", method, params.clone()).is_err(),
+            "{method} {params}"
+        );
+        assert_eq!(sent(method), 0, "{method} {params}");
+    }
+    for (method, params) in &calls {
+        let _ = bridge::request(&engine, "main", method, params.clone());
+        assert_eq!(sent(method), 1, "{method} from the main window");
+    }
+    engine.stop();
+}
+
+#[test]
+fn session_delete_is_confined_to_main_and_requires_the_typed_session_id() {
+    assert!(bridge::check_main("main", "session/delete", &json!({"sessionId":"chat"})).is_ok());
+    assert!(bridge::check_main("other", "session/delete", &json!({"sessionId":"chat"})).is_err());
+    assert!(bridge::check_main("main", "session/delete", &json!({"sessionId":null})).is_err());
+}
+
+#[test]
+fn prompt_reasoning_effort_passes_native_validation_without_admitting_other_fields() {
+    let prompt = json!({"sessionId":"chat","contentBlocks":[{"type":"text","text":"Test"}],
+        "interactionMode":"default","effort":"medium"});
+    assert!(bridge::check_main("main", "session/prompt", &prompt).is_ok());
+    assert!(bridge::check_main("other", "session/prompt", &prompt).is_err());
+
+    for effort in [json!(42), json!(""), Value::Null] {
+        let mut invalid = prompt.clone();
+        invalid["effort"] = effort;
+        assert!(bridge::check_main("main", "session/prompt", &invalid).is_err());
+    }
+    let mut invalid = prompt;
+    invalid["unexpected"] = json!(true);
+    assert!(bridge::check_main("main", "session/prompt", &invalid).is_err());
 }

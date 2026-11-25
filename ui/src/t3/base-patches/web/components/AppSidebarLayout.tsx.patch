@@ -1,0 +1,8 @@
+--- a/web/components/AppSidebarLayout.tsx
++++ b/web/components/AppSidebarLayout.tsx
+@@ -425 +425 @@
+-  const sidebarArea = workspaceAreaProps("sidebar", 0, gt("Threads"));
++  const sidebarArea = workspaceAreaProps("sidebar", 0, gt("Chats"));
+@@ -482 +482 @@
+-              aria-label={gt("Threads")}
++              aria-label={gt("Chats")}

@@ -11,8 +11,11 @@ pub const WINDOW_METHODS: &[&str] = &[
     "session/list",
     "session/events",
     "session/cancel",
+    "session/delete",
     "session/working-directory/get",
     "session/working-directory/set",
+    "session/working-directory/status",
+    "session/working-directory/rebind",
     "hoh/employee/list",
     "hoh/employee/get",
     "hoh/employee/create",
@@ -47,14 +50,25 @@ pub const WINDOW_METHODS: &[&str] = &[
     "hoh/artifact/render",
     "hoh/model/probe",
     "hoh/model/key/set",
+    "hoh/plugins/list",
     "hoh/settings/get",
     "hoh/settings/set",
     "hoh/settings/rules/set",
     "hoh/security/summary",
     "hoh/executor/access/get",
     "hoh/executor/access/set",
+    "hoh/executor/trust/get",
+    "hoh/executor/trust/set",
     "hoh/executor/discover",
+    "hoh/executor/limits",
     "hoh/executor/select",
+    // HOH-41: `/`, `$` and `@` of the T3 composer. Read-only, and only for a folder the engine
+    // knows (the engine checks it); like every method here, only from the main window.
+    "hoh/executor/commands",
+    "hoh/workspace/entries",
+    // The person's "Add project": privileged, confirmed by that action in the main window.
+    "hoh/workspace/add",
+    "hoh/executor/title/generate",
 ];
 pub fn check_main(label: &str, method: &str, params: &Value) -> Result<(), String> {
     if label != "main" {
@@ -63,8 +77,26 @@ pub fn check_main(label: &str, method: &str, params: &Value) -> Result<(), Strin
     if !WINDOW_METHODS.contains(&method) {
         return Err("Метод не разрешён окну".into());
     }
-    hoh_protocol::validate_params(method, params)
-        .map_err(|_| "Некорректные параметры запроса".to_owned())
+    let invalid = || "Некорректные параметры запроса".to_owned();
+    // The engine consumes effort as a window extension before decoding the public SDK request.
+    // Validate it here, then check the unchanged SDK fields. Forward the original request.
+    if method == "session/prompt"
+        && let Some(effort) = params.get("effort")
+    {
+        if !effort
+            .as_str()
+            .is_some_and(|effort| !effort.trim().is_empty())
+        {
+            return Err(invalid());
+        }
+        let mut sdk_params = params.clone();
+        sdk_params
+            .as_object_mut()
+            .ok_or_else(invalid)?
+            .remove("effort");
+        return hoh_protocol::validate_params(method, &sdk_params).map_err(|_| invalid());
+    }
+    hoh_protocol::validate_params(method, params).map_err(|_| invalid())
 }
 pub fn needs_approval(method: &str, params: &Value) -> bool {
     hoh_protocol::PRIVILEGED_METHODS.contains(&method)

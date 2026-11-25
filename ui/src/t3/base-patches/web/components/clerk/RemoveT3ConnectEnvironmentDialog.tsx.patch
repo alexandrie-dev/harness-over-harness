@@ -1,0 +1,5 @@
+--- a/web/components/clerk/RemoveT3ConnectEnvironmentDialog.tsx
++++ b/web/components/clerk/RemoveT3ConnectEnvironmentDialog.tsx
+@@ -73 +73 @@
+-              <T>This forgets its pairing, credentials, and cached threads here.</T>
++              <T>This forgets its pairing, credentials, and cached chats here.</T>

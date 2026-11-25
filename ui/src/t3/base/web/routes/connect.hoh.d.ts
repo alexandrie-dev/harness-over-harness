@@ -1,0 +1,2 @@
+// Объявления web/routes/connect.tsx (файл скрытой части на заглушках) для tsc основы. Пишет scripts/t3-sync.py.
+export declare const Route: import("@tanstack/router-core").Route<import("@tanstack/router-core").Register, never, never, never, never, never, undefined, import("@tanstack/router-core").ResolveParams<never>, import("@tanstack/router-core").AnyContext, import("@tanstack/router-core").AnyContext, () => void, {}, undefined, unknown, unknown, unknown, unknown, undefined>;

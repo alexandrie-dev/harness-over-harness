@@ -631,3 +631,39 @@ async fn does_not_execute_command_or_prompt_while_its_session_is_being_created_a
         h.close().await;
     }
 }
+
+#[tokio::test]
+async fn delete_rejects_a_pending_command_even_when_agent_is_idle() {
+    let root = tempfile::tempdir().unwrap();
+    let h = Env::persistent(root.path()).await;
+    let commands = Registry::mount(&h).await;
+    h.initialize().await;
+    commands.register("compact", Some(BuiltinCommandName::Compact));
+    let entered = Arc::new(tokio::sync::Notify::new());
+    let release = Arc::new(tokio::sync::Semaphore::new(0));
+    let (e, r) = (entered.clone(), release.clone());
+    commands.handler(Arc::new(move |_, _, _, _| {
+        let (e, r) = (e.clone(), r.clone());
+        Box::pin(async move {
+            e.notify_one();
+            r.acquire().await.unwrap().forget();
+            Ok(Some(CommandResult::Error {
+                text: "finished".into(),
+            }))
+        })
+    }));
+    let server = h.server.clone();
+    let pending = tokio::spawn(async move {
+        server.handle_request("session/query", json!({"sessionId":"pending-command","contentBlocks":[{"type":"text","text":"/compact"}]})).await
+    });
+    entered.notified().await;
+    let failure = h
+        .server
+        .handle_request("session/delete", json!({"sessionId":"pending-command"}))
+        .await
+        .unwrap_err();
+    assert!(failure.to_string().contains("busy"), "{failure}");
+    release.add_permits(1);
+    pending.await.unwrap().unwrap();
+    h.close().await;
+}

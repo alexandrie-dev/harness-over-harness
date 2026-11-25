@@ -1,0 +1,50 @@
+--- a/web/components/chat/MessagesTimeline.logic.ts
++++ b/web/components/chat/MessagesTimeline.logic.ts
+@@ -305 +305 @@
+-  if (entry.itemType === "reasoning") return Boolean(entry.detail?.trim());
++  if (entry.itemType === "reasoning") return entry.toolLifecycleStatus === "inProgress" || Boolean(entry.detail?.trim());
+@@ -604,0 +605 @@
++      hasDetails?: boolean;
+@@ -958 +959,2 @@
+-    (timelineEntryIsPersistentResourceCard(entry) || entry.projectedItem.item.type === "subagent")
++    (timelineEntryIsPersistentResourceCard(entry) || entry.projectedItem.item.type === "subagent" ||
++      entry.projectedItem.item.type === "run_interrupt_result")
+@@ -1181,2 +1183 @@
+-      input.unfoldedRunIds.has(runId) ||
+-      interruptedRunIds.has(runId) ||
++      (input.unfoldedRunIds.has(runId) && !interruptedRunIds.has(runId)) ||
+@@ -1206 +1207,2 @@
+-      if (!isCompaction && index > terminalEntryIndex && !isFoldableTrailingActivity) {
++      const isStopResult = entry.kind === "event" && entry.projectedItem.item.type === "run_interrupt_result";
++      if (!isCompaction && !isStopResult && index > terminalEntryIndex && !isFoldableTrailingActivity) {
+@@ -1221 +1223,2 @@
+-    if (hiddenEntryIds.size === 0) {
++    const timingOnly = hiddenEntryIds.size === 0 && group.terminalEntry !== null && group.entries.length === 1 && group.startBoundary !== null;
++    if (hiddenEntryIds.size === 0 && !timingOnly) {
+@@ -1226 +1229 @@
+-    if (!hidesNonCompactionWork(group.entries)) {
++    if (!timingOnly && !hidesNonCompactionWork(group.entries)) {
+@@ -1236,2 +1239 @@
+-    const isLatestInterruptedTurn =
+-      input.latestRun?.runId === runId && input.latestRun.status === "interrupted";
++    const isInterruptedTurn = interruptedRunIds.has(runId);
+@@ -1251 +1255 @@
+-    const label = isLatestInterruptedTurn
++    const label = isInterruptedTurn
+@@ -1681,0 +1686 @@
++  const foldedRunIds = new Set(Array.from(foldsByAnchorEntryId.values(), (fold) => fold.runId));
+@@ -1929 +1934 @@
+-    // A stopped compaction's own divider already says it stopped.
++    // A stopped fold carries the durable label; otherwise keep T3's lifecycle divider visible.
+@@ -1931,0 +1937 @@
++      !foldsByAnchorEntryId.has(timelineEntry.id) &&
+@@ -1935,2 +1941,3 @@
+-          compactionRuns.has(timelineEntry.projectedItem.item.runId) &&
+-          compactedRunIds.has(timelineEntry.projectedItem.item.runId)))
++          (foldedRunIds.has(timelineEntry.projectedItem.item.runId) ||
++            (compactionRuns.has(timelineEntry.projectedItem.item.runId) &&
++              compactedRunIds.has(timelineEntry.projectedItem.item.runId)))))
+@@ -1957,0 +1965 @@
++        hasDetails: turnFold.hiddenEntryIds.size > 0,
+@@ -2791,0 +2800 @@
++        (a.kind !== "turn-fold" || bf.kind !== "turn-fold" || a.hasDetails === bf.hasDetails) &&

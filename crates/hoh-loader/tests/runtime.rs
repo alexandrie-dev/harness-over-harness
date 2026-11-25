@@ -248,3 +248,23 @@ async fn concurrent_creates_are_atomic_and_do_not_drop_sibling_rows() {
     .await
     .unwrap();
 }
+
+#[tokio::test(start_paused = true)]
+async fn inventory_classifies_configuration_and_apply_failures_without_exposing_error_text() {
+    let world = World::new("- {id: good, name: noop}\n- {id: invalid, name: objects, config: {nested: {count: -1}}}\n- {id: failed, name: fails}\n- {id: absent, name: missing}\n").await;
+    world.loader.settled().await;
+    assert_eq!(world.loader.diagnostic_kind("include:good"), None);
+    assert_eq!(
+        world.loader.diagnostic_kind("include:invalid"),
+        Some("configuration-error")
+    );
+    assert_eq!(
+        world.loader.diagnostic_kind("include:failed"),
+        Some("apply-error")
+    );
+    assert_eq!(
+        world.loader.diagnostic_kind("include:absent"),
+        Some("configuration-error")
+    );
+    world.close().await;
+}

@@ -1,0 +1,35 @@
+--- a/web/components/CommandPalette.tsx
++++ b/web/components/CommandPalette.tsx
+@@ -1345 +1345 @@
+-            New thread in{" "}
++            New chat in{" "}
+@@ -1351 +1351 @@
+-        searchTitle: gt("New thread in {project}", { project: activeProjectTitle }),
++        searchTitle: gt("New chat in {project}", { project: activeProjectTitle }),
+@@ -1369 +1369 @@
+-      title: gt("New thread in..."),
++      title: gt("New chat in..."),
+@@ -1381 +1381 @@
+-      title: gt("New thread without a project"),
++      title: gt("New chat without a project"),
+@@ -1404 +1404 @@
+-      title: gt("Find in current thread"),
++      title: gt("Find in current chat"),
+@@ -1489 +1489 @@
+-          : gt("Copy thread"),
++          : gt("Copy chat"),
+@@ -1506 +1506 @@
+-      title: gt("Link pull request to thread"),
++      title: gt("Link pull request to chat"),
+@@ -2004 +2004 @@
+-      projects.filter((project) => project.environmentId === input.environmentId),
++      projects.filter((project) => project.environmentId === input.environmentId && project.id !== "hoh-project"),
+@@ -2720 +2720 @@
+-          title: gt("Thread search is unavailable on this server."),
++          title: gt("Chat search is unavailable on this server."),
+@@ -3174 +3174 @@
+-                  ? { emptyStateMessage: gt("Searching thread messages…") }
++                  ? { emptyStateMessage: gt("Searching chat messages…") }
+@@ -3176 +3176 @@
+-                    ? { emptyStateMessage: gt("Couldn't search thread messages.") }
++                    ? { emptyStateMessage: gt("Couldn't search chat messages.") }

@@ -225,19 +225,17 @@ async fn an_escalation_ask_reaching_the_host_is_worded_by_the_engine_and_the_jus
 
     let requests = lock(&peer.requests).clone();
     assert_eq!(requests.len(), 2);
-    for (value, what) in [(&requests[0], "команду"), (&requests[1], "действие")] {
+    for (value, what) in [(&requests[0], "the command"), (&requests[1], "the action")] {
         let host: HostApprovalRequest = serde_json::from_value(value.clone()).unwrap();
         assert_eq!(
             host.human_text,
-            format!(
-                "Помощник просит разрешения работать за пределами своей папки: выполнить {what}"
-            )
+            format!("The assistant asks to run {what} outside its folder")
         );
         assert_eq!(
             host.reason.as_deref(),
             Some(
                 format!(
-                    "{}. Обоснование Помощника — в подробностях",
+                    "{}. See details for the assistant’s justification",
                     host.human_text
                 )
                 .as_str()
@@ -245,7 +243,7 @@ async fn an_escalation_ask_reaching_the_host_is_worded_by_the_engine_and_the_jus
         );
         assert_eq!(
             host.details.as_deref(),
-            Some(format!("Обоснование Помощника: {justification}").as_str())
+            Some(format!("Assistant justification: {justification}").as_str())
         );
         let window_text = format!("{} {}", host.human_text, host.reason.as_deref().unwrap());
         for word in ["old.txt", "RM", "rm", "двоеточие", "выполнить RM", "Allow"]
@@ -294,11 +292,11 @@ async fn escalation_wording_covers_other_modes_and_an_overlong_justification() {
     let second: HostApprovalRequest = serde_json::from_value(requests[1].clone()).unwrap();
     assert_eq!(
         first.human_text,
-        "Помощник просит выполнить команду с правом записи в рабочую папку"
+        "The assistant asks to run the command with write access to its working folder"
     );
     assert_eq!(
         second.human_text,
-        "Помощник просит выполнить команду с дополнительными правами"
+        "The assistant asks to run the command with additional permissions"
     );
     for host in [&first, &second] {
         let details = host.details.as_deref().unwrap();
@@ -493,7 +491,7 @@ async fn privileged_method_is_asked_with_typed_text_and_runs_only_after_a_verifi
     let host: HostApprovalRequest = serde_json::from_value(requests[0].clone()).unwrap();
     assert_eq!(host.session_id, "s-1");
     assert_eq!(host.tool_name, "session/working-directory/set");
-    assert_eq!(host.human_text, "Разрешить работу в папке «/work/project»?");
+    assert_eq!(host.human_text, "Allow work in folder «/work/project»?");
     assert_eq!(
         host.action,
         json!({"method":"session/working-directory/set","params":params})
@@ -516,7 +514,7 @@ async fn privileged_method_is_asked_with_typed_text_and_runs_only_after_a_verifi
     assert_eq!(requests[1]["sessionId"], "host");
     assert_eq!(
         requests[1]["humanText"],
-        "Разрешить проверку модели «m-1» у провайдера «https://api.example.com/v1»?"
+        "Allow testing model «m-1» at provider «https://api.example.com/v1»?"
     );
     h.close().await;
 }
@@ -537,24 +535,32 @@ async fn executor_choices_are_asked_in_words_that_name_the_executor_and_the_righ
         (
             "hoh/executor/access/set",
             json!({"executor":"claude","mode":"full"}),
-            "Включить полный доступ для Claude? Помощник сам удаляет и меняет файлы в любых \
-             папках, куда есть доступ у вас, запускает программы и выходит в интернет, не \
-             спрашивая. Сделанное нельзя отменить.",
+            "Enable Full access for Claude? The assistant can delete and change files in any folder you can access, run programs, and access the internet without asking. These actions cannot be undone.",
         ),
         (
             "hoh/executor/access/set",
             json!({"executor":"claude","mode":"confirm"}),
-            "Вернуть режим «Спрашивать разрешение» для Claude?",
+            "Return Claude to Supervised mode?",
+        ),
+        (
+            "hoh/executor/access/set",
+            json!({"executor":"codex","mode":"confirm","runtimeMode":"auto-accept-edits"}),
+            "Enable Accept edits for Codex? The assistant automatically accepts file changes in the working folder but asks before other actions.",
+        ),
+        (
+            "hoh/executor/access/set",
+            json!({"executor":"codex","mode":"confirm","runtimeMode":"auto"}),
+            "Enable Auto for Codex? The assistant automatically accepts file changes in the working folder and reviews other permission requests automatically.",
         ),
         (
             "hoh/executor/select",
             json!({"executor":"claude","model":"claude-sonnet-4-5"}),
-            "Отвечать будет Claude (модель claude-sonnet-4-5)?",
+            "Use Claude (model claude-sonnet-4-5) to respond?",
         ),
         (
             "hoh/executor/select",
             json!({"executor":null,"model":"local-model"}),
-            "Отвечать будет модель на этом компьютере?",
+            "Use the model on this computer to respond?",
         ),
     ];
     for (index, (method, params, text)) in cases.iter().enumerate() {
@@ -582,6 +588,15 @@ async fn executor_choices_are_asked_in_words_that_name_the_executor_and_the_righ
             .approve_privileged(
                 "hoh/executor/access/set",
                 &json!({"executor":"claude","mode":"everything"})
+            )
+            .await
+            .is_err()
+    );
+    assert!(
+        h.service()
+            .approve_privileged(
+                "hoh/executor/access/set",
+                &json!({"executor":"codex","mode":"full","runtimeMode":"auto"})
             )
             .await
             .is_err()
@@ -625,7 +640,7 @@ async fn model_key_never_travels_in_the_approval_and_a_rejection_refuses_the_cal
     );
     assert_eq!(
         requests[0]["humanText"],
-        "Сохранить API-ключ для провайдера «https://api.example.com/v1»?"
+        "Save the API key for provider «https://api.example.com/v1»?"
     );
     h.close().await;
 }

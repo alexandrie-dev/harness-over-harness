@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Array_of_PluginInventoryItem",
+  "type": "array",
+  "items": {
+    "$ref": "#/$defs/PluginInventoryItem"
+  },
+  "$defs": {
+    "PluginInventoryItem": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "manifest": true,
+        "status": {
+          "type": "string"
+        },
+        "diagnostic": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "data": true
+      },
+      "required": [
+        "id",
+        "manifest",
+        "status"
+      ]
+    }
+  },
+  "x-method": "hoh/plugins/list"
+}

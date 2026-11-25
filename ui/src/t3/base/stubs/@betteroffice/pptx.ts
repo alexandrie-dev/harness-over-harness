@@ -1,0 +1,24 @@
+// Заглушка окна HoH вместо `@betteroffice/pptx` (T3 Code, MIT): офисные и двоичные форматы (docx/xlsx/pptx, sqlite, tiff/heic). Пакет не ставится; файл пишет scripts/t3-sync.py.
+import { absent } from '../absent';
+export const DeckSnapshot: any = absent('@betteroffice/pptx', 'DeckSnapshot');
+export type DeckSnapshot<A = any, B = any, C = any, D = any> = any;
+export const PositionedTextRun: any = absent('@betteroffice/pptx', 'PositionedTextRun');
+export type PositionedTextRun<A = any, B = any, C = any, D = any> = any;
+export const PresentationHandle: any = absent('@betteroffice/pptx', 'PresentationHandle');
+export type PresentationHandle<A = any, B = any, C = any, D = any> = any;
+export const SlideDisplayList: any = absent('@betteroffice/pptx', 'SlideDisplayList');
+export type SlideDisplayList<A = any, B = any, C = any, D = any> = any;
+export const SlidePrimitive: any = absent('@betteroffice/pptx', 'SlidePrimitive');
+export type SlidePrimitive<A = any, B = any, C = any, D = any> = any;
+export const initWasm: any = absent('@betteroffice/pptx', 'initWasm');
+export type initWasm<A = any, B = any, C = any, D = any> = any;
+export const inspectPresentation: any = absent('@betteroffice/pptx', 'inspectPresentation');
+export type inspectPresentation<A = any, B = any, C = any, D = any> = any;
+export const needsElementDecode: any = absent('@betteroffice/pptx', 'needsElementDecode');
+export type needsElementDecode<A = any, B = any, C = any, D = any> = any;
+export const openPresentation: any = absent('@betteroffice/pptx', 'openPresentation');
+export type openPresentation<A = any, B = any, C = any, D = any> = any;
+export const paintSlide: any = absent('@betteroffice/pptx', 'paintSlide');
+export type paintSlide<A = any, B = any, C = any, D = any> = any;
+export const presentationImageBlob: any = absent('@betteroffice/pptx', 'presentationImageBlob');
+export type presentationImageBlob<A = any, B = any, C = any, D = any> = any;

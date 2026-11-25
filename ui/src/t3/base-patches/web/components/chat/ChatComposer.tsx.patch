@@ -1,0 +1,44 @@
+--- a/web/components/chat/ChatComposer.tsx
++++ b/web/components/chat/ChatComposer.tsx
+@@ -249,0 +250 @@
++import { ComposerControl } from "./ComposerControl";
+@@ -414,0 +416 @@
++  currentRuntimeMode?: RuntimeMode | undefined;
+@@ -625,0 +628,3 @@
++  const setComposerDraftInteractionMode = useComposerDraftStore(
++    (store) => store.setInteractionMode,
++  );
+@@ -1205 +1210,2 @@
+-    fileStagingLimit !== null &&
++    // HoH (ui/T3-MAP.md): Claude accepts image uploads even though generic file staging is absent.
++    supportsAttachmentUploads &&
+@@ -1267 +1273 @@
+-    ? gt("Resume thread")
++    ? gt("Resume chat")
+@@ -2520,0 +2527,5 @@
++      currentRuntimeMode={props.currentRuntimeMode}
++      planAvailable={selectedProviderEntry?.snapshot.showInteractionModeToggle === true}
++      planActive={(composerDraft.interactionMode ?? activeThread?.interactionMode ?? "default") === "plan"}
++      currentPlanActive={props.currentRuntimeMode !== undefined && activeThread?.interactionMode === "plan"}
++      onPlanToggle={() => setComposerDraftInteractionMode(composerDraftTarget, (composerDraft.interactionMode ?? activeThread?.interactionMode ?? "default") === "plan" ? "default" : "plan")}
+@@ -2523 +2534,4 @@
+-      handleRuntimeModeChange={handleRuntimeModeChange}
++      handleRuntimeModeChange={(mode) => {
++        setComposerDraftInteractionMode(composerDraftTarget, "default");
++        handleRuntimeModeChange(mode);
++      }}
+@@ -2909 +2923 @@
+-        title: gt("Loading thread context…"),
++        title: gt("Loading chat context…"),
+@@ -2949 +2963 @@
+-          title: gt("Unable to read the dropped thread"),
++          title: gt("Unable to read the dropped chat"),
+@@ -2953 +2967 @@
+-              ? gt("This thread exceeds the attachment size limit. Try a shorter thread.")
++              ? gt("This chat exceeds the attachment size limit. Try a shorter chat.")
+@@ -2998 +3012 @@
+-          title: gt("Unable to add thread"),
++          title: gt("Unable to add chat"),
+@@ -3742 +3756 @@
+-                            ? gt("Choose a project above to start a thread")
++                            ? gt("Choose a project above to start a chat")

@@ -1,0 +1,26 @@
+--- a/web/hooks/useHandleNewThread.ts
++++ b/web/hooks/useHandleNewThread.ts
+@@ -120,0 +121 @@
++      setInteractionMode,
+@@ -135,2 +135,0 @@
+-    const carrySourceDraft =
+-      currentRouteTarget?.kind === "draft" ? getDraftSession(currentRouteTarget.draftId) : null;
+@@ -154,5 +152,0 @@
+-    const carryInteractionMode =
+-      carrySourceComposer?.interactionMode ??
+-      carrySourceShell?.interactionMode ??
+-      carrySourceDraft?.interactionMode ??
+-      null;
+@@ -323,2 +317 @@
+-            ...(!isDraftAlreadyOpen ? { runtimeMode: defaultRuntimeMode } : {}),
+-            ...(carryInteractionMode ? { interactionMode: carryInteractionMode } : {}),
++            ...(!isDraftAlreadyOpen ? { runtimeMode: defaultRuntimeMode, interactionMode: "default" } : {}),
+@@ -326,0 +320 @@
++        if (!isDraftAlreadyOpen) setInteractionMode(emptyStoredDraftThread.draftId, "default");
+@@ -348,2 +342 @@
+-            ...(!isDraftAlreadyOpen ? { runtimeMode: defaultRuntimeMode } : {}),
+-            ...(carryInteractionMode ? { interactionMode: carryInteractionMode } : {}),
++            ...(!isDraftAlreadyOpen ? { runtimeMode: defaultRuntimeMode, interactionMode: "default" } : {}),
+@@ -445 +438 @@
+-        ...(carryInteractionMode ? { interactionMode: carryInteractionMode } : {}),
++        interactionMode: "default",

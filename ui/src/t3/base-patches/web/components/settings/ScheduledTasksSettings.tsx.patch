@@ -1,0 +1,50 @@
+--- a/web/components/settings/ScheduledTasksSettings.tsx
++++ b/web/components/settings/ScheduledTasksSettings.tsx
+@@ -941 +941 @@
+-      {title || gt("Open thread")}
++      {title || gt("Open chat")}
+@@ -1281,3 +1281,3 @@
+-  new_thread: msg("New thread each run"),
+-  continue: msg("One thread, continuing the conversation"),
+-  fresh_session: msg("One thread, fresh session each run"),
++  new_thread: msg("New chat each run"),
++  continue: msg("One chat, continuing the conversation"),
++  fresh_session: msg("One chat, fresh session each run"),
+@@ -1322 +1322 @@
+-      ? thread?.title.trim() || gt("Thread {id}", { id: ref.threadId })
++      ? thread?.title.trim() || gt("Chat {id}", { id: ref.threadId })
+@@ -1324 +1324 @@
+-        ? gt("New thread each run")
++        ? gt("New chat each run")
+@@ -1350 +1350 @@
+-      ? gt("Each run starts a new thread with the workspace and model below.")
++      ? gt("Each run starts a new chat with the workspace and model below.")
+@@ -1354 +1354 @@
+-              "The first run starts a thread with the workspace and model below. Later runs continue that conversation.",
++              "The first run starts a chat with the workspace and model below. Later runs continue that conversation.",
+@@ -1357 +1357 @@
+-              "The first run starts a thread with the workspace and model below. Later runs post there, each in a fresh session without earlier runs' context.",
++              "The first run starts a chat with the workspace and model below. Later runs post there, each in a fresh session without earlier runs' context.",
+@@ -1361 +1361 @@
+-          : gt("Each run starts a fresh session in this thread, without earlier runs' context.");
++          : gt("Each run starts a fresh session in this chat, without earlier runs' context.");
+@@ -1407 +1407 @@
+-            aria-label={onThreadModeChange ? gt("Destination thread") : undefined}
++            aria-label={onThreadModeChange ? gt("Destination chat") : undefined}
+@@ -1418,2 +1418,2 @@
+-              aria-label={gt("Search threads")}
+-              placeholder={gt("Search all threads...")}
++              aria-label={gt("Search chats")}
++              placeholder={gt("Search all chats...")}
+@@ -1424 +1424 @@
+-              <T>No threads found.</T>
++              <T>No chats found.</T>
+@@ -1431 +1431 @@
+-                      ? gt("New thread each run")
++                      ? gt("New chat each run")
+@@ -1434 +1434 @@
+-                        : threads.find((row) => row.id === value)?.title || gt("Untitled thread")}
++                        : threads.find((row) => row.id === value)?.title || gt("Untitled chat")}
+@@ -1446 +1446 @@
+-            <T>Deleting the thread also deletes this task.</T>
++            <T>Deleting the chat also deletes this task.</T>

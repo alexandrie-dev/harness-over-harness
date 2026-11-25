@@ -1,0 +1,5 @@
+--- a/web/components/promptLinks/linkedPrompt.ts
++++ b/web/components/promptLinks/linkedPrompt.ts
+@@ -46 +46 @@
+-    description: m(msg("This thread already has a draft. Replace it with the linked prompt?")),
++    description: m(msg("This chat already has a draft. Replace it with the linked prompt?")),

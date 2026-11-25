@@ -3,6 +3,22 @@ use schemars::{JsonSchema, schema_for};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PluginListParams {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+}
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct PluginInventoryItem {
+    pub id: String,
+    pub manifest: Value,
+    pub status: String,
+    pub diagnostic: Option<String>,
+    pub data: Option<Value>,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, JsonSchema)]
 #[serde(tag = "method", content = "params")]
 pub enum Request {
@@ -20,6 +36,10 @@ pub enum Request {
     WorkingDirectoryGet(SessionWorkingDirectoryParams),
     #[serde(rename = "session/working-directory/set")]
     WorkingDirectorySet(SessionWorkingDirectorySetParams),
+    #[serde(rename = "session/working-directory/status")]
+    WorkingDirectoryStatus(SessionWorkingDirectoryParams),
+    #[serde(rename = "session/working-directory/rebind")]
+    WorkingDirectoryRebind(SessionWorkingDirectoryRebindParams),
     #[serde(rename = "shutdown")]
     Shutdown,
     #[serde(rename = "session/list")]
@@ -28,6 +48,8 @@ pub enum Request {
     SessionEvents(SessionEventsParams),
     #[serde(rename = "session/cancel")]
     SessionCancel(SessionResumeParams),
+    #[serde(rename = "session/delete")]
+    SessionDelete(SessionResumeParams),
     #[serde(rename = "hoh/employee/list")]
     EmployeeList(Empty),
     #[serde(rename = "hoh/employee/get")]
@@ -98,6 +120,8 @@ pub enum Request {
     SettingsRulesSet(SettingsRulesSetParams),
     #[serde(rename = "hoh/model/probe")]
     ModelProbe(ModelProbeParams),
+    #[serde(rename = "hoh/plugins/list")]
+    PluginsList(PluginListParams),
     #[serde(rename = "hoh/settings/get")]
     SettingsGet(Empty),
     #[serde(rename = "hoh/settings/set")]
@@ -106,12 +130,26 @@ pub enum Request {
     SecuritySummary(Empty),
     #[serde(rename = "hoh/executor/discover")]
     ExecutorDiscover(ExecutorParams),
+    #[serde(rename = "hoh/executor/limits")]
+    ExecutorLimits(ExecutorParams),
     #[serde(rename = "hoh/executor/select")]
     ExecutorSelect(ExecutorSelectParams),
     #[serde(rename = "hoh/executor/access/get")]
     ExecutorAccessGet(ExecutorAccessGetParams),
     #[serde(rename = "hoh/executor/access/set")]
     ExecutorAccessSet(ExecutorAccessSetParams),
+    #[serde(rename = "hoh/executor/trust/get")]
+    ExecutorTrustGet(ExecutorTrustGetParams),
+    #[serde(rename = "hoh/executor/trust/set")]
+    ExecutorTrustSet(ExecutorTrustSetParams),
+    #[serde(rename = "hoh/executor/commands")]
+    ExecutorCommands(ExecutorCommandsParams),
+    #[serde(rename = "hoh/workspace/entries")]
+    WorkspaceEntries(WorkspaceEntriesParams),
+    #[serde(rename = "hoh/workspace/add")]
+    WorkspaceAdd(WorkspaceAddParams),
+    #[serde(rename = "hoh/executor/title/generate")]
+    ExecutorTitleGenerate(ExecutorTitleGenerateParams),
     #[serde(rename = "approval/request")]
     ApprovalRequest(ApprovalRequestParams),
     #[serde(rename = "user-question/ask")]
@@ -127,10 +165,13 @@ impl Request {
             Self::SessionWait(_) => "session/wait",
             Self::WorkingDirectoryGet(_) => "session/working-directory/get",
             Self::WorkingDirectorySet(_) => "session/working-directory/set",
+            Self::WorkingDirectoryStatus(_) => "session/working-directory/status",
+            Self::WorkingDirectoryRebind(_) => "session/working-directory/rebind",
             Self::Shutdown => "shutdown",
             Self::SessionList(_) => "session/list",
             Self::SessionEvents(_) => "session/events",
             Self::SessionCancel(_) => "session/cancel",
+            Self::SessionDelete(_) => "session/delete",
             Self::EmployeeList(_) => "hoh/employee/list",
             Self::EmployeeGet(_) => "hoh/employee/get",
             Self::EmployeeCreate(_) => "hoh/employee/create",
@@ -166,13 +207,21 @@ impl Request {
             Self::ModelKeySet(_) => "hoh/model/key/set",
             Self::SettingsRulesSet(_) => "hoh/settings/rules/set",
             Self::ModelProbe(_) => "hoh/model/probe",
+            Self::PluginsList(_) => "hoh/plugins/list",
             Self::SettingsGet(_) => "hoh/settings/get",
             Self::SettingsSet(_) => "hoh/settings/set",
             Self::SecuritySummary(_) => "hoh/security/summary",
             Self::ExecutorDiscover(_) => "hoh/executor/discover",
+            Self::ExecutorLimits(_) => "hoh/executor/limits",
             Self::ExecutorSelect(_) => "hoh/executor/select",
             Self::ExecutorAccessGet(_) => "hoh/executor/access/get",
             Self::ExecutorAccessSet(_) => "hoh/executor/access/set",
+            Self::ExecutorTrustGet(_) => "hoh/executor/trust/get",
+            Self::ExecutorTrustSet(_) => "hoh/executor/trust/set",
+            Self::ExecutorCommands(_) => "hoh/executor/commands",
+            Self::WorkspaceEntries(_) => "hoh/workspace/entries",
+            Self::WorkspaceAdd(_) => "hoh/workspace/add",
+            Self::ExecutorTitleGenerate(_) => "hoh/executor/title/generate",
             Self::ApprovalRequest(_) => "approval/request",
             Self::UserQuestionAsk(_) => "user-question/ask",
         }
@@ -224,10 +273,13 @@ pub const REQUEST_METHODS: &[&str] = &[
     "session/wait",
     "session/working-directory/get",
     "session/working-directory/set",
+    "session/working-directory/status",
+    "session/working-directory/rebind",
     "shutdown",
     "session/list",
     "session/events",
     "session/cancel",
+    "session/delete",
     "hoh/employee/list",
     "hoh/employee/get",
     "hoh/employee/create",
@@ -263,13 +315,21 @@ pub const REQUEST_METHODS: &[&str] = &[
     "hoh/model/key/set",
     "hoh/settings/rules/set",
     "hoh/model/probe",
+    "hoh/plugins/list",
     "hoh/settings/get",
     "hoh/settings/set",
     "hoh/security/summary",
     "hoh/executor/discover",
+    "hoh/executor/limits",
     "hoh/executor/select",
     "hoh/executor/access/get",
     "hoh/executor/access/set",
+    "hoh/executor/trust/get",
+    "hoh/executor/trust/set",
+    "hoh/executor/commands",
+    "hoh/workspace/entries",
+    "hoh/workspace/add",
+    "hoh/executor/title/generate",
     "approval/request",
     "user-question/ask",
 ];
@@ -306,10 +366,12 @@ pub fn validate_params(method: &str, value: &Value) -> Result<(), String> {
         "session/wait" => admit::<SessionWaitParams>(value),
         "session/working-directory/get" => admit::<SessionWorkingDirectoryParams>(value),
         "session/working-directory/set" => admit::<SessionWorkingDirectorySetParams>(value),
+        "session/working-directory/status" => admit::<SessionWorkingDirectoryParams>(value),
+        "session/working-directory/rebind" => admit::<SessionWorkingDirectoryRebindParams>(value),
         "shutdown" => admit::<Empty>(value),
         "session/list" => admit::<SessionListParams>(value),
         "session/events" => admit::<SessionEventsParams>(value),
-        "session/cancel" => admit::<SessionResumeParams>(value),
+        "session/cancel" | "session/delete" => admit::<SessionResumeParams>(value),
         "hoh/employee/list" => admit::<Empty>(value),
         "hoh/employee/get" => admit::<IdParams>(value),
         "hoh/employee/create" => admit::<EmployeeCreateParams>(value),
@@ -345,13 +407,20 @@ pub fn validate_params(method: &str, value: &Value) -> Result<(), String> {
         "hoh/model/key/set" => admit::<ModelKeySetParams>(value),
         "hoh/settings/rules/set" => admit::<SettingsRulesSetParams>(value),
         "hoh/model/probe" => admit::<ModelProbeParams>(value),
+        "hoh/plugins/list" => admit::<PluginListParams>(value),
         "hoh/settings/get" => admit::<Empty>(value),
         "hoh/settings/set" => admit::<SettingsSetParams>(value),
         "hoh/security/summary" => admit::<Empty>(value),
-        "hoh/executor/discover" => admit::<ExecutorParams>(value),
+        "hoh/executor/discover" | "hoh/executor/limits" => admit::<ExecutorParams>(value),
         "hoh/executor/select" => admit::<ExecutorSelectParams>(value),
         "hoh/executor/access/get" => admit::<ExecutorAccessGetParams>(value),
         "hoh/executor/access/set" => admit::<ExecutorAccessSetParams>(value),
+        "hoh/executor/trust/get" => admit::<ExecutorTrustGetParams>(value),
+        "hoh/executor/trust/set" => admit::<ExecutorTrustSetParams>(value),
+        "hoh/executor/commands" => admit::<ExecutorCommandsParams>(value),
+        "hoh/workspace/entries" => admit::<WorkspaceEntriesParams>(value),
+        "hoh/workspace/add" => admit::<WorkspaceAddParams>(value),
+        "hoh/executor/title/generate" => admit::<ExecutorTitleGenerateParams>(value),
         "approval/request" => admit::<ApprovalRequestParams>(value),
         "user-question/ask" => admit::<SdkUserQuestionRequest>(value),
         _ => Err(format!("unknown method: {method}")),
@@ -373,10 +442,12 @@ pub fn validate_result(method: &str, value: &Value) -> Result<(), String> {
         "session/wait" => admit::<Empty>(value),
         "session/working-directory/get" => admit::<SessionWorkingDirectoryResult>(value),
         "session/working-directory/set" => admit::<SessionWorkingDirectoryResult>(value),
+        "session/working-directory/status" => admit::<SessionWorkingDirectoryStatusResult>(value),
+        "session/working-directory/rebind" => admit::<SessionWorkingDirectoryResult>(value),
         "shutdown" => admit::<Empty>(value),
         "session/list" => admit::<SessionListResult>(value),
         "session/events" => admit::<SessionEventsResult>(value),
-        "session/cancel" => admit::<Empty>(value),
+        "session/cancel" | "session/delete" => admit::<Empty>(value),
         "hoh/employee/list" => admit::<Vec<Employee>>(value),
         "hoh/employee/get" => admit::<Employee>(value),
         "hoh/employee/create" => admit::<IdRev>(value),
@@ -411,13 +482,20 @@ pub fn validate_result(method: &str, value: &Value) -> Result<(), String> {
         "hoh/artifact/render" => admit::<ArtifactRenderResult>(value),
         "hoh/model/key/set" | "hoh/settings/rules/set" => admit::<Empty>(value),
         "hoh/model/probe" => admit::<ModelProbeResult>(value),
+        "hoh/plugins/list" => admit::<Vec<PluginInventoryItem>>(value),
         "hoh/settings/get" => admit::<Settings>(value),
         "hoh/settings/set" => admit::<Settings>(value),
         "hoh/security/summary" => admit::<SecuritySummary>(value),
         "hoh/executor/discover" => admit::<ExecutorDiscoverResult>(value),
+        "hoh/executor/limits" => admit::<ExecutorLimitsResult>(value),
         "hoh/executor/select" => admit::<ExecutorSelection>(value),
         "hoh/executor/access/get" => admit::<ExecutorAccessGetResult>(value),
         "hoh/executor/access/set" => admit::<ExecutorAccessSetResult>(value),
+        "hoh/executor/trust/get" | "hoh/executor/trust/set" => admit::<ExecutorTrustResult>(value),
+        "hoh/executor/commands" => admit::<ExecutorCommandsResult>(value),
+        "hoh/workspace/entries" => admit::<WorkspaceEntriesResult>(value),
+        "hoh/workspace/add" => admit::<WorkspaceAddResult>(value),
+        "hoh/executor/title/generate" => admit::<ExecutorTitleGenerateResult>(value),
         "approval/request" => admit::<ApprovalRequestResult>(value),
         "user-question/ask" => admit::<SdkUserQuestionResult>(value),
         _ => Err(format!("unknown method: {method}")),
@@ -561,6 +639,28 @@ pub fn schemas() -> Vec<(String, Value)> {
         );
         schemas.push(("WorkingDirectorySetResult".into(), schema));
     }
+    for (name, method, params, result) in [
+        (
+            "WorkingDirectoryStatus",
+            "session/working-directory/status",
+            serde_json::to_value(schema_for!(SessionWorkingDirectoryParams)).unwrap(),
+            serde_json::to_value(schema_for!(SessionWorkingDirectoryStatusResult)).unwrap(),
+        ),
+        (
+            "WorkingDirectoryRebind",
+            "session/working-directory/rebind",
+            serde_json::to_value(schema_for!(SessionWorkingDirectoryRebindParams)).unwrap(),
+            serde_json::to_value(schema_for!(SessionWorkingDirectoryResult)).unwrap(),
+        ),
+    ] {
+        schemas.push((format!("{name}Params"), params));
+        let mut result = result;
+        result
+            .as_object_mut()
+            .unwrap()
+            .insert("x-method".into(), Value::String(method.into()));
+        schemas.push((format!("{name}Result"), result));
+    }
     schemas.push((
         "ShutdownParams".into(),
         serde_json::to_value(schema_for!(Empty)).unwrap(),
@@ -608,6 +708,18 @@ pub fn schemas() -> Vec<(String, Value)> {
             .unwrap()
             .insert("x-method".into(), Value::String("session/cancel".into()));
         schemas.push(("SessionCancelResult".into(), schema));
+    }
+    schemas.push((
+        "SessionDeleteParams".into(),
+        serde_json::to_value(schema_for!(SessionResumeParams)).unwrap(),
+    ));
+    {
+        let mut schema = serde_json::to_value(schema_for!(Empty)).unwrap();
+        schema
+            .as_object_mut()
+            .unwrap()
+            .insert("x-method".into(), Value::String("session/delete".into()));
+        schemas.push(("SessionDeleteResult".into(), schema));
     }
     schemas.push((
         "EmployeeListParams".into(),
@@ -1086,10 +1198,22 @@ pub fn schemas() -> Vec<(String, Value)> {
     }
     for (name, method, params, result) in [
         (
+            "PluginsList",
+            "hoh/plugins/list",
+            schema_for!(PluginListParams),
+            schema_for!(Vec<PluginInventoryItem>),
+        ),
+        (
             "ExecutorDiscover",
             "hoh/executor/discover",
             schema_for!(ExecutorParams),
             schema_for!(ExecutorDiscoverResult),
+        ),
+        (
+            "ExecutorLimits",
+            "hoh/executor/limits",
+            schema_for!(ExecutorParams),
+            schema_for!(ExecutorLimitsResult),
         ),
         (
             "ExecutorSelect",
@@ -1108,6 +1232,42 @@ pub fn schemas() -> Vec<(String, Value)> {
             "hoh/executor/access/set",
             schema_for!(ExecutorAccessSetParams),
             schema_for!(ExecutorAccessSetResult),
+        ),
+        (
+            "ExecutorTrustGet",
+            "hoh/executor/trust/get",
+            schema_for!(ExecutorTrustGetParams),
+            schema_for!(ExecutorTrustResult),
+        ),
+        (
+            "ExecutorTrustSet",
+            "hoh/executor/trust/set",
+            schema_for!(ExecutorTrustSetParams),
+            schema_for!(ExecutorTrustResult),
+        ),
+        (
+            "ExecutorCommands",
+            "hoh/executor/commands",
+            schema_for!(ExecutorCommandsParams),
+            schema_for!(ExecutorCommandsResult),
+        ),
+        (
+            "WorkspaceEntries",
+            "hoh/workspace/entries",
+            schema_for!(WorkspaceEntriesParams),
+            schema_for!(WorkspaceEntriesResult),
+        ),
+        (
+            "WorkspaceAdd",
+            "hoh/workspace/add",
+            schema_for!(WorkspaceAddParams),
+            schema_for!(WorkspaceAddResult),
+        ),
+        (
+            "ExecutorTitleGenerate",
+            "hoh/executor/title/generate",
+            schema_for!(ExecutorTitleGenerateParams),
+            schema_for!(ExecutorTitleGenerateResult),
         ),
     ] {
         schemas.push((
@@ -1142,6 +1302,10 @@ enum RequestDecode {
     WorkingDirectoryGet(SessionWorkingDirectoryParams),
     #[serde(rename = "session/working-directory/set")]
     WorkingDirectorySet(SessionWorkingDirectorySetParams),
+    #[serde(rename = "session/working-directory/status")]
+    WorkingDirectoryStatus(SessionWorkingDirectoryParams),
+    #[serde(rename = "session/working-directory/rebind")]
+    WorkingDirectoryRebind(SessionWorkingDirectoryRebindParams),
     #[serde(rename = "shutdown")]
     Shutdown,
     #[serde(rename = "session/list")]
@@ -1150,6 +1314,8 @@ enum RequestDecode {
     SessionEvents(SessionEventsParams),
     #[serde(rename = "session/cancel")]
     SessionCancel(SessionResumeParams),
+    #[serde(rename = "session/delete")]
+    SessionDelete(SessionResumeParams),
     #[serde(rename = "hoh/employee/list")]
     EmployeeList(Empty),
     #[serde(rename = "hoh/employee/get")]
@@ -1220,6 +1386,8 @@ enum RequestDecode {
     SettingsRulesSet(SettingsRulesSetParams),
     #[serde(rename = "hoh/model/probe")]
     ModelProbe(ModelProbeParams),
+    #[serde(rename = "hoh/plugins/list")]
+    PluginsList(PluginListParams),
     #[serde(rename = "hoh/settings/get")]
     SettingsGet(Empty),
     #[serde(rename = "hoh/settings/set")]
@@ -1228,12 +1396,26 @@ enum RequestDecode {
     SecuritySummary(Empty),
     #[serde(rename = "hoh/executor/discover")]
     ExecutorDiscover(ExecutorParams),
+    #[serde(rename = "hoh/executor/limits")]
+    ExecutorLimits(ExecutorParams),
     #[serde(rename = "hoh/executor/select")]
     ExecutorSelect(ExecutorSelectParams),
     #[serde(rename = "hoh/executor/access/get")]
     ExecutorAccessGet(ExecutorAccessGetParams),
     #[serde(rename = "hoh/executor/access/set")]
     ExecutorAccessSet(ExecutorAccessSetParams),
+    #[serde(rename = "hoh/executor/trust/get")]
+    ExecutorTrustGet(ExecutorTrustGetParams),
+    #[serde(rename = "hoh/executor/trust/set")]
+    ExecutorTrustSet(ExecutorTrustSetParams),
+    #[serde(rename = "hoh/executor/commands")]
+    ExecutorCommands(ExecutorCommandsParams),
+    #[serde(rename = "hoh/workspace/entries")]
+    WorkspaceEntries(WorkspaceEntriesParams),
+    #[serde(rename = "hoh/workspace/add")]
+    WorkspaceAdd(WorkspaceAddParams),
+    #[serde(rename = "hoh/executor/title/generate")]
+    ExecutorTitleGenerate(ExecutorTitleGenerateParams),
     #[serde(rename = "approval/request")]
     ApprovalRequest(ApprovalRequestParams),
     #[serde(rename = "user-question/ask")]
@@ -1258,6 +1440,7 @@ impl<'de> Deserialize<'de> for Request {
                 | "hoh/task/list"
                 | "hoh/button/list"
                 | "hoh/schedule/list"
+                | "hoh/plugins/list"
                 | "hoh/settings/get"
                 | "hoh/settings/set"
                 | "hoh/security/summary"
@@ -1284,11 +1467,14 @@ privileged_methods! {
     "hoh/task/rollback" => |_:&Value| true,
     "hoh/settings/set" => |p:&Value| p.get("security").is_some() || p.get("model").is_some(),
     "session/working-directory/set" => |_:&Value| true,
+    "session/working-directory/rebind" => |_:&Value| true,
     "hoh/model/probe" => |p:&Value| p.get("baseUrl").is_some(),
     "hoh/model/key/set" => |_:&Value| true,
     "hoh/settings/rules/set" => |_:&Value| true,
+    "hoh/executor/trust/set" => |_:&Value| true,
     "hoh/executor/access/set" => |_:&Value| true,
     "hoh/executor/select" => |_:&Value| true,
+    "hoh/workspace/add" => |_:&Value| true,
 }
 pub fn validate_params_host(method: &str, value: &Value) -> Result<(), String> {
     if method == "approval/request" {

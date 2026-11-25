@@ -478,3 +478,165 @@ async fn a_drain_failure_and_release_failure_reject_close_as_one_aggregate_error
     w.close().await.unwrap();
     f.finish().await;
 }
+
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn del2_lease_does_not_follow_a_session_directory_symlink() {
+    use std::os::unix::fs::symlink;
+    let root = tempfile::tempdir().unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    let link = root.path().join("session");
+    symlink(outside.path(), &link).unwrap();
+    assert!(
+        SessionWriteLease::acquire(link.to_str().unwrap(), &"session".into())
+            .await
+            .is_err()
+    );
+    assert!(!outside.path().join("session.lock").exists());
+}
+
+#[tokio::test]
+async fn del3_open_flags_are_architecture_independent_and_ordinary_sessions_open() {
+    let lease = include_str!("../src/lease.rs");
+    let backend = include_str!("../src/backend.rs");
+    assert!(!lease.contains("custom_flags(0x"));
+    assert!(!backend.contains("custom_flags(0x"));
+    let f = Fixture::new(JsonlCompression::None).await;
+    let h = f.backend.create(&meta("del3-normal"), None).await.unwrap();
+    h.append(&arcs(&events()), None).await.unwrap();
+    h.close().await.unwrap();
+    let h = f
+        .backend
+        .open(&"del3-normal".into(), SessionAccess::Write, None)
+        .await
+        .unwrap();
+    h.close().await.unwrap();
+    f.backend.trash(&"del3-normal".into()).await.unwrap();
+    f.finish().await;
+}
+
+#[tokio::test]
+async fn del3_failed_final_append_keeps_the_writer_and_blocks_repeated_trash() {
+    let armed = Arc::new(AtomicBool::new(false));
+    let flag = armed.clone();
+    let hook: IoHook = Arc::new(move |r| {
+        let fail = flag.load(Ordering::SeqCst)
+            && !r.after
+            && r.operation == IoOperation::Write
+            && r.path.ends_with(".jsonl");
+        Box::pin(async move {
+            if fail {
+                Err(std::io::Error::other("tail write failed").into())
+            } else {
+                Ok(())
+            }
+        })
+    });
+    let f = Fixture::with_hook(JsonlCompression::None, Some(hook)).await;
+    let id = "del3-tail".into();
+    let h = f.backend.create(&meta("del3-tail"), None).await.unwrap();
+    h.append(&arcs(&events()), None).await.unwrap();
+    f.backend.prepare_delete(&id).await.unwrap();
+    let live = testing::writer(&f.backend, &id).unwrap();
+    live.enqueue_live(
+        &hoh_session::SessionEvent::from_value(event("turn/start", 2, json!({"turn":2}))),
+        Arc::new(|_| {}),
+    );
+    armed.store(true, Ordering::SeqCst);
+    assert!(h.close().await.is_err());
+    assert!(
+        f.backend.trash(&id).await.is_err(),
+        "first Delete moved a truncated log"
+    );
+    assert!(
+        f.backend.trash(&id).await.is_err(),
+        "repeated Delete moved a truncated log"
+    );
+    armed.store(false, Ordering::SeqCst);
+    h.close().await.unwrap();
+    f.backend.trash(&id).await.unwrap();
+    f.finish().await;
+}
+
+#[tokio::test]
+async fn del4_failed_sync_and_rollback_never_trash_duplicate_sequence() {
+    let armed = Arc::new(AtomicBool::new(false));
+    let flag = armed.clone();
+    let hook: IoHook = Arc::new(move |r| {
+        let fail = flag.load(Ordering::SeqCst)
+            && !r.after
+            && r.path.ends_with(".jsonl")
+            && matches!(r.operation, IoOperation::Sync | IoOperation::Truncate);
+        Box::pin(async move {
+            if fail {
+                Err(std::io::Error::other("injected sync or rollback failure").into())
+            } else {
+                Ok(())
+            }
+        })
+    });
+    let f = Fixture::with_hook(JsonlCompression::None, Some(hook)).await;
+    let id = "del4-duplicate".into();
+    let h = f
+        .backend
+        .create(&meta("del4-duplicate"), None)
+        .await
+        .unwrap();
+    h.append(&arcs(&events()), None).await.unwrap();
+    f.backend.prepare_delete(&id).await.unwrap();
+    let live = testing::writer(&f.backend, &id).unwrap();
+    live.enqueue_live(
+        &hoh_session::SessionEvent::from_value(event("turn/start", 2, json!({"turn":2}))),
+        Arc::new(|_| {}),
+    );
+    armed.store(true, Ordering::SeqCst);
+    assert!(h.close().await.is_err());
+    assert!(f.backend.trash(&id).await.is_err());
+    armed.store(false, Ordering::SeqCst);
+    f.backend.prepare_delete(&id).await.unwrap();
+    assert!(
+        f.backend.trash(&id).await.is_err(),
+        "a duplicate sequence must not be moved to trash"
+    );
+    assert!(std::path::Path::new(&f.path("del4-duplicate")).exists());
+    f.finish().await;
+}
+
+#[tokio::test]
+async fn del4_failed_prepare_restores_normal_close_after_another_write_failure() {
+    let armed = Arc::new(AtomicBool::new(false));
+    let flag = armed.clone();
+    let hook: IoHook = Arc::new(move |r| {
+        let fail = flag.load(Ordering::SeqCst)
+            && !r.after
+            && r.operation == IoOperation::Write
+            && r.path.ends_with(".jsonl");
+        Box::pin(async move {
+            if fail {
+                Err(std::io::Error::other("injected write failure").into())
+            } else {
+                Ok(())
+            }
+        })
+    });
+    let f = Fixture::with_hook(JsonlCompression::None, Some(hook)).await;
+    let id = "del4-prepare".into();
+    let h = f.backend.create(&meta("del4-prepare"), None).await.unwrap();
+    h.append(&arcs(&events()), None).await.unwrap();
+    let live = testing::writer(&f.backend, &id).unwrap();
+    live.enqueue_live(
+        &hoh_session::SessionEvent::from_value(event("turn/start", 2, json!({"turn":2}))),
+        Arc::new(|_| {}),
+    );
+    armed.store(true, Ordering::SeqCst);
+    assert!(f.backend.prepare_delete(&id).await.is_err());
+    assert!(h.close().await.is_err());
+    armed.store(false, Ordering::SeqCst);
+    let resumed = f
+        .backend
+        .open(&id, SessionAccess::Write, None)
+        .await
+        .expect("normal close must release the writer after a rejected Delete");
+    resumed.close().await.unwrap();
+    f.finish().await;
+}

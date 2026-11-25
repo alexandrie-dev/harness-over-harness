@@ -1,0 +1,8 @@
+--- a/web/components/ThreadContextChip.tsx
++++ b/web/components/ThreadContextChip.tsx
+@@ -49 +49 @@
+-            aria-label={gt("Thread, {title}", { title })}
++            aria-label={gt("Chat, {title}", { title })}
+@@ -67 +67 @@
+-          : gt("Open thread")}
++          : gt("Open chat")}

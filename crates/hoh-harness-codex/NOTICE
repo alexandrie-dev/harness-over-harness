@@ -1,0 +1,5 @@
+Portions of the protocol mapping are adapted from T3 Code's Codex adapter.
+T3 Code is distributed under the MIT License.
+
+The Codex app-server protocol is an OpenAI interface; this crate contains no OpenAI code,
+credentials, or bundled executable.

@@ -243,3 +243,7 @@ ui/src/protocol.ts — только разрешённые окну методы
 - Методов нет в `hoh-protocol` моего дерева (у o1 есть): заглушка проверяет их сама до `validate_params`. Имена и формы взяты из `protocol/fixtures/hoh-executor-*.json` дерева o1. Расхождение, найденное ревью Fable 144603: `access/set` отвечал `{mode}` без `executor`, хост отвергал такой ответ; с i8b ответ `{executor:"claude", mode}`, как у движка и в фикстуре (тест `executor_access_set_answers_the_engine_result`).
 - Окно: умолчание режима доступа — одна константа `DEFAULT_ACCESS_MODE` в `ui/src/lib/executor.mjs` (сейчас `confirm`); окно берёт её, только если движок не назвал действующий режим.
 - Тесты: `claude_executor_is_discovered_selected_and_runs_new_chats`.
+
+## HOH-40 (i7, 22.11)
+
+- Флаги `hoh/executor/access/get` (confirm и full) называют `--setting-sources user,project,local`, как движок после HOH-40 (`hoh-harness-claude`, `PERSONAL_SETTING_SOURCES`). Тесты `confirm_flags_are_those_of_the_real_launch` и `every_hoh_method_uses_fixture_result` ждут это значение.

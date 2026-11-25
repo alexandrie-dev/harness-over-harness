@@ -1,0 +1,51 @@
+/* Golden Canon Grid окна HoH (HOH-41): единственное место, где живут линии сетки. Выбор основателя, 05.11; эталон — edu/app/web/tokens.css.
+   20 дорожек, сумма ровно 64, одни и те же для столбцов и строк; линии g1..g21: --gc-x<N> — N-я линия по ширине окна,
+   --gc-y<N> — по высоте. Блоки окна ставятся только на эти линии (grid/frame.css, hoh-screens/home.css, notch/notch.css);
+   проверка — scripts/check-grid.mjs (в сборке рядом с check-dist), её список блоков — grid/blocks.ts. Числа меняются только здесь. */
+:root {
+  --gc-tracks: [g1] minmax(0,1fr) [g2] minmax(0,1fr) [g3] minmax(0,2fr) [g4] minmax(0,4fr) [g5] minmax(0,2.66667fr) [g6] minmax(0,5.33333fr) [g7] minmax(0,5.33333fr) [g8] minmax(0,4.33333fr) [g9] minmax(0,2.83333fr) [g10] minmax(0,3.5fr) [g11] minmax(0,3.5fr) [g12] minmax(0,2.83333fr) [g13] minmax(0,4.33333fr) [g14] minmax(0,5.33333fr) [g15] minmax(0,5.33333fr) [g16] minmax(0,2.66667fr) [g17] minmax(0,4fr) [g18] minmax(0,2fr) [g19] minmax(0,1fr) [g20] minmax(0,1fr) [g21];
+  --gc-vh: 100dvh; /* окно HoH не делает пола в 640 px, как эталон: ряды масштабируются по высоте окна, как столбцы по ширине */
+
+  --gc-x1: 0vw;
+  --gc-x2: 1.5625vw;
+  --gc-x3: 3.125vw;
+  --gc-x4: 6.25vw;
+  --gc-x5: 12.5vw;
+  --gc-x6: 16.66667vw;
+  --gc-x7: 25vw;
+  --gc-x8: 33.33333vw;
+  --gc-x9: 40.10417vw;
+  --gc-x10: 44.53125vw;
+  --gc-x11: 50vw;
+  --gc-x12: 55.46875vw;
+  --gc-x13: 59.89583vw;
+  --gc-x14: 66.66667vw;
+  --gc-x15: 75vw;
+  --gc-x16: 83.33333vw;
+  --gc-x17: 87.5vw;
+  --gc-x18: 93.75vw;
+  --gc-x19: 96.875vw;
+  --gc-x20: 98.4375vw;
+  --gc-x21: 100vw;
+  --gc-y1: calc(var(--gc-vh) * 0);
+  --gc-y2: calc(var(--gc-vh) * 0.01562);
+  --gc-y3: calc(var(--gc-vh) * 0.03125);
+  --gc-y4: calc(var(--gc-vh) * 0.0625);
+  --gc-y5: calc(var(--gc-vh) * 0.125);
+  --gc-y6: calc(var(--gc-vh) * 0.16667);
+  --gc-y7: calc(var(--gc-vh) * 0.25);
+  --gc-y8: calc(var(--gc-vh) * 0.33333);
+  --gc-y9: calc(var(--gc-vh) * 0.40104);
+  --gc-y10: calc(var(--gc-vh) * 0.44531);
+  --gc-y11: calc(var(--gc-vh) * 0.5);
+  --gc-y12: calc(var(--gc-vh) * 0.55469);
+  --gc-y13: calc(var(--gc-vh) * 0.59896);
+  --gc-y14: calc(var(--gc-vh) * 0.66667);
+  --gc-y15: calc(var(--gc-vh) * 0.75);
+  --gc-y16: calc(var(--gc-vh) * 0.83333);
+  --gc-y17: calc(var(--gc-vh) * 0.875);
+  --gc-y18: calc(var(--gc-vh) * 0.9375);
+  --gc-y19: calc(var(--gc-vh) * 0.96875);
+  --gc-y20: calc(var(--gc-vh) * 0.98438);
+  --gc-y21: calc(var(--gc-vh) * 1);
+}

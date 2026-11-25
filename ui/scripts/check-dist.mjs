@@ -1,5 +1,6 @@
 import { readdir, readFile, stat } from 'node:fs/promises';
-import { join } from 'node:path';
+import { existsSync } from 'node:fs';
+import { join, relative } from 'node:path';
 import assert from 'node:assert/strict';
 import { gzipSync } from 'node:zlib';
 
@@ -21,12 +22,34 @@ const inertNames = new Set([
       'theme-changed', 'window-created', 'suspended', 'resumed', 'webview-created',
       'drag-enter', 'drag-over', 'drag-drop', 'drag-leave'].map(name => 'tauri://' + name),
 ]);
+// Вход окна на веб-клиенте T3 (HOH-40, `vite build --mode t3`): dist/index.html, dist/boot-theme.js, dist/hoh-defaults.js, dist/t3-assets/**.
+// Для него те же правила (ни одного внешнего адреса, кроме перечисленных; без eval/new Function), адреса из текста T3 —
+// только из проверенного списка src/t3-entry/dist-urls.txt; пределы размера прежней оболочки к нему не относятся.
+const t3Build = existsSync('dist/t3-assets');
+const isT3 = path => t3Build && (path === join('dist', 'index.html') || path === join('dist', 'boot-theme.js') || path === join('dist', 'hoh-defaults.js') || path.startsWith(join('dist', 't3-assets') + '/'));
+// Подстановка `${…}` в адресе — имя, которое минификатор даёт заново при каждой сборке; сверяется адрес без неё.
+const urlShape = value => value.replace(/\$\{[^}]*\}?/g, '${}');
+const t3Urls = new Set(existsSync('src/t3-entry/dist-urls.txt')
+  ? (await readFile('src/t3-entry/dist-urls.txt', 'utf8')).split('\n').map(line => line.trim()).filter(line => line && !line.startsWith('#')).map(urlShape)
+  : []);
+const t3Unknown = new Set();
+// Страницы поставки (ревью 222000, решение CEO 22.11 22:40): клиент T3 (index.html), прежняя оболочка (legacy.html, только
+// при HOH_WINDOW_SHELL=legacy) и окно подтверждения (approval.html, только своё окно). Страницы проверок — firstrun.html,
+// probe.html (`vite build --mode probe`) — в поставку не идут: такая dist сюда не проходит.
+const WINDOW_PAGES = new Set(['index.html', 'legacy.html', 'approval.html']);
+for (const path of await files('dist')) {
+  const page = relative('dist', path);
+  if (page.endsWith('.html')) assert(WINDOW_PAGES.has(page), `страница не окна в dist: ${page}`);
+}
+let t3Total = 0;
+let t3Compressed = 0;
 let total = 0;
 let compressed = 0;
 for (const path of await files('dist')) {
   const bytes = await readFile(path);
   if (!/\.(?:html|css|js)$/.test(path)) continue;
-  total += bytes.length;
+  const t3 = isT3(path);
+  if (!t3) total += bytes.length;
   const source = bytes.toString();
   // Every URL-like value is rejected except exact inert namespace/event names
   // and the first-run loopback configuration. No remote diagnostic URLs allowed.
@@ -39,12 +62,20 @@ for (const path of await files('dist')) {
     const value = scheme + match[0];
     // Without a scheme only a real host counts (host.tld, localhost, IPv4, [IPv6]); a regex tail such as //g,r=/ is code, not an address.
     if (!scheme && !/^\/\/(?:(?:[a-z0-9-]+\.)+[a-z]{2,}(?=[/:?#]|$)|localhost\b|\d{1,3}(?:\.\d{1,3}){3}\b|\[)/i.test(match[0])) continue;
+    if (t3) { if (!inertNames.has(value) && !t3Urls.has(urlShape(value))) t3Unknown.add(value); continue; }
     assert(inertNames.has(value), `external URL ${value} in ${path}`);
+  }
+  assert(!/\beval\s*\(|\bnew\s+Function\s*\(/.test(source), `dynamic code in ${path}`);
+  if (t3) {
+    t3Total += bytes.length;
+    t3Compressed += gzipSync(bytes).length;
+    continue;
   }
   compressed += gzipSync(bytes).length;
   assert(bytes.length < 512 * 1024, `unexpectedly large individual text asset: ${path}`);
-  assert(!/\beval\s*\(|\bnew\s+Function\s*\(/.test(source), `dynamic code in ${path}`);
 }
+assert(t3Unknown.size === 0, `T3 entry: ${t3Unknown.size} external URLs not in src/t3-entry/dist-urls.txt:\n${[...t3Unknown].sort().join('\n')}`);
+if (t3Build) console.log(`T3 entry: text ${t3Total}, gzip ${t3Compressed} bytes, reviewed URLs ${t3Urls.size}`);
 // Package 1's empty-shell cap covered one screen; this build has chat, first run
 // and approval entries. Keep both a whole-window cap and a compressed payload cap.
 // 20.11.2026 отображение чата как в T3 (решение основателя 20.11): предел на один файл 256 -> 512 КиБ (кусок разметки react-markdown + remark 388 КБ; katex 259 КБ).
@@ -63,4 +94,47 @@ assert(total < 1368 * 1024, `window text assets unexpectedly large: ${total} byt
 // 20.11.2026, меню режима доступа из T3 (@base-ui/react/menu): было 360808/378075, стало 409703/430188 (предел = факт + 5 %).
 const GZIP_LIMIT = 430188;
 assert(compressed < GZIP_LIMIT, `window compressed text assets unexpectedly large: ${compressed} bytes`);
+// CSP окна (apps/hoh-desktop/tauri.conf.json; решение CEO 22.11 20:00): наружу закрыто всё. У каждой директивы — только
+// перечисленные источники; адрес сети, схема http(s)/ws(s), `*`, 'unsafe-eval' или директива не из списка роняют проверку.
+// T3 использует локальный WASM-подсветчик @pierre/highlights. WebKitGTK блокирует WebAssembly.Instance без узкого
+// 'wasm-unsafe-eval'; он разрешает компиляцию WASM, но не строковый JavaScript eval и не добавляет внешний источник.
+// Директивы без строки (media-src, worker-src, manifest-src …) берут default-src 'self'.
+const CSP_ALLOWED = {
+  'default-src': ["'self'"],
+  'script-src': ["'self'", "'wasm-unsafe-eval'"],
+  // T3 пишет style="" в разметке и <style> тем оформления (Appearance).
+  'style-src': ["'self'", "'unsafe-inline'"],
+  // data: — шрифты, которые просмотр PDF в T3 (pdf.js) вшивает в страницу как data:font/opentype.
+  'font-src': ["'self'", 'data:'],
+  // data: — значки и картинки в тексте T3; blob: — превью картинок и вложений (URL.createObjectURL).
+  'img-src': ["'self'", 'data:', 'blob:'],
+  // только мост Tauri к хосту HoH (ui/src/hoh-host); http://hoh.local и ws://hoh.local отвечает хост в странице, в сеть не уходят.
+  'connect-src': ['ipc:', 'http://ipc.localhost'],
+  'object-src': ["'none'"],
+  'frame-src': ["'none'", 'hoh-preview:'],
+  'base-uri': ["'none'"],
+  'form-action': ["'none'"],
+};
+const CSP_REQUIRED = ['default-src', 'script-src', 'connect-src', 'img-src', 'font-src', 'object-src', 'frame-src', 'base-uri', 'form-action'];
+// Конфиг окна — рядом с ui/ (путь от этого файла); HOH_TAURI_CONF — только для проверки самой проверки (tests/chat/dist-check.test.mjs).
+const tauriConf = JSON.parse(await readFile(process.env.HOH_TAURI_CONF ?? new URL('../../apps/hoh-desktop/tauri.conf.json', import.meta.url), 'utf8'));
+const security = tauriConf.app?.security ?? {};
+assert(typeof security.csp === 'string', 'окно без CSP');
+assert(!('dangerousDisableAssetCspModification' in security), 'CSP окна ослаблен настройкой tauri.conf.json');
+const cspEntries = security.csp.split(';').map(part => part.trim()).filter(Boolean)
+  .map(part => { const [name, ...sources] = part.split(/\s+/); return [name.toLowerCase(), sources]; });
+// Браузер применяет первую одноимённую директиву и молча пропускает повторы; Object.fromEntries взял бы последнюю —
+// повтор любой директивы роняет проверку, иначе опасная первая запись прошла бы под безопасной последней.
+for (const [index, [name]] of cspEntries.entries())
+  assert(cspEntries.findIndex(([other]) => other === name) === index, `CSP окна: директива ${name} повторяется`);
+const csp = Object.fromEntries(cspEntries);
+assert.deepEqual(csp['default-src'], ["'self'"], "CSP окна: default-src не 'self'");
+for (const name of CSP_REQUIRED) assert(name in csp, `CSP окна: нет ${name}`);
+assert.deepEqual(csp['script-src'], ["'self'", "'wasm-unsafe-eval'"],
+  "CSP окна: script-src должен разрешать только self и локальную компиляцию WASM");
+for (const [name, sources] of Object.entries(csp)) {
+  assert(name in CSP_ALLOWED, `CSP окна: директива ${name} не из списка`);
+  for (const source of sources) assert(CSP_ALLOWED[name].includes(source), `CSP окна: ${name} ${source} — источник не из списка`);
+}
+console.log(`CSP окна закрыт наружу: ${Object.keys(csp).join(', ')}`);
 console.log(`passed: dist has no external network URLs or dynamic code; text ${total}/${1368 * 1024}, gzip ${compressed}/${GZIP_LIMIT} bytes`);

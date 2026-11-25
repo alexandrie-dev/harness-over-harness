@@ -1,0 +1,32 @@
+--- a/web/components/chat/useComposerSend.ts
++++ b/web/components/chat/useComposerSend.ts
+@@ -419,0 +420,5 @@
++    const interactionMode =
++      useComposerDraftStore.getState().getComposerDraft(composerDraftTarget)?.interactionMode ??
++      draftThread?.interactionMode ??
++      activeThread?.interactionMode ??
++      DEFAULT_INTERACTION_MODE;
+@@ -561 +566 @@
+-          title: m(msg("Attached thread is on another machine")),
++          title: m(msg("Attached chat is on another machine")),
+@@ -751 +756 @@
+-            msg("Multiple models need a new thread in a Git project. Each gets its own worktree."),
++            msg("Multiple models need a new chat in a Git project. Each gets its own worktree."),
+@@ -853 +858 @@
+-            title: m(msg("Start a Codex thread first")),
++            title: m(msg("Start a Codex chat first")),
+@@ -1103 +1108 @@
+-          m(msg("This connection cannot change threads.")),
++          m(msg("This connection cannot change chats.")),
+@@ -1395 +1400 @@
+-        interactionMode: DEFAULT_INTERACTION_MODE,
++        interactionMode,
+@@ -1449 +1454 @@
+-                      interactionMode: DEFAULT_INTERACTION_MODE,
++                      interactionMode,
+@@ -1498 +1503 @@
+-          interactionMode: DEFAULT_INTERACTION_MODE,
++          interactionMode,
+@@ -1671 +1676 @@
+-                  : m(msg("Could not start thread")),
++                  : m(msg("Could not start chat")),

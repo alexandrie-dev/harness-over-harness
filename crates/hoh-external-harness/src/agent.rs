@@ -39,9 +39,11 @@ use tokio_util::sync::CancellationToken;
 
 use crate::contract::{
     AccessMode, ApprovalDecision, ApprovalMode, EndReason, FileChange, FileChangeKind,
-    HarnessAction, HarnessEvent, HarnessFailure, HarnessPolicy, HarnessQuestion, HarnessResponse,
-    ItemOutcome, NativeSessionId, NetworkAccess, PromptParams, QuestionAnswer, RespondParams,
-    SandboxMode, StartParams, code,
+    HarnessAction, HarnessBackgroundTask, HarnessEvent, HarnessFailure, HarnessPolicy,
+    HarnessQuestion, HarnessResponse, HarnessTelemetry, HarnessTelemetryRecord,
+    HarnessWorkflowProgress, InteractionMode, ItemOutcome, NativeSessionId, NetworkAccess,
+    PromptImage, PromptParams, QuestionAnswer, RespondParams, SandboxMode, StartParams,
+    TELEMETRY_RECORD, code,
 };
 use crate::executor::{BINDING_RECORD, Launched, Shared};
 use crate::harness::HarnessSession;
@@ -54,6 +56,107 @@ fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
 const MAX_OUTPUT_CHARS: usize = 64 * 1024;
 const MAX_HEADLINE_CHARS: usize = 600;
 const MAX_DETAILS_CHARS: usize = 3600;
+/// Telemetry is durable and provider-controlled: bound every display string, every repeated
+/// collection, and the final encoded record before it reaches the session log.
+const MAX_TELEMETRY_TEXT_BYTES: usize = 4 * 1024;
+const MAX_TELEMETRY_ITEMS: usize = 256;
+const MAX_TELEMETRY_RECORD_BYTES: usize = 64 * 1024;
+
+fn telemetry_text(text: &str) -> String {
+    let mut text = redact(text);
+    if text.len() > MAX_TELEMETRY_TEXT_BYTES {
+        let mut end = MAX_TELEMETRY_TEXT_BYTES;
+        while !text.is_char_boundary(end) {
+            end -= 1;
+        }
+        text.truncate(end);
+    }
+    text
+}
+
+fn scrub_background_task(task: &mut HarnessBackgroundTask) {
+    task.task_type = task.task_type.as_deref().map(telemetry_text);
+    task.description = task.description.as_deref().map(telemetry_text);
+}
+
+fn scrub_workflow_progress(progress: &mut HarnessWorkflowProgress) {
+    progress.kind = telemetry_text(&progress.kind);
+    progress.title = progress.title.as_deref().map(telemetry_text);
+    progress.label = progress.label.as_deref().map(telemetry_text);
+    progress.state = progress.state.as_deref().map(telemetry_text);
+    progress.phase_title = progress.phase_title.as_deref().map(telemetry_text);
+    progress.model = progress.model.as_deref().map(telemetry_text);
+    progress.prompt_preview = progress.prompt_preview.as_deref().map(telemetry_text);
+    progress.result_preview = progress.result_preview.as_deref().map(telemetry_text);
+}
+
+/// Redact only payload display/free-text: provenance and task/message/run ids are identities and
+/// must remain byte-for-byte provider values. A repeated collection over the limit is rejected
+/// whole, so a complete roster can never become a believable partial snapshot.
+fn prepare_telemetry(record: &mut HarnessTelemetryRecord) -> Result<(), &'static str> {
+    match &mut record.payload {
+        HarnessTelemetry::AssistantUsage { .. } => {}
+        HarnessTelemetry::ResultUsage {
+            model_usage,
+            user_message_uuids,
+            origin,
+            ..
+        } => {
+            if model_usage
+                .as_ref()
+                .is_some_and(|models| models.len() > MAX_TELEMETRY_ITEMS)
+            {
+                return Err("too many model usage entries");
+            }
+            if user_message_uuids.len() > MAX_TELEMETRY_ITEMS {
+                return Err("too many echoed user message ids");
+            }
+            if let Some(models) = model_usage {
+                for model in models {
+                    model.model = telemetry_text(&model.model);
+                }
+            }
+            *origin = origin.as_deref().map(telemetry_text);
+        }
+        HarnessTelemetry::McpServers { servers } => {
+            if servers.len() > MAX_TELEMETRY_ITEMS {
+                return Err("too many MCP servers");
+            }
+            for server in servers {
+                server.name = telemetry_text(&server.name);
+                server.status = server.status.as_deref().map(telemetry_text);
+            }
+        }
+        HarnessTelemetry::BackgroundTask { update } => {
+            if update.workflow_progress.len() > MAX_TELEMETRY_ITEMS {
+                return Err("too many workflow progress entries");
+            }
+            update.subtype = telemetry_text(&update.subtype);
+            update.status = update.status.as_deref().map(telemetry_text);
+            update.summary = update.summary.as_deref().map(telemetry_text);
+            scrub_background_task(&mut update.task);
+            for progress in &mut update.workflow_progress {
+                scrub_workflow_progress(progress);
+            }
+        }
+        HarnessTelemetry::BackgroundTaskUpdated { patch, .. } => {
+            patch.status = patch.status.as_deref().map(telemetry_text);
+        }
+        HarnessTelemetry::BackgroundTasksSnapshot { tasks } => {
+            if tasks.len() > MAX_TELEMETRY_ITEMS {
+                return Err("too many background tasks");
+            }
+            for task in tasks {
+                scrub_background_task(task);
+            }
+        }
+    }
+    let encoded = serde_json::to_vec(record).map_err(|_| "cannot encode telemetry")?;
+    if encoded.len() > MAX_TELEMETRY_RECORD_BYTES {
+        return Err("telemetry record is too large");
+    }
+    Ok(())
+}
 
 /// `approval: never` is built in (feature `never-mode`). Off by default until it passes its own
 /// review: the slot then refuses to start a native session under `never`, and nothing in the slot
@@ -74,16 +177,26 @@ pub(crate) fn access_text(executor: &str, access: AccessMode) -> String {
     let name = display_name(executor);
     match access {
         AccessMode::Confirm => format!(
-            "С подтверждением: команды, правки файлов и сеть {name} выполняет после вашего \
-             подтверждения"
+            "Supervised: {name} asks before running commands, editing files, or using the network"
         ),
-        AccessMode::Full => format!("Полный доступ: {name} выполняет команды без вопросов"),
+        AccessMode::AutoAcceptEdits => format!(
+            "Auto-accept edits: {name} edits files without asking; commands and expanded access require your approval"
+        ),
+        AccessMode::AcceptEdits => format!(
+            "Accept edits: {name} edits files in the conversation folder without asking; commands and network access require your approval"
+        ),
+        AccessMode::Auto => format!(
+            "Auto: {name} decides what is safe and does it without asking; other actions require your approval"
+        ),
+        AccessMode::Full => format!("Full access: {name} runs commands without asking"),
     }
 }
 
 /// The policy a native session is started with under `access`. [`AccessMode::Confirm`] caps the
-/// configured sandbox and network to the safe default (the folder, no network): the
-/// configuration does not widen what the user chose. [`AccessMode::Full`] runs without the
+/// configured sandbox and automatic network access to the safe default. Claude is the narrow
+/// exception: WebFetch/WebSearch stay present but each use is decided through its user permission
+/// callback; Codex and every other executor keep this denied network policy. The configuration
+/// does not widen what the user chose. [`AccessMode::Full`] runs without the
 /// CLI's sandbox and with the network, except a session configured read-only: it stays read-only
 /// with its own network (review 232500, item 4; as `hoh-harness-claude` launches it).
 pub(crate) fn launch_policy(configured: &HarnessPolicy, access: AccessMode) -> HarnessPolicy {
@@ -98,7 +211,10 @@ pub(crate) fn launch_policy(configured: &HarnessPolicy, access: AccessMode) -> H
             approval: ApprovalMode::OnRequest,
             network: NetworkAccess::Allowed,
         },
-        AccessMode::Confirm => HarnessPolicy {
+        AccessMode::Confirm
+        | AccessMode::AutoAcceptEdits
+        | AccessMode::AcceptEdits
+        | AccessMode::Auto => HarnessPolicy {
             sandbox: match configured.sandbox {
                 SandboxMode::FullAccess => SandboxMode::WorkspaceWrite,
                 other => other,
@@ -119,13 +235,7 @@ pub(crate) fn display_name(executor: &str) -> String {
 
 /// What `approval: never` lets pass without a question, word for word as the consent question
 /// says it (see [`ExternalAgent::within_workspace`] and the classifier).
-const NEVER_RULE: &str = "Без вопроса пройдут только: команда, у которой рабочая папка и все \
-    пути в аргументах, значениях флагов и перенаправлениях лежат в папке сессии, без сетевых \
-    программ (curl, ssh, git push, npm install и т. п.), без переменных, подстановок, шаблонов, \
-    cd, обёрток (sudo, env, xargs) и кода в аргументах (sh -c, python -c, awk), и которую \
-    классификатор не считает удаляющей или перезаписывающей файлы; создание и правка файлов в \
-    папке сессии без удаления и без переноса поверх существующего файла. Удаления, пути вне \
-    папки, сеть, другие инструменты исполнителя и запросы прав он спросит";
+const NEVER_RULE: &str = "This applies only to commands whose working folder, argument paths, flag values and redirects stay inside the session folder. It excludes network programs, variables, substitutions, patterns, cd, wrappers and code passed as arguments. The classifier must also find no risk of deletion or overwrite. Creating or editing files inside the session folder can proceed unless it deletes a file or moves a file over an existing one. Other tools, paths outside the folder and requests for more permissions still require approval";
 /// How long the end of a turn waits for its approval and question tasks to settle.
 const TASK_SETTLE: Duration = Duration::from_secs(10);
 /// The `turn/end` error code of a turn whose opening events could not be written.
@@ -143,6 +253,7 @@ pub(crate) struct ExternalAgent {
     options: AgentOptions,
     model: ExternalModel,
     inbox: ExternalInbox,
+    deletion_gate: hoh_agent::DeletionGate,
     status: watch::Sender<AgentStatus>,
     wake: Notify,
     state: Mutex<State>,
@@ -167,6 +278,14 @@ struct State {
     held: bool,
     /// The session is being unloaded: no turn starts any more.
     closed: bool,
+    /// The effort level of the turns (HOH-40): the one the last prompt named, when the harness
+    /// has it; a turn without a prompt of its own keeps it.
+    effort: Option<String>,
+    /// Access snapshotted for the last accepted prompt. A later choice affects only a later
+    /// prompt, even when this turn waited in the inbox.
+    access: AccessMode,
+    /// T3's interaction mode for the current turn. A wake without a prompt keeps it.
+    interaction_mode: InteractionMode,
 }
 
 pub(crate) struct NewAgent {
@@ -183,6 +302,10 @@ pub(crate) struct NewAgent {
 
 impl ExternalAgent {
     pub(crate) fn new(init: NewAgent) -> Arc<ExternalAgent> {
+        init.shared
+            .choices
+            .serve_prompts(init.session.id().as_ref(), &init.shared.name);
+        let access = init.shared.access_for(init.session.id().as_ref());
         let model = ExternalModel {
             provider: init.shared.name.clone(),
             model: Mutex::new(init.model.clone()),
@@ -199,12 +322,14 @@ impl ExternalAgent {
             options: init.options,
             model,
             inbox: ExternalInbox::default(),
+            deletion_gate: hoh_agent::DeletionGate::default(),
             status: watch::channel(AgentStatus::Idle).0,
             wake: Notify::new(),
             state: Mutex::new(State {
                 last_turn: init.last_turn,
                 native: init.native,
                 recorded_model: init.model,
+                access,
                 ..State::default()
             }),
             revision: AtomicU64::new(0),
@@ -241,12 +366,14 @@ impl ExternalAgent {
         }
     }
 
-    /// The next chunk of a live text; nothing for an empty piece.
+    /// The next chunk of visible live content. Claude can report a thinking block before it is
+    /// allowed to reveal its text; the first empty reasoning chunk still opens T3's live
+    /// `Thinking` item, matching ClaudeAdapterV2's `content_block_start` handling.
     fn emit_frame_of(&self, live: &mut LiveText, piece: &str) {
-        if piece.is_empty() {
+        if piece.is_empty() && (live.kind == LiveKind::Text || live.chunks > 0) {
             return;
         }
-        let Some(chunk) = text_delta(piece) else {
+        let Some(chunk) = visible_delta(live.kind, piece) else {
             return;
         };
         self.emit_frame(AssistantStreamFrame::Chunk {
@@ -324,6 +451,24 @@ impl ExternalAgent {
         }
     }
 
+    /// Preserve bounded, redacted provider telemetry as an ignorable session record. The
+    /// concrete adapter selects typed-safe fields; this common boundary enforces durable-log
+    /// safety for every adapter without rewriting provider identities.
+    fn record_telemetry(&self, mut record: HarnessTelemetryRecord) {
+        if let Err(reason) = prepare_telemetry(&mut record) {
+            self.ctx
+                .logger()
+                .warn(format_args!("dropping harness telemetry: {reason}"));
+            return;
+        }
+        let data = json!({"harness": self.shared.name, "record": record});
+        if let Err(error) = append_plugin_record(&self.session, TELEMETRY_RECORD, data) {
+            self.ctx
+                .logger()
+                .warn(format_args!("cannot record harness telemetry: {error}"));
+        }
+    }
+
     // ---- driver --------------------------------------------------------------------------
 
     /// Take the next turn's input and open its abort under one lock.
@@ -381,7 +526,35 @@ impl ExternalAgent {
                 tokio::select! {
                     () = &mut notified => continue,
                     () = token.cancelled() => break,
+                    event = async {
+                        match live.as_mut() {
+                            Some(session) if !session.dead => session.events.recv().await,
+                            _ => std::future::pending().await,
+                        }
+                    } => {
+                        if let Some(session) = live.as_mut() {
+                            match event {
+                                None | Some(HarnessEvent::SessionEnded { .. }) => {
+                                    session.dead = true;
+                                    self.shared.forget_launch(self.id.as_ref(), &session.control);
+                                }
+                                Some(HarnessEvent::NativeSession { native_session_id }) => {
+                                    self.record_native(&native_session_id, None);
+                                }
+                                Some(HarnessEvent::ApprovalRequested { request_id, .. })
+                                | Some(HarnessEvent::QuestionAsked { request_id, .. }) => {
+                                    let withdrawn = respond(&self, &session.control, request_id, HarnessResponse::Cancelled);
+                                    let _ = tokio::time::timeout(self.interrupt_grace(), withdrawn).await;
+                                }
+                                Some(other) => self.ctx.logger().debug(format_args!(
+                                    "dropped a harness event between turns: {}",
+                                    js_json_stringify(&redact_value(&json!(other)))
+                                )),
+                            }
+                        }
+                    }
                 }
+                continue;
             };
             self.emit_status(AgentStatus::Running);
             self.run_turn(&mut live, input, &abort).await;
@@ -465,6 +638,7 @@ impl ExternalAgent {
             self.emit_error(turn, step, error);
             return;
         }
+        self.take_prompt_choices(&input);
         let messages = input.messages;
         let mut log = TurnLog::new(self.clone(), turn, step, signal.clone());
         let outcome = self.native_turn(live, &mut log, &messages, &signal).await;
@@ -485,13 +659,14 @@ impl ExternalAgent {
                 json!({"kind": "error", "error": {"message": failure.message, "code": failure.code}})
             }
         };
+        let mut end = json!({"turn": turn, "reason": reason});
+        if let Some(usage) = log.usage {
+            end["usage"] = json!(usage);
+        }
         let closed = self
             .session
             .append("step/end", json!({"turn": turn, "step": step}), None)
-            .and_then(|_| {
-                self.session
-                    .append("turn/end", json!({"turn": turn, "reason": reason}), None)
-            });
+            .and_then(|_| self.session.append("turn/end", end, None));
         if let Err(error) = closed {
             self.ctx
                 .logger()
@@ -524,12 +699,40 @@ impl ExternalAgent {
             return TurnOutcome::Failed(HarnessFailure::new(code::CLOSED, "no harness session"));
         };
         let turn_id = format!("{}#{}", self.id, log.turn);
+        let images = match prompt_images(&self.ctx, messages, signal).await {
+            Ok(images) => images,
+            Err(failure) => return TurnOutcome::Failed(failure),
+        };
+        let checked = match self
+            .shared
+            .ctx
+            .get::<hoh_working_directory::WorkingDirectoryKey>()
+        {
+            Some(service) => service.verify_for_spawn(&self.session),
+            None => hoh_working_directory::verify_session_directory(&self.session, &self.cwd()),
+        };
+        match checked {
+            Ok((cwd, identity)) if cwd == session.cwd && identity == session.cwd_identity => {}
+            Ok(_) => {
+                return TurnOutcome::Failed(HarnessFailure::new(
+                    code::IO,
+                    "Рабочая папка разговора изменилась до отправки сообщения",
+                ));
+            }
+            Err(error) => {
+                return TurnOutcome::Failed(HarnessFailure::new(
+                    code::IO,
+                    format!("Рабочая папка разговора недоступна: {error}"),
+                ));
+            }
+        }
         // The answer to the prompt is awaited together with the events: a harness may stream
         // the turn before it answers, and a stop before the answer must not be lost.
         let mut prompt = session.control.prompt(PromptParams {
             session_id: self.id.to_string(),
             turn_id: turn_id.clone(),
             text: prompt_text(messages),
+            images,
         });
         let mut prompted = false;
         let mut deadline: Option<tokio::time::Instant> = None;
@@ -544,6 +747,7 @@ impl ExternalAgent {
                     prompted = true;
                     if let Err(failure) = result {
                         session.dead = true;
+                        self.shared.forget_launch(self.id.as_ref(), &session.control);
                         return if signal.aborted() {
                             TurnOutcome::Aborted
                         } else {
@@ -558,6 +762,7 @@ impl ExternalAgent {
                 event = session.events.recv() => {
                     let Some(event) = event else {
                         session.dead = true;
+                        self.shared.forget_launch(self.id.as_ref(), &session.control);
                         return TurnOutcome::Failed(HarnessFailure::new(
                             code::CLOSED,
                             "the harness event stream ended",
@@ -565,6 +770,7 @@ impl ExternalAgent {
                     };
                     if let HarnessEvent::SessionEnded { .. } = &event {
                         session.dead = true;
+                        self.shared.forget_launch(self.id.as_ref(), &session.control);
                     }
                     if let Some(outcome) = log.apply(event, session, &turn_id) {
                         if log.broken {
@@ -572,6 +778,7 @@ impl ExternalAgent {
                             // a new process, asking for a wider policy again).
                             session.control.terminate(self.terminate_grace()).await;
                             session.dead = true;
+                            self.shared.forget_launch(self.id.as_ref(), &session.control);
                         }
                         return outcome;
                     }
@@ -598,6 +805,7 @@ impl ExternalAgent {
                     // The native interrupt did not end the turn in time: stop the process.
                     session.control.terminate(self.terminate_grace()).await;
                     session.dead = true;
+                    self.shared.forget_launch(self.id.as_ref(), &session.control);
                     return TurnOutcome::Aborted;
                 }
             }
@@ -620,6 +828,46 @@ impl ExternalAgent {
         live: &mut Option<LiveSession>,
         signal: &AbortSignal,
     ) -> Result<(), HarnessFailure> {
+        if let Some(directories) = self.ctx.get::<hoh_working_directory::WorkingDirectoryKey>() {
+            let owner = self
+                .as_dyn()
+                .ok_or_else(|| HarnessFailure::new(code::CLOSED, "agent is gone"))?;
+            directories
+                .ensure(&owner, Some(signal))
+                .await
+                .map_err(|error| {
+                    HarnessFailure::new(
+                        code::IO,
+                        format!("Рабочая папка разговора недоступна: {error}"),
+                    )
+                })?;
+        }
+        let (effort, interaction_mode) = {
+            let state = lock(&self.state);
+            (state.effort.clone(), state.interaction_mode)
+        };
+        let current_trust =
+            if live.is_some() && matches!(self.shared.name.as_str(), "claude" | "codex") {
+                let cwd = self.cwd();
+                let (trusted, changed) =
+                    if let Some(profile) = self.shared.ctx.get::<hoh_loader::ProfileContextKey>() {
+                        crate::trust::status(&profile.dir, std::path::Path::new(&cwd))
+                            .await
+                            .unwrap_or((false, false))
+                    } else {
+                        (false, false)
+                    };
+                if changed {
+                    let _ = append_plugin_record(
+                        &self.session,
+                        "plugin:external-harness/folder-trust-changed",
+                        json!({"cwd": cwd, "executor": self.shared.name}),
+                    );
+                }
+                Some(trusted)
+            } else {
+                None
+            };
         if let Some(session) = live.as_mut() {
             while let Ok(event) = session.events.try_recv() {
                 match event {
@@ -627,6 +875,7 @@ impl ExternalAgent {
                     HarnessEvent::NativeSession { native_session_id } => {
                         self.record_native(&native_session_id, None)
                     }
+                    HarnessEvent::Telemetry { record } => self.record_telemetry(record),
                     // Outside a turn nobody can be asked: the request is withdrawn, not left
                     // waiting.
                     HarnessEvent::ApprovalRequested { request_id, .. }
@@ -643,12 +892,23 @@ impl ExternalAgent {
                     )),
                 }
             }
-            let chosen = session.access != self.shared.access();
+            let chosen = session.access != lock(&self.state).access;
             // The window's mode choice ends an idle process outside this driver and forgets its
             // launch (`Shared::retire_idle`); a terminate may say nothing on the events, so the
             // mode being back to this session's does not make the process alive again.
             let retired = self.shared.running_launch_of(self.id.as_ref()).is_none();
-            if session.dead || chosen || retired || self.model.restart.swap(false, Ordering::SeqCst)
+            // Another effort level is another process on the same native session, as in T3.
+            let other_effort = session.effort != effort;
+            let other_trust =
+                current_trust.is_some_and(|trusted| trusted != session.folder_trusted);
+            let other_interaction = session.interaction_mode != interaction_mode;
+            if session.dead
+                || chosen
+                || retired
+                || other_effort
+                || other_trust
+                || other_interaction
+                || self.model.restart.swap(false, Ordering::SeqCst)
             {
                 if let Some(old) = live.take() {
                     old.control.terminate(self.terminate_grace()).await;
@@ -656,39 +916,127 @@ impl ExternalAgent {
                 lock(&self.state).control = None;
             }
         }
+        // Revalidate the selected directory before reusing an existing process, too.
         if live.is_some() {
-            return Ok(());
+            let (cwd, identity) = match self
+                .shared
+                .ctx
+                .get::<hoh_working_directory::WorkingDirectoryKey>()
+            {
+                Some(service) => service.verify_for_spawn(&self.session),
+                None => hoh_working_directory::verify_session_directory(&self.session, &self.cwd()),
+            }
+            .map_err(|error| HarnessFailure::new(code::IO, error.to_string()))?;
+            if live
+                .as_ref()
+                .is_some_and(|session| session.cwd == cwd && session.cwd_identity == identity)
+            {
+                return Ok(());
+            }
+            if let Some(old) = live.take() {
+                old.control.terminate(self.terminate_grace()).await;
+            }
+            lock(&self.state).control = None;
         }
         self.model.restart.store(false, Ordering::SeqCst);
         // Read at every start, from the user's choice in the window only.
-        let access = self.shared.access();
+        let access = lock(&self.state).access;
         let policy = self.policy_for(access)?;
         // `never` (built only with `never-mode`) is put to the user once per process; full
         // access was already the user's own action in the window, so it is not asked again.
-        let escalated = if access == AccessMode::Confirm && policy.approval == ApprovalMode::Never {
+        let escalated = if access.asks() && policy.approval == ApprovalMode::Never {
             self.ask_escalation(&policy, signal).await?;
             true
         } else {
             false
         };
-        let flags = self.shared.harness.launch_flags(&policy, access);
         let resume = lock(&self.state).native.clone();
+        let checked_cwd = || -> Result<(String, [u64; 2]), HarnessFailure> {
+            match self
+                .shared
+                .ctx
+                .get::<hoh_working_directory::WorkingDirectoryKey>()
+            {
+                Some(service) => service.verify_for_spawn(&self.session),
+                None => hoh_working_directory::verify_session_directory(&self.session, &self.cwd()),
+            }
+            .map_err(|error| HarnessFailure::new(code::IO, error.to_string()))
+        };
+        let (cwd, identity) = checked_cwd()?;
+        let mut launch_cwd = cwd.clone();
+        let mut launch_identity = identity;
         let mut params = StartParams {
             session_id: self.id.to_string(),
-            cwd: self.cwd(),
+            cwd,
+            cwd_identity: Some(identity),
             model: lock(&self.model.model).clone(),
+            effort: effort.clone(),
+            interaction_mode,
             policy,
             resume: resume.clone(),
         };
         let harness = &self.shared.harness;
-        let (started, lost) = match harness.start_with_access(params.clone(), access).await {
+        let (trusted, changed) = if matches!(self.shared.name.as_str(), "claude" | "codex")
+            && let Some(profile) = self.shared.ctx.get::<hoh_loader::ProfileContextKey>()
+        {
+            crate::trust::status(&profile.dir, std::path::Path::new(&params.cwd))
+                .await
+                .unwrap_or((false, false))
+        } else {
+            (false, false)
+        };
+        if changed {
+            let _ = append_plugin_record(
+                &self.session,
+                "plugin:external-harness/folder-trust-changed",
+                json!({"cwd": params.cwd, "executor": self.shared.name}),
+            );
+        }
+        let mut flags = harness.launch_flags_for_turn_and_trust(
+            &params.policy,
+            access,
+            interaction_mode,
+            trusted,
+        );
+        let mut launched_trusted = trusted;
+        let (started, lost) = match harness
+            .start_with_folder_trust(params.clone(), access, trusted)
+            .await
+        {
             Err(failure) if failure.code == code::SESSION_NOT_FOUND && params.resume.is_some() => {
                 self.ctx.logger().warn(format_args!(
                     "harness \"{}\" lost native session {:?}: starting a new one",
                     self.shared.name, params.resume
                 ));
                 params.resume = None;
-                (harness.start_with_access(params, access).await?, resume)
+                let (cwd, identity) = checked_cwd()?;
+                launch_cwd = cwd.clone();
+                launch_identity = identity;
+                params.cwd = cwd;
+                params.cwd_identity = Some(identity);
+                let trusted = if matches!(self.shared.name.as_str(), "claude" | "codex")
+                    && let Some(profile) = self.shared.ctx.get::<hoh_loader::ProfileContextKey>()
+                {
+                    crate::trust::status(&profile.dir, std::path::Path::new(&params.cwd))
+                        .await
+                        .map(|v| v.0)
+                        .unwrap_or(false)
+                } else {
+                    false
+                };
+                flags = harness.launch_flags_for_turn_and_trust(
+                    &params.policy,
+                    access,
+                    interaction_mode,
+                    trusted,
+                );
+                launched_trusted = trusted;
+                (
+                    harness
+                        .start_with_folder_trust(params, access, trusted)
+                        .await?,
+                    resume,
+                )
             }
             started => {
                 let started = started?;
@@ -708,10 +1056,20 @@ impl ExternalAgent {
             self.id.as_ref(),
             Launched {
                 access,
+                interaction_mode,
                 flags,
                 session: Arc::downgrade(&started.session),
             },
         );
+        if let Err(error) = append_plugin_record(
+            &self.session,
+            "plugin:external-harness/launch",
+            json!({ "runtimeMode": if interaction_mode == InteractionMode::Plan { json!("plan") } else { json!(access) }, "interactionMode": interaction_mode }),
+        ) {
+            self.ctx.logger().warn(format_args!(
+                "could not publish the running access mode: {error}"
+            ));
+        }
         lock(&self.state).control = Some(started.session.clone());
         *live = Some(LiveSession {
             control: started.session,
@@ -719,8 +1077,56 @@ impl ExternalAgent {
             escalated,
             dead: false,
             access,
+            effort,
+            folder_trusted: launched_trusted,
+            interaction_mode,
+            cwd: launch_cwd,
+            cwd_identity: launch_identity,
         });
         Ok(())
+    }
+
+    /// The effort level of this turn (HOH-40): the one its own prompt named in `session/prompt`
+    /// (none: the harness's own), so a prompt queued behind it does not decide it. A level the
+    /// harness does not have is not passed on, and said in the log. A turn whose prompt named
+    /// nothing through `session/prompt` (a wake, another method) keeps the last level.
+    fn take_prompt_choices(&self, input: &TurnInput) {
+        let Some(prompt) = input.messages.last().filter(|_| input.last_from_next_turn) else {
+            return;
+        };
+        let (named, access) = self
+            .shared
+            .choices
+            .take_prompt(self.id.as_ref(), prompt.id.as_ref())
+            .unwrap_or_else(|| {
+                // Internal/test inbox input has no session/prompt hook to snapshot it. Preserve
+                // the legacy global choice for that path; window prompts always take the exact
+                // per-message snapshot above.
+                (None, Some(self.shared.access_for(self.id.as_ref())))
+            });
+        let effort = named.filter(|effort| {
+            let known = self.shared.harness.accepts_effort(effort);
+            if !known {
+                self.ctx.logger().warn(format_args!(
+                    "harness \"{}\" has no effort level {}: the turn runs without one",
+                    self.shared.name,
+                    js_json_stringify(&json!(effort))
+                ));
+            }
+            known
+        });
+        let mut state = lock(&self.state);
+        state.effort = effort;
+        // Unknown external bindings are never widened to a later global choice.
+        state.access = access.unwrap_or(AccessMode::Confirm);
+        drop(state);
+        if let Some(mode) = self
+            .shared
+            .choices
+            .take_interaction(self.id.as_ref(), prompt.id.as_ref())
+        {
+            lock(&self.state).interaction_mode = mode;
+        }
     }
 
     /// [`launch_policy`], said in the log when it caps the configuration; `never` without its
@@ -735,12 +1141,13 @@ impl ExternalAgent {
             ));
         }
         let policy = launch_policy(&configured, access);
-        if access == AccessMode::Confirm && policy != configured {
+        if access.asks() && policy != configured {
             self.ctx.logger().warn(format_args!(
                 "the configured policy {} of harness \"{}\" is wider than the access mode the \
-                 user chose (confirm): started with {}",
+                 user chose ({}): started with {}",
                 js_json_stringify(&json!(configured)),
                 self.shared.name,
+                access.as_str(),
                 js_json_stringify(&json!(policy))
             ));
         }
@@ -758,17 +1165,15 @@ impl ExternalAgent {
             return Err(HarnessFailure::new(code::CLOSED, "agent is gone"));
         };
         let headline = format!(
-            "Разрешить исполнителю «{}» работать без вопросов только о командах и правках файлов, \
-             которые остаются в папке сессии: всё, что удаляет или перезаписывает файлы, касается \
-             путей вне папки или сети, он спросит",
+            "Allow {} to run commands and edit files within the session folder without asking? Deletions, overwrites, paths outside the folder and network access still require approval.",
             self.shared.name
         );
         let mut request = ApprovalRequest::new(agent, "external-harness");
         request.reason = Some(format!(
-            "{headline}. {NEVER_RULE}. Разрешение действует до конца этого запуска исполнителя"
+            "{headline}. {NEVER_RULE}. Approval lasts until this executor run ends"
         ));
         request.details = Some(format!(
-            "Режим исполнителя: {}",
+            "Executor policy: {}",
             js_json_stringify(&json!(*policy))
         ));
         request.display_reason = Some(DisplayReason::new(one_line(&headline)));
@@ -888,6 +1293,38 @@ fn prompt_text(messages: &[UserMessage]) -> String {
         .join("\n\n")
 }
 
+/// The pictures of a turn's messages (HOH-41), read back from the engine's attachment store: the
+/// copy the store made when the window sent the bytes (`session/prompt`, checked there against the
+/// store's limits and types), never a file the window named.
+async fn prompt_images(
+    ctx: &Context,
+    messages: &[UserMessage],
+    signal: &AbortSignal,
+) -> Result<Vec<PromptImage>, HarnessFailure> {
+    use base64::Engine as _;
+    let mut images = Vec::new();
+    for image in messages
+        .iter()
+        .flat_map(|message| message.content.iter().filter_map(ContentBlock::image))
+    {
+        let store = ctx.get::<hoh_attachment::Attachments>().ok_or_else(|| {
+            HarnessFailure::new(code::HARNESS, "the engine has no attachment store")
+        })?;
+        let stored = store
+            .read_image(&image.attachment, Some(signal))
+            .await
+            .map_err(|error| {
+                HarnessFailure::new(code::HARNESS, format!("an attached picture: {error}"))
+            })?;
+        images.push(PromptImage {
+            media_type: stored.r#ref.media_type.as_str().to_owned(),
+            data: base64::engine::general_purpose::STANDARD.encode(&stored.data),
+            name: stored.r#ref.name.clone(),
+        });
+    }
+    Ok(images)
+}
+
 /// One line the window shows as it is, at most [`MAX_HEADLINE_CHARS`] characters: every character
 /// the protocol refuses in `humanText` (a control, spacing other than a plain space, an invisible
 /// mark such as U+FE0F, U+00A0 or U+200B) becomes a space, and runs of spaces become one. A
@@ -956,33 +1393,32 @@ fn flag_incomplete(mut question: Question, action: &HarnessAction) -> Question {
     let (complete, size) = match action {
         HarnessAction::Command { command, .. } => (
             question.details.contains(command.as_str()),
-            format!("{} знаков", command.chars().count()),
+            format!("{} characters", command.chars().count()),
         ),
         HarnessAction::Tool { input, .. } => {
             let input = js_json_stringify(input);
             (
                 question.details.contains(&input),
-                format!("{} знаков", input.chars().count()),
+                format!("{} characters", input.chars().count()),
             )
         }
         HarnessAction::Permission { description } => (
             question.details.contains(description.as_str()),
-            format!("{} знаков", description.chars().count()),
+            format!("{} characters", description.chars().count()),
         ),
         HarnessAction::FileChange { changes } => (
             question.details.contains(&change_list(changes)),
-            format!("изменений в файлах: {}", changes.len()),
+            format!("{} file changes", changes.len()),
         ),
     };
     if complete {
         return question;
     }
-    const SUFFIX: &str = " (показано не полностью)";
+    const SUFFIX: &str = " (partially shown)";
     let room = MAX_HEADLINE_CHARS - SUFFIX.chars().count();
     question.headline = format!("{}{SUFFIX}", truncate_chars(&question.headline, room));
     question.details.push_str(&format!(
-        "\n[Показано не полностью, всего {size}. Одобряйте, только если доверяете исполнителю \
-         целиком.]"
+        "\n[Partially shown, {size} in total. Approve only if you trust the executor with the entire action.]"
     ));
     question
 }
@@ -1038,44 +1474,40 @@ fn plain_question(harness: &str, action: &HarnessAction, reason: Option<&str>) -
     let who = display_name(harness);
     let (headline, details) = match action {
         HarnessAction::Command { command, .. } => (
-            format!("{who} просит выполнить команду: {command}"),
-            format!("Команда: {command}"),
+            format!("{who} asks to run: {command}"),
+            format!("Command: {command}"),
         ),
         HarnessAction::FileChange { changes } => {
             let shown = match changes.as_slice() {
                 [only] => match (&only.move_path, only.kind) {
-                    (Some(_), _) => format!("переместить файл {}", only.path),
-                    (None, FileChangeKind::Add) => format!("создать файл {}", only.path),
-                    (None, FileChangeKind::Update) => format!("изменить файл {}", only.path),
-                    (None, FileChangeKind::Delete) => format!("удалить файл {}", only.path),
+                    (Some(_), _) => format!("move file {}", only.path),
+                    (None, FileChangeKind::Add) => format!("create file {}", only.path),
+                    (None, FileChangeKind::Update) => format!("edit file {}", only.path),
+                    (None, FileChangeKind::Delete) => format!("delete file {}", only.path),
                 },
                 _ => {
                     let names: Vec<&str> =
                         changes.iter().map(|change| change.path.as_str()).collect();
-                    let more = if names.len() > 4 {
-                        " и другие"
-                    } else {
-                        ""
-                    };
+                    let more = if names.len() > 4 { " and more" } else { "" };
                     format!(
-                        "изменить файлы: {}{more}",
+                        "edit files: {}{more}",
                         names.iter().take(4).copied().collect::<Vec<_>>().join(", ")
                     )
                 }
             };
-            (format!("{who} просит {shown}"), change_list(changes))
+            (format!("{who} asks to {shown}"), change_list(changes))
         }
         HarnessAction::Tool { name, input } => (
-            format!("{who} просит разрешения на действие «{name}»"),
-            format!("Данные: {}", js_json_stringify(input)),
+            format!("{who} asks to use {name}"),
+            format!("Input: {}", js_json_stringify(input)),
         ),
         HarnessAction::Permission { description } => (
-            format!("{who} просит дополнительное разрешение"),
+            format!("{who} asks for additional permission"),
             description.clone(),
         ),
     };
     let details = match reason {
-        Some(reason) => format!("{details}\nОбоснование исполнителя: {reason}"),
+        Some(reason) => format!("{details}\nExecutor justification: {reason}"),
         None => details,
     };
     // Nothing to add to the headline: the explanation stays empty (the window shows no block).
@@ -1091,13 +1523,13 @@ fn change_list(changes: &[FileChange]) -> String {
     let lines: Vec<String> = changes
         .iter()
         .map(|change| match (&change.move_path, change.kind) {
-            (Some(target), _) => format!("переместить: {} → {target}", change.path),
-            (None, FileChangeKind::Add) => format!("создать: {}", change.path),
-            (None, FileChangeKind::Update) => format!("изменить: {}", change.path),
-            (None, FileChangeKind::Delete) => format!("удалить: {}", change.path),
+            (Some(target), _) => format!("move: {} → {target}", change.path),
+            (None, FileChangeKind::Add) => format!("create: {}", change.path),
+            (None, FileChangeKind::Update) => format!("edit: {}", change.path),
+            (None, FileChangeKind::Delete) => format!("delete: {}", change.path),
         })
         .collect();
-    format!("Изменения:\n{}", lines.join("\n"))
+    format!("Changes:\n{}", lines.join("\n"))
 }
 
 /// The tool name an approval request carries for an action.
@@ -1113,8 +1545,12 @@ fn now_ms() -> i64 {
         })
 }
 
-fn text_delta(text: &str) -> Option<StreamChunk> {
-    serde_json::from_value(json!({"type": "text-delta", "index": 0, "text": text})).ok()
+fn visible_delta(kind: LiveKind, text: &str) -> Option<StreamChunk> {
+    let kind = match kind {
+        LiveKind::Text => "text-delta",
+        LiveKind::Reasoning => "reasoning-delta",
+    };
+    serde_json::from_value(json!({"type": kind, "index": 0, "text": text})).ok()
 }
 
 pub(crate) struct LiveSession {
@@ -1124,6 +1560,13 @@ pub(crate) struct LiveSession {
     dead: bool,
     /// The access mode it was started under: another choice in the window restarts it.
     access: AccessMode,
+    /// The effort level it was started with: another one in a prompt restarts it.
+    effort: Option<String>,
+    folder_trusted: bool,
+    /// The interaction mode it was started with: another prompt mode restarts it.
+    interaction_mode: InteractionMode,
+    cwd: String,
+    cwd_identity: [u64; 2],
 }
 
 enum TurnOutcome {
@@ -1132,7 +1575,14 @@ enum TurnOutcome {
     Failed(HarnessFailure),
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum LiveKind {
+    Text,
+    Reasoning,
+}
+
 struct LiveText {
+    kind: LiveKind,
     message_id: String,
     attempt_id: LlmAttemptId,
     revision: u64,
@@ -1146,6 +1596,7 @@ struct LiveText {
 struct OpenItem {
     item_id: String,
     call_seq: SessionSeq,
+    parent_item_id: Option<String>,
     command: bool,
     /// A command or a file change: under `approval: never` it runs only after `allow`.
     guarded: bool,
@@ -1154,6 +1605,8 @@ struct OpenItem {
     output: String,
 }
 
+type OpenQuestions = Arc<Mutex<HashMap<String, (SessionSeq, Option<String>)>>>;
+
 /// Everything one turn writes to the log.
 struct TurnLog {
     agent: Arc<ExternalAgent>,
@@ -1161,13 +1614,13 @@ struct TurnLog {
     step: u64,
     signal: AbortSignal,
     live: Vec<LiveText>,
-    reasoning: Vec<(String, String)>,
+    reasoning: Vec<(String, String, Option<String>)>,
     items: Vec<OpenItem>,
     requests: HashMap<String, Arc<AbortController>>,
     tasks: Vec<Disposer>,
     /// Question calls of this turn still without a result, by call id. A question task writes
     /// its result only while the call is here; the end of the turn closes the rest.
-    questions: Arc<Mutex<HashMap<String, SessionSeq>>>,
+    questions: OpenQuestions,
     /// Native message and item ids this turn already settled: a repeated final or completion
     /// is dropped.
     settled: HashSet<String>,
@@ -1181,13 +1634,24 @@ struct TurnLog {
     /// The harness opened this turn (`turn-started` with its id). A request before that was made
     /// between turns, whenever it reaches HoH: it is withdrawn, nobody is asked.
     opened: bool,
+    usage: Option<HarnessUsage>,
+}
+
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct HarnessUsage {
+    input_tokens: u64,
+    cache_creation_input_tokens: u64,
+    cache_read_input_tokens: u64,
+    output_tokens: u64,
+    max_tokens: Option<u64>,
 }
 
 impl TurnLog {
     fn new(agent: Arc<ExternalAgent>, turn: u64, step: u64, signal: AbortSignal) -> Self {
         // Under full access the CLI asks nothing: `never`'s rule applies only with confirmation.
         let never = agent.shared.config.policy.approval == ApprovalMode::Never
-            && agent.shared.access() == AccessMode::Confirm;
+            && lock(&agent.state).access.asks();
         Self {
             agent,
             turn,
@@ -1204,6 +1668,7 @@ impl TurnLog {
             allowed: Arc::default(),
             broken: false,
             opened: false,
+            usage: None,
         }
     }
 
@@ -1226,10 +1691,11 @@ impl TurnLog {
             let item = match self.items.iter().position(|item| item.item_id == item_id) {
                 Some(index) => Some(self.items.remove(index)),
                 None => self
-                    .write_call(item_id, "step", &json!({}))
+                    .write_call(item_id, "step", &json!({}), None)
                     .map(|call_seq| OpenItem {
                         item_id: item_id.to_owned(),
                         call_seq,
+                        parent_item_id: None,
                         command: false,
                         guarded: true,
                         action: None,
@@ -1242,7 +1708,13 @@ impl TurnLog {
                     text.push('\n');
                 }
                 text.push_str("[The harness ran this step without asking for permission.]");
-                self.write_result(item_id, item.call_seq, text, Some(code::APPROVAL_BYPASSED));
+                self.write_result(
+                    item_id,
+                    item.call_seq,
+                    text,
+                    Some(code::APPROVAL_BYPASSED),
+                    item.parent_item_id.as_deref(),
+                );
             }
         }
         TurnOutcome::Failed(HarnessFailure::new(
@@ -1288,6 +1760,33 @@ impl TurnLog {
                 }
             }
             HarnessEvent::Status { .. } => {}
+            HarnessEvent::Telemetry { record } => self.agent.record_telemetry(record),
+            HarnessEvent::Usage {
+                input_tokens,
+                cache_creation_input_tokens,
+                cache_read_input_tokens,
+                output_tokens,
+                max_tokens,
+            } => {
+                let usage = HarnessUsage {
+                    input_tokens,
+                    cache_creation_input_tokens,
+                    cache_read_input_tokens,
+                    output_tokens,
+                    max_tokens,
+                };
+                // Usage is a live projection, not merely turn-end accounting. Persisting the
+                // snapshot also broadcasts it through session.event so T3 can repaint its native
+                // context component while Claude is still streaming.
+                if let Err(error) = append_plugin_record(
+                    &self.agent.session,
+                    "plugin:hoh/context-usage",
+                    json!({"turn": self.turn, "usage": usage}),
+                ) {
+                    self.warn("cannot record context usage", error);
+                }
+                self.usage = Some(usage);
+            }
             // Sent before the harness took this turn's prompt: the request belongs to the time
             // between turns (after the last turn ended), even when it reaches HoH only now. It is
             // withdrawn like one found before the prompt, never put to the user as this turn's.
@@ -1318,23 +1817,60 @@ impl TurnLog {
             | HarnessEvent::TurnFailed { .. } => {
                 // A stale end of an earlier turn.
             }
-            HarnessEvent::TextDelta { message_id, text } => self.delta(message_id, &text),
-            HarnessEvent::TextFinal { message_id, text } => self.final_text(&message_id, text),
-            HarnessEvent::ReasoningDelta { message_id, text } => {
-                match self.reasoning.iter_mut().find(|(id, _)| *id == message_id) {
-                    Some((_, buffer)) => {
+            HarnessEvent::TextDelta {
+                message_id,
+                text,
+                parent_item_id,
+            } => self.delta(LiveKind::Text, message_id, &text, parent_item_id.as_deref()),
+            HarnessEvent::TextFinal {
+                message_id,
+                text,
+                parent_item_id,
+            } => self.final_text(&message_id, text, parent_item_id.as_deref()),
+            HarnessEvent::ReasoningDelta {
+                message_id,
+                text,
+                parent_item_id,
+            } => {
+                self.delta(
+                    LiveKind::Reasoning,
+                    message_id.clone(),
+                    &text,
+                    parent_item_id.as_deref(),
+                );
+                match self.reasoning.iter_mut().find(|(id, _, parent)| {
+                    *id == message_id && parent.as_deref() == parent_item_id.as_deref()
+                }) {
+                    Some((_, buffer, _)) => {
                         buffer.push_str(&text);
                         keep_tail(buffer);
                     }
-                    None => self.reasoning.push((message_id, text)),
+                    None => self.reasoning.push((message_id, text, parent_item_id)),
                 }
             }
-            HarnessEvent::ReasoningFinal { message_id, text } => {
-                self.reasoning.retain(|(id, _)| *id != message_id);
-                self.reasoning.push((message_id, text));
+            HarnessEvent::ReasoningFinal {
+                message_id,
+                text,
+                parent_item_id,
+            } => {
+                if !self.settled.insert(format!("reasoning:{message_id}")) {
+                    return None;
+                }
+                self.reasoning.retain(|(id, _, parent)| {
+                    *id != message_id || parent.as_deref() != parent_item_id.as_deref()
+                });
+                self.reasoning.push((message_id, text, parent_item_id));
             }
-            HarnessEvent::ItemStarted { item_id, action } => self.start_item(item_id, &action),
-            HarnessEvent::ItemOutput { item_id, text } => {
+            HarnessEvent::ItemStarted {
+                item_id,
+                action,
+                parent_item_id,
+            } => self.start_item(item_id, &action, parent_item_id),
+            HarnessEvent::ItemOutput {
+                item_id,
+                text,
+                parent_item_id: _,
+            } => {
                 if let Some(item) = self.items.iter_mut().find(|item| item.item_id == item_id) {
                     item.output.push_str(&text);
                     keep_tail(&mut item.output);
@@ -1349,6 +1885,7 @@ impl TurnLog {
                 outcome,
                 output,
                 exit_code,
+                parent_item_id,
             } => {
                 let ran = matches!(outcome, ItemOutcome::Completed | ItemOutcome::Failed);
                 let (guarded, started) =
@@ -1363,18 +1900,20 @@ impl TurnLog {
                 {
                     return Some(self.bypassed(&item_id, output));
                 }
-                self.complete_item(&item_id, outcome, output, exit_code);
+                self.complete_item(&item_id, outcome, output, exit_code, parent_item_id);
             }
             HarnessEvent::ApprovalRequested {
                 request_id,
                 item_id,
                 action,
                 reason,
+                parent_item_id: _,
             } => return self.spawn_approval(session, request_id, item_id, action, reason),
             HarnessEvent::QuestionAsked {
                 request_id,
                 questions,
-            } => return self.spawn_question(session, request_id, questions),
+                parent_item_id,
+            } => return self.spawn_question(session, request_id, questions, parent_item_id),
             HarnessEvent::RequestResolved { request_id } => {
                 if let Some(controller) = self.requests.remove(&request_id) {
                     controller.abort();
@@ -1406,19 +1945,36 @@ impl TurnLog {
         None
     }
 
-    fn delta(&mut self, message_id: String, text: &str) {
-        if self.settled.contains(&format!("text:{message_id}")) {
+    fn delta(
+        &mut self,
+        kind: LiveKind,
+        message_id: String,
+        text: &str,
+        parent_item_id: Option<&str>,
+    ) {
+        let settled = match kind {
+            LiveKind::Text => "text",
+            LiveKind::Reasoning => "reasoning",
+        };
+        if self.settled.contains(&format!("{settled}:{message_id}")) {
+            return;
+        }
+        // The window-only live stream has no parent field. Never flatten a subagent delta into
+        // the root answer; its authoritative `text-final` is recorded below with `parentCallId`.
+        if parent_item_id.is_some() {
             return;
         }
         let index = match self
             .live
             .iter()
-            .position(|live| live.message_id == message_id)
+            .position(|live| live.kind == kind && live.message_id == message_id)
         {
             Some(index) => index,
             None => {
-                let attempt_id =
-                    LlmAttemptId::from(format!("{}:{}:{}", self.agent.id, self.turn, message_id));
+                let attempt_id = LlmAttemptId::from(format!(
+                    "{}:{}:{}:{}",
+                    self.agent.id, self.turn, settled, message_id
+                ));
                 let revision = self.agent.revision.fetch_add(1, Ordering::Relaxed) + 1;
                 self.agent.emit_frame(AssistantStreamFrame::Start {
                     attempt_id: attempt_id.clone(),
@@ -1427,6 +1983,7 @@ impl TurnLog {
                     step: self.step,
                 });
                 self.live.push(LiveText {
+                    kind,
                     message_id,
                     attempt_id,
                     revision,
@@ -1446,17 +2003,21 @@ impl TurnLog {
         self.agent.emit_frame_of(live, &piece);
     }
 
-    fn final_text(&mut self, message_id: &str, text: String) {
+    fn final_text(&mut self, message_id: &str, text: String, parent_item_id: Option<&str>) {
         if !self.settled.insert(format!("text:{message_id}")) {
             return;
         }
-        let live = self
-            .live
-            .iter()
-            .position(|live| live.message_id == message_id)
-            .map(|index| self.live.remove(index))
-            .map(|live| self.shown_whole(live));
-        let seq = self.write_assistant(text, false, Vec::new());
+        let live = parent_item_id
+            .is_none()
+            .then(|| {
+                self.live
+                    .iter()
+                    .position(|live| live.kind == LiveKind::Text && live.message_id == message_id)
+                    .map(|index| self.live.remove(index))
+                    .map(|live| self.shown_whole(live))
+            })
+            .flatten();
+        let seq = self.write_assistant(text, false, Vec::new(), parent_item_id);
         if let Some(live) = live {
             self.end_live(live, seq);
         }
@@ -1469,14 +2030,23 @@ impl TurnLog {
         text: String,
         interrupted: bool,
         calls: Vec<ContentBlock>,
+        parent_item_id: Option<&str>,
     ) -> Option<SessionSeq> {
         let mut content = Vec::new();
-        let reasoning: Vec<String> = self
-            .reasoning
-            .drain(..)
-            .map(|(_, text)| text)
-            .filter(|text| !text.is_empty())
-            .collect();
+        let mut reasoning = Vec::new();
+        let mut reasoning_ids = Vec::new();
+        let mut other_reasoning = Vec::new();
+        for (message_id, text, parent) in self.reasoning.drain(..) {
+            if parent.as_deref() == parent_item_id {
+                reasoning_ids.push(message_id);
+                if !text.is_empty() {
+                    reasoning.push(text);
+                }
+            } else {
+                other_reasoning.push((message_id, text, parent));
+            }
+        }
+        self.reasoning = other_reasoning;
         if !reasoning.is_empty() {
             content.push(ContentBlock::reasoning(redact(&reasoning.join("\n\n"))));
         }
@@ -1485,6 +2055,11 @@ impl TurnLog {
         }
         content.extend(calls);
         if content.is_empty() {
+            if parent_item_id.is_none() {
+                for message_id in reasoning_ids {
+                    self.finish_live(LiveKind::Reasoning, &message_id, None);
+                }
+            }
             return None;
         }
         let message = create_assistant_message(NewAssistantMessage {
@@ -1511,17 +2086,39 @@ impl TurnLog {
         if interrupted {
             data["interrupted"] = json!(true);
         }
-        match self
-            .agent
-            .session
-            .append("assistant/message", data, Some(SurfaceIntent::append()))
-        {
+        if let Some(parent_item_id) = parent_item_id {
+            data["parentCallId"] = json!(parent_item_id);
+        }
+        let seq = match self.agent.session.append(
+            "assistant/message",
+            data,
+            Some(SurfaceIntent::append()),
+        ) {
             Ok(event) => Some(event.seq()),
             Err(error) => {
                 self.warn("cannot record the answer", error);
                 None
             }
+        };
+        if parent_item_id.is_none() {
+            for message_id in reasoning_ids {
+                self.finish_live(LiveKind::Reasoning, &message_id, seq);
+            }
         }
+        seq
+    }
+
+    fn finish_live(&mut self, kind: LiveKind, message_id: &str, seq: Option<SessionSeq>) {
+        let Some(index) = self
+            .live
+            .iter()
+            .position(|live| live.kind == kind && live.message_id == message_id)
+        else {
+            return;
+        };
+        let live = self.live.remove(index);
+        let live = self.shown_whole(live);
+        self.end_live(live, seq);
     }
 
     /// The rest of a live text the wait for a whole word held back, shown before the answer is
@@ -1551,19 +2148,27 @@ impl TurnLog {
         });
     }
 
-    fn start_item(&mut self, item_id: String, action: &HarnessAction) {
+    fn start_item(
+        &mut self,
+        item_id: String,
+        action: &HarnessAction,
+        parent_item_id: Option<String>,
+    ) {
         if self.settled.contains(&format!("item:{item_id}"))
             || self.items.iter().any(|item| item.item_id == item_id)
         {
             return;
         }
         let (name, arguments) = step_call(action);
-        let Some(call_seq) = self.write_call(&item_id, &name, &arguments) else {
+        let Some(call_seq) =
+            self.write_call(&item_id, &name, &arguments, parent_item_id.as_deref())
+        else {
             return;
         };
         self.items.push(OpenItem {
             item_id,
             call_seq,
+            parent_item_id,
             command: matches!(action, HarnessAction::Command { .. }),
             guarded: matches!(
                 action,
@@ -1577,21 +2182,30 @@ impl TurnLog {
     /// Record a step as the loop does: an `assistant/message` advertising the call (with the
     /// reasoning that led to it), then `tool/call`. The stored log accepts no call it was not
     /// told of; every advertised call gets its `tool/result` before `step/end`.
-    fn write_call(&mut self, call_id: &str, name: &str, arguments: &Value) -> Option<SessionSeq> {
+    fn write_call(
+        &mut self,
+        call_id: &str,
+        name: &str,
+        arguments: &Value,
+        parent_item_id: Option<&str>,
+    ) -> Option<SessionSeq> {
         let arguments = js_json_stringify(&redact_value(arguments));
         let call = ContentBlock::from(ToolCallBlock {
             id: ToolCallId::from(call_id),
             name: name.to_owned(),
             arguments: arguments.clone(),
         });
-        self.write_assistant(String::new(), false, vec![call])?;
-        let data = json!({
+        self.write_assistant(String::new(), false, vec![call], parent_item_id)?;
+        let mut data = json!({
             "turn": self.turn,
             "step": self.step,
             "callId": call_id,
             "name": name,
             "arguments": arguments,
         });
+        if let Some(parent_item_id) = parent_item_id {
+            data["parentCallId"] = json!(parent_item_id);
+        }
         match self.agent.session.append("tool/call", data, None) {
             Ok(event) => Some(event.seq()),
             Err(error) => {
@@ -1607,6 +2221,7 @@ impl TurnLog {
         outcome: ItemOutcome,
         output: Option<String>,
         exit_code: Option<i64>,
+        parent_item_id: Option<String>,
     ) {
         if !self.settled.insert(format!("item:{item_id}")) {
             return;
@@ -1615,12 +2230,15 @@ impl TurnLog {
             Some(index) => self.items.remove(index),
             None => {
                 // A completion without a start: record the step it completes.
-                let Some(call_seq) = self.write_call(item_id, "step", &json!({})) else {
+                let Some(call_seq) =
+                    self.write_call(item_id, "step", &json!({}), parent_item_id.as_deref())
+                else {
                     return;
                 };
                 OpenItem {
                     item_id: item_id.to_owned(),
                     call_seq,
+                    parent_item_id,
                     command: exit_code.is_some(),
                     guarded: exit_code.is_some(),
                     action: None,
@@ -1651,10 +2269,23 @@ impl TurnLog {
             ItemOutcome::Declined => Some("declined"),
             ItemOutcome::Interrupted => Some("interrupted"),
         };
-        self.write_result(item_id, item.call_seq, text, code);
+        self.write_result(
+            item_id,
+            item.call_seq,
+            text,
+            code,
+            item.parent_item_id.as_deref(),
+        );
     }
 
-    fn write_result(&self, call_id: &str, call_seq: SessionSeq, text: String, error: Option<&str>) {
+    fn write_result(
+        &self,
+        call_id: &str,
+        call_seq: SessionSeq,
+        text: String,
+        error: Option<&str>,
+        parent_item_id: Option<&str>,
+    ) {
         let message = create_tool_result_message(ToolResultMessageInput {
             call_id: ToolCallId::from(call_id),
             content: vec![ContentBlock::text(text)],
@@ -1670,6 +2301,9 @@ impl TurnLog {
         }
         if let Some(code) = error {
             data["error"] = json!({"name": "ExternalHarnessError", "code": code});
+        }
+        if let Some(parent_item_id) = parent_item_id {
+            data["parentCallId"] = json!(parent_item_id);
         }
         let intent = SurfaceIntent {
             surface_op: Some(SurfaceOp::append()),
@@ -1739,18 +2373,22 @@ impl TurnLog {
         session: &LiveSession,
         request_id: String,
         questions: Vec<HarnessQuestion>,
+        parent_item_id: Option<String>,
     ) -> Option<TurnOutcome> {
         let Some(signal) = self.open_request(&request_id) else {
             return Some(self.repeated(&request_id));
         };
         let call_id = format!("question-{request_id}");
-        let Some(call_seq) =
-            self.write_call(&call_id, "user_question", &json!({"questions": questions}))
-        else {
+        let Some(call_seq) = self.write_call(
+            &call_id,
+            "user_question",
+            &json!({"questions": questions}),
+            parent_item_id.as_deref(),
+        ) else {
             // An unrecorded question is not asked; the harness hears so instead of waiting.
             return self.refuse(session, request_id, "the question could not be recorded");
         };
-        lock(&self.questions).insert(call_id.clone(), call_seq);
+        lock(&self.questions).insert(call_id.clone(), (call_seq, parent_item_id));
         let asked = AskedQuestion {
             agent: self.agent.clone(),
             control: session.control.clone(),
@@ -1830,24 +2468,39 @@ impl TurnLog {
         // its call gone and writes nothing.
         let questions = self.questions.clone();
         let mut open = lock(&questions);
-        for (call_id, call_seq) in open.drain() {
+        for (call_id, (call_seq, parent_item_id)) in open.drain() {
             self.write_result(
                 &call_id,
                 call_seq,
                 "The question was withdrawn before it was answered.".to_owned(),
                 Some("interrupted"),
+                parent_item_id.as_deref(),
             );
         }
         drop(open);
-        for live in std::mem::take(&mut self.live) {
+        while let Some(index) = self
+            .live
+            .iter()
+            .position(|live| live.kind == LiveKind::Text)
+        {
+            let live = self.live.remove(index);
             self.settled.insert(format!("text:{}", live.message_id));
             let live = self.shown_whole(live);
-            let seq = self.write_assistant(live.text.clone(), !completed, Vec::new());
+            let seq = self.write_assistant(live.text.clone(), !completed, Vec::new(), None);
             self.end_live(live, seq);
         }
         // Reasoning no text followed (a turn of steps only) is kept as a message of its own.
-        if !self.reasoning.is_empty() {
-            self.write_assistant(String::new(), !completed, Vec::new());
+        while let Some(parent_item_id) = self
+            .reasoning
+            .first()
+            .map(|(_, _, parent_item_id)| parent_item_id.clone())
+        {
+            self.write_assistant(
+                String::new(),
+                !completed,
+                Vec::new(),
+                parent_item_id.as_deref(),
+            );
         }
         for item in std::mem::take(&mut self.items) {
             self.settled.insert(format!("item:{}", item.item_id));
@@ -1856,6 +2509,7 @@ impl TurnLog {
                 item.call_seq,
                 "The action was interrupted before the harness reported its outcome.".to_owned(),
                 Some("interrupted"),
+                item.parent_item_id.as_deref(),
             );
         }
     }
@@ -1965,7 +2619,7 @@ struct AskedQuestion {
     step: u64,
     request_id: String,
     call_id: String,
-    open: Arc<Mutex<HashMap<String, SessionSeq>>>,
+    open: OpenQuestions,
 }
 
 async fn answer_question(
@@ -2042,10 +2696,10 @@ async fn answer_question(
         // Under the lock: the end of the turn either waits for this result or has closed the
         // call already (then nothing is written after `step/end`).
         let mut open = lock(&open);
-        let Some(call_seq) = open.remove(&call_id) else {
+        let Some((call_seq, parent_item_id)) = open.remove(&call_id) else {
             return;
         };
-        log.write_result(&call_id, call_seq, text, error);
+        log.write_result(&call_id, call_seq, text, error, parent_item_id.as_deref());
     }
     if signal.aborted() {
         return;
@@ -2144,6 +2798,7 @@ impl Agent for ExternalAgent {
         target: InboxTarget,
         wakeup: bool,
     ) -> Result<(), BoxError> {
+        let _admission = self.deletion_gate.enter()?;
         self.inbox.append(target, message)?;
         if wakeup {
             lock(&self.state).wake_pending = true;
@@ -2151,6 +2806,20 @@ impl Agent for ExternalAgent {
             self.wake.notify_one();
         }
         Ok(())
+    }
+
+    fn reserve_deletion(&self) -> Result<(), BoxError> {
+        self.deletion_gate.reserve(|| {
+            let state = lock(&self.state);
+            !state.closed
+                && state.abort.is_none()
+                && !state.wake_pending
+                && self.inbox.next_turn().is_empty()
+                && self.inbox.next_step().is_empty()
+        })
+    }
+    fn release_deletion(&self) {
+        self.deletion_gate.release();
     }
 
     fn followup(&self, message: UserMessage) -> Result<(), BoxError> {
@@ -2349,12 +3018,23 @@ mod tests {
         );
         assert_eq!(
             access_text("claude", AccessMode::Full),
-            "Полный доступ: Claude выполняет команды без вопросов"
+            "Full access: Claude runs commands without asking"
         );
         assert_eq!(
             access_text("claude", AccessMode::Confirm),
-            "С подтверждением: команды, правки файлов и сеть Claude выполняет после вашего \
-             подтверждения"
+            "Supervised: Claude asks before running commands, editing files, or using the network"
+        );
+        assert_eq!(
+            access_text("claude", AccessMode::AutoAcceptEdits),
+            "Auto-accept edits: Claude edits files without asking; commands and expanded access require your approval"
+        );
+        assert_eq!(
+            access_text("claude", AccessMode::AcceptEdits),
+            "Accept edits: Claude edits files in the conversation folder without asking; commands and network access require your approval"
+        );
+        assert_eq!(
+            access_text("claude", AccessMode::Auto),
+            "Auto: Claude decides what is safe and does it without asking; other actions require your approval"
         );
         assert_eq!(DEFAULT_ACCESS, AccessMode::Confirm);
         assert_eq!(AccessMode::default(), DEFAULT_ACCESS);
@@ -2388,6 +3068,49 @@ mod tests {
         assert_eq!(
             launch_policy(&HarnessPolicy::default(), AccessMode::Full),
             wide
+        );
+        // The two modes between them (CEO 23.11 00:07) cap the configuration as confirm does.
+        for between in [
+            AccessMode::AutoAcceptEdits,
+            AccessMode::AcceptEdits,
+            AccessMode::Auto,
+        ] {
+            assert_eq!(launch_policy(&wide, between), HarnessPolicy::default());
+            assert_eq!(
+                launch_policy(&reviewer, between),
+                launch_policy(&reviewer, AccessMode::Confirm)
+            );
+        }
+    }
+
+    /// Both native spellings of T3's auto-accept mode round-trip without weakening their common
+    /// security boundary; only full access stops the questions.
+    #[test]
+    fn the_native_modes_keep_their_order_and_names() {
+        let modes = [
+            AccessMode::Confirm,
+            AccessMode::AutoAcceptEdits,
+            AccessMode::AcceptEdits,
+            AccessMode::Auto,
+            AccessMode::Full,
+        ];
+        assert!(modes.windows(2).all(|pair| pair[0] < pair[1]));
+        for mode in modes {
+            let wire = serde_json::to_value(mode).unwrap();
+            assert_eq!(wire, mode.as_str());
+            assert_eq!(serde_json::from_value::<AccessMode>(wire).unwrap(), mode);
+            assert_eq!(mode.asks(), mode != AccessMode::Full);
+            assert!(access_text("claude", mode).contains("Claude"));
+        }
+        assert_eq!(
+            modes.map(AccessMode::as_str),
+            [
+                "confirm",
+                "auto-accept-edits",
+                "acceptEdits",
+                "auto",
+                "full",
+            ]
         );
     }
 

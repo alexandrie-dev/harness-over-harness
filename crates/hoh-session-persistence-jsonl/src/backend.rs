@@ -220,7 +220,7 @@ impl JsonlSessionPersistence {
         check(signal)?;
         Ok(entries
             .into_iter()
-            .filter(|e| e.1)
+            .filter(|e| e.1 && e.0 != "trash")
             .map(|e| node_path::join(&[&self.0.root, &e.0]))
             .collect())
     }
@@ -252,11 +252,31 @@ impl JsonlSessionPersistence {
         {
             return Err(self.legacy_layout(&node_path::join(&[project, &entry.0])));
         }
-        Ok(entries
-            .into_iter()
-            .filter(|e| e.1)
-            .map(|e| node_path::join(&[project, &e.0]))
-            .collect())
+        let mut dirs = Vec::new();
+        for entry in entries.into_iter().filter(|entry| entry.1) {
+            let path = node_path::join(&[project, &entry.0]);
+            if entry.0 == "trash" {
+                // `trash` can also be a legitimate session ID. Ignore a foreign nested trash
+                // directory, but preserve a real session with this exact header and path.
+                let valid = match self.resolve_generation(&path, signal).await {
+                    Ok(Some(selected)) => matches!(
+                        self.read_generation_header(
+                            &selected,
+                            Some(&SessionId::from("trash")),
+                            signal
+                        )
+                        .await,
+                        Ok(Some(_))
+                    ),
+                    _ => false,
+                };
+                if !valid {
+                    continue;
+                }
+            }
+            dirs.push(path);
+        }
+        Ok(dirs)
     }
     async fn all_dirs(&self, signal: Option<&AbortSignal>) -> Result<DirectoryBatch> {
         let projects = self.limited(self.project_dirs(signal)).await?;
@@ -1349,8 +1369,151 @@ impl SessionPersistence for JsonlSessionPersistence {
             }
         })
     }
+    fn trash<'a>(&'a self, id: &'a SessionId) -> BoxFuture<'a, Result<()>> {
+        Box::pin(async move {
+            // Share the backend's writer gate and the interprocess lease with normal opens.
+            self.0.tracker.claim_write(id)?;
+            let _claim = WriteClaimGuard {
+                tracker: self.0.tracker.clone(),
+                id: id.clone(),
+                active: true,
+            };
+            let Some(selected) = self.find_log(id, None).await? else {
+                return Ok(());
+            };
+            let source = std::path::Path::new(&selected.source_path)
+                .parent()
+                .ok_or_else(|| error("session log has no parent directory"))?;
+            let lease = SessionWriteLease::acquire(source.to_string_lossy().as_ref(), id).await?;
+            // A name match is insufficient on case-insensitive filesystems.
+            self.read_generation_header(&selected, Some(id), None)
+                .await?
+                .ok_or_else(|| error("session header disappeared before deletion"))?;
+            // A failed fsync and failed rollback can leave the same batch on disk twice.
+            // Refuse to move any log that a resumed session would reject.
+            let stored = self.require_stored(id, None, false).await?;
+            if stored.torn.is_some() {
+                return Err(error(
+                    "cannot delete a session with an incomplete or corrupt log",
+                ));
+            }
+            let events = stored
+                .events
+                .iter()
+                .map(|event| (**event).clone())
+                .collect::<Vec<_>>();
+            assert_contiguous(id, &events, 0)?;
+            let trash = std::path::Path::new(&self.0.root).join("trash");
+            match std::fs::create_dir(&trash) {
+                Ok(()) => (),
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => (),
+                Err(e) => return Err(e.into()),
+            }
+            // Pin both directories. Renaming through the descriptors cannot be redirected by
+            // replacing `trash` with a symlink after the no-follow open.
+            use std::os::fd::AsRawFd;
+            use std::os::unix::fs::OpenOptionsExt;
+            let open_dir = |path: &std::path::Path| {
+                std::fs::OpenOptions::new()
+                    .read(true)
+                    .custom_flags(
+                        (rustix::fs::OFlags::DIRECTORY | rustix::fs::OFlags::NOFOLLOW).bits()
+                            as i32,
+                    )
+                    .open(path)
+            };
+            let trash_dir = open_dir(&trash)?;
+            let parent = source
+                .parent()
+                .ok_or_else(|| error("session directory has no parent"))?;
+            let source_name = source
+                .file_name()
+                .ok_or_else(|| error("session directory has no name"))?;
+            let source_parent = open_dir(parent)?;
+            let anchored_source =
+                std::path::PathBuf::from(format!("/proc/self/fd/{}", source_parent.as_raw_fd()))
+                    .join(source_name);
+            if !std::fs::symlink_metadata(&anchored_source)?
+                .file_type()
+                .is_dir()
+            {
+                return Err(error("session directory is not a real directory"));
+            }
+            let token = random_token(16)?;
+            let stamp = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)?
+                .as_millis();
+            let destination =
+                std::path::PathBuf::from(format!("/proc/self/fd/{}", trash_dir.as_raw_fd())).join(
+                    format!(
+                        "{stamp}-{}-{token}",
+                        crate::format::encode_segment(id.as_str())?
+                    ),
+                );
+            tokio::fs::rename(anchored_source, destination).await?;
+            // The rename is the commit point. A close-hook failure must not report a
+            // failed deletion after the directory has already moved to trash.
+            let _ = lease.release().await;
+            self.0
+                .memo
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .shift_remove(id);
+            self.0
+                .listed
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .clear();
+            Ok(())
+        })
+    }
+    fn is_trashed<'a>(&'a self, id: &'a SessionId) -> BoxFuture<'a, Result<bool>> {
+        Box::pin(async move {
+            use std::os::fd::AsRawFd;
+            use std::os::unix::fs::OpenOptionsExt;
+            let path = std::path::Path::new(&self.0.root).join("trash");
+            let directory = match std::fs::OpenOptions::new()
+                .read(true)
+                .custom_flags(
+                    (rustix::fs::OFlags::DIRECTORY | rustix::fs::OFlags::NOFOLLOW).bits() as i32,
+                )
+                .open(&path)
+            {
+                Ok(directory) => directory,
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+                Err(e) => return Err(e.into()),
+            };
+            let encoded = encode_segment(id.as_str())?;
+            let mut dirs =
+                tokio::fs::read_dir(format!("/proc/self/fd/{}", directory.as_raw_fd())).await?;
+            while let Some(entry) = dirs.next_entry().await? {
+                let name = entry.file_name();
+                let Some(name) = name.to_str() else {
+                    continue;
+                };
+                let Some((stamp, tail)) = name.split_once('-') else {
+                    continue;
+                };
+                let Some((key, nonce)) = tail.rsplit_once('-') else {
+                    continue;
+                };
+                if key == encoded
+                    && !stamp.is_empty()
+                    && stamp.bytes().all(|c| c.is_ascii_digit())
+                    && nonce.len() == 32
+                    && nonce.bytes().all(|c| c.is_ascii_hexdigit())
+                {
+                    return Ok(true);
+                }
+            }
+            Ok(false)
+        })
+    }
     fn flush(&self) -> BoxFuture<'_, Result<()>> {
         Box::pin(self.0.tracker.flush_all())
+    }
+    fn prepare_delete<'a>(&'a self, id: &'a SessionId) -> BoxFuture<'a, Result<()>> {
+        Box::pin(self.0.tracker.prepare_delete(id))
     }
     fn stat<'a>(
         &'a self,

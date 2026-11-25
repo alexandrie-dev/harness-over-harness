@@ -1,0 +1,32 @@
+--- a/web/components/settings/KeybindingsSettings.logic.ts
++++ b/web/components/settings/KeybindingsSettings.logic.ts
+@@ -236 +236 @@
+-  { id: "threads", title: msg("Threads"), prefixes: ["thread", "chat", "pullRequest"] },
++  { id: "threads", title: msg("Chats"), prefixes: ["thread", "chat", "pullRequest"] },
+@@ -412 +412 @@
+-  "composer.sendAndNewThread": msg("Composer: Send and Start New Thread"),
++  "composer.sendAndNewThread": msg("Composer: Send and Start New Chat"),
+@@ -416 +416 @@
+-  "thread.copyReference": msg("Pull Request: Copy Link or Thread"),
++  "thread.copyReference": msg("Pull Request: Copy Link or Chat"),
+@@ -427 +427 @@
+-  "threadPanel.toggle": msg("Thread Panel: Toggle"),
++  "threadPanel.toggle": msg("Chat Panel: Toggle"),
+@@ -462,7 +462,7 @@
+-  "thread.stop": msg("Thread: Stop"),
+-  "thread.previous": msg("Thread: Previous"),
+-  "thread.next": msg("Thread: Next"),
+-  "thread.settle": msg("Thread: Settle"),
+-  "thread.pin": msg("Thread: Pin"),
+-  "thread.regenerateTitle": msg("Thread: Regenerate Title"),
+-  "thread.undo": msg("Thread: Undo"),
++  "thread.stop": msg("Chat: Stop"),
++  "thread.previous": msg("Chat: Previous"),
++  "thread.next": msg("Chat: Next"),
++  "thread.settle": msg("Chat: Settle"),
++  "thread.pin": msg("Chat: Pin"),
++  "thread.regenerateTitle": msg("Chat: Regenerate Title"),
++  "thread.undo": msg("Chat: Undo"),
+@@ -500 +500 @@
+-    return resolve(msg("Thread: Jump: {n}", { n: raw.slice("thread.jump.".length) }));
++    return resolve(msg("Chat: Jump: {n}", { n: raw.slice("thread.jump.".length) }));

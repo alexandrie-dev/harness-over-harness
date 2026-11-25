@@ -48,7 +48,18 @@ impl BundleSource for ShippedBundles {
                 )));
             }
         };
-        let mut files = vec![("cordis.patch.yml".into(), text.into())];
+        let mut patch = text.to_owned();
+        if name == "@hoh/window" {
+            patch.push_str(
+                "\n- insert:\n    - id: plugin-inventory\n      name: 'hoh:plugin-inventory'\n",
+            );
+            for (id, _) in hoh_authored_plugins::PLUGINS {
+                patch.push_str(&format!(
+                    "    - id: author-{id}\n      name: 'hoh:plugin-{id}'\n"
+                ));
+            }
+        }
+        let mut files = vec![("cordis.patch.yml".into(), patch)];
         if name == "@deepseek-ai/dsh-web-app" {
             for (file, text) in [
                 (

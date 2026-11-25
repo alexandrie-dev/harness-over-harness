@@ -1,0 +1,2977 @@
+{
+  "//": "Проект tsc основы HOH-40 (src/t3/base). Пишет scripts/t3-sync.py; настройки — как apps/web/tsconfig.json и tsconfig.base.json T3. files — неотложенные файлы.",
+  "compilerOptions": {
+    "target": "ES2023",
+    "module": "Preserve",
+    "moduleResolution": "Bundler",
+    "jsx": "react-jsx",
+    "noEmit": true,
+    "lib": [
+      "ES2023",
+      "ES2024.Promise",
+      "ESNext.Disposable",
+      "DOM",
+      "DOM.Iterable"
+    ],
+    "types": [
+      "vite-plus/client",
+      "node"
+    ],
+    "typeRoots": [
+      "./types",
+      "../../../node_modules/@types"
+    ],
+    "allowImportingTsExtensions": true,
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "noImplicitOverride": true,
+    "useDefineForClassFields": true,
+    "forceConsistentCasingInFileNames": true,
+    "skipLibCheck": true,
+    "allowSyntheticDefaultImports": true,
+    "esModuleInterop": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "paths": {
+      "~/*": [
+        "./web/*"
+      ],
+      "@betteroffice/docx/editor": [
+        "./stubs/@betteroffice/docx/editor.ts"
+      ],
+      "@betteroffice/docx/layout": [
+        "./stubs/@betteroffice/docx/layout.ts"
+      ],
+      "@betteroffice/docx/layout/render": [
+        "./stubs/@betteroffice/docx/layout/render.ts"
+      ],
+      "@betteroffice/docx/yrs": [
+        "./stubs/@betteroffice/docx/yrs.ts"
+      ],
+      "@betteroffice/fonts": [
+        "./stubs/@betteroffice/fonts.ts"
+      ],
+      "@betteroffice/pptx": [
+        "./stubs/@betteroffice/pptx.ts"
+      ],
+      "@betteroffice/xlsx": [
+        "./stubs/@betteroffice/xlsx.ts"
+      ],
+      "@betteroffice/xlsx/headless": [
+        "./stubs/@betteroffice/xlsx/headless.ts"
+      ],
+      "@clerk/electron/passkeys": [
+        "./stubs/@clerk/electron/passkeys.ts"
+      ],
+      "@clerk/electron/react": [
+        "./stubs/@clerk/electron/react.ts"
+      ],
+      "@clerk/react": [
+        "./stubs/@clerk/react.ts"
+      ],
+      "@daypicker/react": [
+        "./stubs/@daypicker/react.ts"
+      ],
+      "@noble/curves/nist": [
+        "./stubs/@noble/curves/nist.ts"
+      ],
+      "@t3tools/client-runtime/assembly-highlighting": [
+        "./client-runtime/assemblyHighlighting.ts"
+      ],
+      "@t3tools/client-runtime/authorization": [
+        "./client-runtime/authorization/index.ts"
+      ],
+      "@t3tools/client-runtime/change-request-links": [
+        "./client-runtime/changeRequestLinks.ts"
+      ],
+      "@t3tools/client-runtime/clock": [
+        "./client-runtime/clock.ts"
+      ],
+      "@t3tools/client-runtime/composer-model-mentions": [
+        "./client-runtime/composerModelMentions.ts"
+      ],
+      "@t3tools/client-runtime/composerThreadItems": [
+        "./client-runtime/composerThreadItems.ts"
+      ],
+      "@t3tools/client-runtime/connection": [
+        "./client-runtime/connection/index.ts"
+      ],
+      "@t3tools/client-runtime/contract-labels": [
+        "./client-runtime/contractLabels.ts"
+      ],
+      "@t3tools/client-runtime/delayed-status": [
+        "./client-runtime/delayedStatus.ts"
+      ],
+      "@t3tools/client-runtime/device/duo-control": [
+        "./client-runtime/device/duoControl.ts"
+      ],
+      "@t3tools/client-runtime/device/duo-viewer": [
+        "./client-runtime/device/duoViewer.ts"
+      ],
+      "@t3tools/client-runtime/device/frame": [
+        "./client-runtime/device/frame.ts"
+      ],
+      "@t3tools/client-runtime/device/hub-access": [
+        "./client-runtime/device/hubAccess.ts"
+      ],
+      "@t3tools/client-runtime/device/model": [
+        "./client-runtime/device/model.ts"
+      ],
+      "@t3tools/client-runtime/device/phone-interaction": [
+        "./client-runtime/device/phoneInteraction.ts"
+      ],
+      "@t3tools/client-runtime/device/phone-viewer": [
+        "./client-runtime/device/phoneViewer.ts"
+      ],
+      "@t3tools/client-runtime/device/screenshot": [
+        "./client-runtime/device/screenshot.ts"
+      ],
+      "@t3tools/client-runtime/device/shape-profile": [
+        "./client-runtime/device/shapeProfile.ts"
+      ],
+      "@t3tools/client-runtime/device/stream": [
+        "./client-runtime/device/stream.ts"
+      ],
+      "@t3tools/client-runtime/diff-count": [
+        "./client-runtime/diffCount.ts"
+      ],
+      "@t3tools/client-runtime/environment": [
+        "./client-runtime/environment/index.ts"
+      ],
+      "@t3tools/client-runtime/errors": [
+        "./client-runtime/errors/index.ts"
+      ],
+      "@t3tools/client-runtime/file-preview": [
+        "./client-runtime/filePreview.ts"
+      ],
+      "@t3tools/client-runtime/handoff": [
+        "./client-runtime/handoff.ts"
+      ],
+      "@t3tools/client-runtime/image-attachment-size": [
+        "./client-runtime/imageAttachmentSize.ts"
+      ],
+      "@t3tools/client-runtime/issue-links": [
+        "./client-runtime/issueLinks.ts"
+      ],
+      "@t3tools/client-runtime/issue-list": [
+        "./client-runtime/issueList.ts"
+      ],
+      "@t3tools/client-runtime/issue-presentation": [
+        "./client-runtime/issuePresentation.ts"
+      ],
+      "@t3tools/client-runtime/issue-selection": [
+        "./client-runtime/issueSelection.ts"
+      ],
+      "@t3tools/client-runtime/link-request": [
+        "./client-runtime/linkRequest.ts"
+      ],
+      "@t3tools/client-runtime/load-balancing": [
+        "./client-runtime/load-balancing.ts"
+      ],
+      "@t3tools/client-runtime/locales": [
+        "./client-runtime/locales.ts"
+      ],
+      "@t3tools/client-runtime/markdown-images": [
+        "./client-runtime/markdownImages.ts"
+      ],
+      "@t3tools/client-runtime/mcp-apps": [
+        "./client-runtime/mcpApps/host.ts"
+      ],
+      "@t3tools/client-runtime/media-actions": [
+        "./client-runtime/mediaActions.ts"
+      ],
+      "@t3tools/client-runtime/media-reference": [
+        "./client-runtime/mediaReference.ts"
+      ],
+      "@t3tools/client-runtime/media-source": [
+        "./client-runtime/mediaSource.ts"
+      ],
+      "@t3tools/client-runtime/model-search": [
+        "./client-runtime/modelSearch.ts"
+      ],
+      "@t3tools/client-runtime/model-traits": [
+        "./client-runtime/modelTraits.ts"
+      ],
+      "@t3tools/client-runtime/operations": [
+        "./client-runtime/operations/index.ts"
+      ],
+      "@t3tools/client-runtime/operations/projects": [
+        "./client-runtime/operations/projects.ts"
+      ],
+      "@t3tools/client-runtime/platform": [
+        "./client-runtime/platform/index.ts"
+      ],
+      "@t3tools/client-runtime/preview/server-browser-stream": [
+        "./client-runtime/preview/serverBrowserStream.ts"
+      ],
+      "@t3tools/client-runtime/project-favicon-cache": [
+        "./client-runtime/projectFaviconCache.ts"
+      ],
+      "@t3tools/client-runtime/prompt-links": [
+        "./client-runtime/promptLinks.ts"
+      ],
+      "@t3tools/client-runtime/provider-clients": [
+        "./client-runtime/providerClients.ts"
+      ],
+      "@t3tools/client-runtime/provider-instance-ids": [
+        "./client-runtime/providerInstanceIds.ts"
+      ],
+      "@t3tools/client-runtime/providerSkills": [
+        "./client-runtime/providerSkills.ts"
+      ],
+      "@t3tools/client-runtime/providerSubProviders": [
+        "./client-runtime/providerSubProviders.ts"
+      ],
+      "@t3tools/client-runtime/providerUpdateRequiredModels": [
+        "./client-runtime/providerUpdateRequiredModels.ts"
+      ],
+      "@t3tools/client-runtime/pull-request-checks": [
+        "./client-runtime/pullRequestChecks.ts"
+      ],
+      "@t3tools/client-runtime/pull-request-diff-fold": [
+        "./client-runtime/pullRequestDiffFold.ts"
+      ],
+      "@t3tools/client-runtime/pull-request-editing": [
+        "./client-runtime/pullRequestEditing.ts"
+      ],
+      "@t3tools/client-runtime/pull-request-link-input": [
+        "./client-runtime/pullRequestLinkInput.ts"
+      ],
+      "@t3tools/client-runtime/pull-request-markdown": [
+        "./client-runtime/pullRequestMarkdown.ts"
+      ],
+      "@t3tools/client-runtime/pull-request-project-filter": [
+        "./client-runtime/pullRequestProjectFilter.ts"
+      ],
+      "@t3tools/client-runtime/pull-request-query": [
+        "./client-runtime/pullRequestQuery.ts"
+      ],
+      "@t3tools/client-runtime/pull-request-reactions": [
+        "./client-runtime/pullRequestReactions.ts"
+      ],
+      "@t3tools/client-runtime/pull-request-reply": [
+        "./client-runtime/pullRequestReply.ts"
+      ],
+      "@t3tools/client-runtime/pull-request-reviewers": [
+        "./client-runtime/pullRequestReviewers.ts"
+      ],
+      "@t3tools/client-runtime/pull-request-selection": [
+        "./client-runtime/pullRequestSelection.ts"
+      ],
+      "@t3tools/client-runtime/queued-run-edit": [
+        "./client-runtime/queuedRunEdit.ts"
+      ],
+      "@t3tools/client-runtime/relay": [
+        "./client-runtime/relay/index.ts"
+      ],
+      "@t3tools/client-runtime/review-guide-tour": [
+        "./client-runtime/reviewGuideTour.ts"
+      ],
+      "@t3tools/client-runtime/rpc": [
+        "./client-runtime/rpc/index.ts"
+      ],
+      "@t3tools/client-runtime/saved-views": [
+        "./client-runtime/savedViews.ts"
+      ],
+      "@t3tools/client-runtime/scheduled-task-time-zone": [
+        "./client-runtime/scheduledTaskTimeZone.ts"
+      ],
+      "@t3tools/client-runtime/scheduled-task-webhook": [
+        "./client-runtime/scheduledTaskWebhook.ts"
+      ],
+      "@t3tools/client-runtime/secret-request": [
+        "./client-runtime/secretRequest.ts"
+      ],
+      "@t3tools/client-runtime/source-control-clients": [
+        "./client-runtime/sourceControlClients.ts"
+      ],
+      "@t3tools/client-runtime/state/assets": [
+        "./client-runtime/state/assets.ts"
+      ],
+      "@t3tools/client-runtime/state/attachment-uploads": [
+        "./client-runtime/state/attachmentUploads.ts"
+      ],
+      "@t3tools/client-runtime/state/attachments": [
+        "./client-runtime/state/attachments.ts"
+      ],
+      "@t3tools/client-runtime/state/auth": [
+        "./client-runtime/state/auth.ts"
+      ],
+      "@t3tools/client-runtime/state/command-output": [
+        "./client-runtime/state/commandOutput.ts"
+      ],
+      "@t3tools/client-runtime/state/composer-dispatch": [
+        "./client-runtime/state/composerDispatch.ts"
+      ],
+      "@t3tools/client-runtime/state/connectMcpApproval": [
+        "./client-runtime/state/connectMcpApproval.ts"
+      ],
+      "@t3tools/client-runtime/state/connections": [
+        "./client-runtime/state/connections.ts"
+      ],
+      "@t3tools/client-runtime/state/context-window": [
+        "./client-runtime/state/contextWindow.ts"
+      ],
+      "@t3tools/client-runtime/state/device": [
+        "./client-runtime/state/device.ts"
+      ],
+      "@t3tools/client-runtime/state/deviceHubAccess": [
+        "./client-runtime/state/deviceHubAccess.ts"
+      ],
+      "@t3tools/client-runtime/state/entities": [
+        "./client-runtime/state/entities.ts"
+      ],
+      "@t3tools/client-runtime/state/environmentHttpAuth": [
+        "./client-runtime/state/environmentHttpAuth.ts"
+      ],
+      "@t3tools/client-runtime/state/filesystem": [
+        "./client-runtime/state/filesystem.ts"
+      ],
+      "@t3tools/client-runtime/state/git": [
+        "./client-runtime/state/git.ts"
+      ],
+      "@t3tools/client-runtime/state/issue-trackers": [
+        "./client-runtime/state/issueTrackers.ts"
+      ],
+      "@t3tools/client-runtime/state/issues": [
+        "./client-runtime/state/issues.ts"
+      ],
+      "@t3tools/client-runtime/state/item-support": [
+        "./client-runtime/state/itemSupport.ts"
+      ],
+      "@t3tools/client-runtime/state/mcp-apps": [
+        "./client-runtime/state/mcpApps.ts"
+      ],
+      "@t3tools/client-runtime/state/models": [
+        "./client-runtime/state/models.ts"
+      ],
+      "@t3tools/client-runtime/state/orchestration": [
+        "./client-runtime/state/orchestration.ts"
+      ],
+      "@t3tools/client-runtime/state/orchestration-v2-projection": [
+        "./client-runtime/state/orchestrationV2Projection.ts"
+      ],
+      "@t3tools/client-runtime/state/outdatedServerUpdate": [
+        "./client-runtime/state/outdatedServerUpdate.ts"
+      ],
+      "@t3tools/client-runtime/state/peerLinks": [
+        "./client-runtime/state/peerLinks.ts"
+      ],
+      "@t3tools/client-runtime/state/peerPairingCode": [
+        "./client-runtime/state/peerPairingCode.ts"
+      ],
+      "@t3tools/client-runtime/state/pending-user-input": [
+        "./client-runtime/state/pendingUserInput.ts"
+      ],
+      "@t3tools/client-runtime/state/presentation": [
+        "./client-runtime/state/presentation.ts"
+      ],
+      "@t3tools/client-runtime/state/preview": [
+        "./client-runtime/state/preview.ts"
+      ],
+      "@t3tools/client-runtime/state/previewTunnel": [
+        "./client-runtime/state/previewTunnel.ts"
+      ],
+      "@t3tools/client-runtime/state/project-grouping": [
+        "./client-runtime/state/projectGrouping.ts"
+      ],
+      "@t3tools/client-runtime/state/projects": [
+        "./client-runtime/state/projects.ts"
+      ],
+      "@t3tools/client-runtime/state/provider-instance-display": [
+        "./client-runtime/state/providerInstanceDisplay.ts"
+      ],
+      "@t3tools/client-runtime/state/pull-requests": [
+        "./client-runtime/state/pullRequests.ts"
+      ],
+      "@t3tools/client-runtime/state/query-persistence": [
+        "./client-runtime/state/queryPersistence.ts"
+      ],
+      "@t3tools/client-runtime/state/relay": [
+        "./client-runtime/state/relayDiscovery.ts"
+      ],
+      "@t3tools/client-runtime/state/review": [
+        "./client-runtime/state/review.ts"
+      ],
+      "@t3tools/client-runtime/state/runtime": [
+        "./client-runtime/state/runtime.ts"
+      ],
+      "@t3tools/client-runtime/state/server": [
+        "./client-runtime/state/server.ts"
+      ],
+      "@t3tools/client-runtime/state/session": [
+        "./client-runtime/state/session.ts"
+      ],
+      "@t3tools/client-runtime/state/shared-settings": [
+        "./client-runtime/state/sharedSettings.ts"
+      ],
+      "@t3tools/client-runtime/state/shell": [
+        "./client-runtime/state/shell.ts"
+      ],
+      "@t3tools/client-runtime/state/source-control": [
+        "./client-runtime/state/sourceControl.ts"
+      ],
+      "@t3tools/client-runtime/state/subagent-display": [
+        "./client-runtime/state/subagentDisplay.ts"
+      ],
+      "@t3tools/client-runtime/state/subagentRuntime": [
+        "./client-runtime/state/subagentRuntime.ts"
+      ],
+      "@t3tools/client-runtime/state/terminal": [
+        "./client-runtime/state/terminal.ts"
+      ],
+      "@t3tools/client-runtime/state/thread-activity-announcement": [
+        "./client-runtime/state/threadActivityAnnouncement.ts"
+      ],
+      "@t3tools/client-runtime/state/thread-checkpoints": [
+        "./client-runtime/state/threadCheckpoints.ts"
+      ],
+      "@t3tools/client-runtime/state/thread-execution": [
+        "./client-runtime/state/threadExecution.ts"
+      ],
+      "@t3tools/client-runtime/state/thread-history-merge": [
+        "./client-runtime/state/threadHistoryMerge.ts"
+      ],
+      "@t3tools/client-runtime/state/thread-inbox": [
+        "./client-runtime/state/threadInbox.ts"
+      ],
+      "@t3tools/client-runtime/state/thread-relationships": [
+        "./client-runtime/state/threadRelationships.ts"
+      ],
+      "@t3tools/client-runtime/state/thread-requests": [
+        "./client-runtime/state/threadRequests.ts"
+      ],
+      "@t3tools/client-runtime/state/thread-search": [
+        "./client-runtime/state/threadSearch.ts"
+      ],
+      "@t3tools/client-runtime/state/thread-settled": [
+        "./client-runtime/state/threadSettled.ts"
+      ],
+      "@t3tools/client-runtime/state/thread-sort": [
+        "./client-runtime/state/threadSort.ts"
+      ],
+      "@t3tools/client-runtime/state/thread-subagents": [
+        "./client-runtime/state/threadSubagents.ts"
+      ],
+      "@t3tools/client-runtime/state/thread-undo": [
+        "./client-runtime/state/threadUndo.ts"
+      ],
+      "@t3tools/client-runtime/state/thread-visits": [
+        "./client-runtime/state/threadVisits.ts"
+      ],
+      "@t3tools/client-runtime/state/thread-workflows": [
+        "./client-runtime/state/threadWorkflows.ts"
+      ],
+      "@t3tools/client-runtime/state/threads": [
+        "./client-runtime/state/threads.ts"
+      ],
+      "@t3tools/client-runtime/state/turn-item-presentation": [
+        "./client-runtime/state/turnItemPresentation.ts"
+      ],
+      "@t3tools/client-runtime/state/usage": [
+        "./client-runtime/state/usage.ts"
+      ],
+      "@t3tools/client-runtime/state/usage-access": [
+        "./client-runtime/state/usageAccess.ts"
+      ],
+      "@t3tools/client-runtime/state/usage-progress": [
+        "./client-runtime/state/usageProgress.ts"
+      ],
+      "@t3tools/client-runtime/state/vcs": [
+        "./client-runtime/state/vcs.ts"
+      ],
+      "@t3tools/client-runtime/t3ToolSummary": [
+        "./client-runtime/t3ToolSummary.ts"
+      ],
+      "@t3tools/client-runtime/text-paste": [
+        "./client-runtime/textPaste.ts"
+      ],
+      "@t3tools/client-runtime/thread-pull-request-compatibility": [
+        "./client-runtime/threadPullRequestCompatibility.ts"
+      ],
+      "@t3tools/client-runtime/thread-pull-requests": [
+        "./client-runtime/threadPullRequests.ts"
+      ],
+      "@t3tools/client-runtime/thread-reference": [
+        "./client-runtime/threadReference.ts"
+      ],
+      "@t3tools/client-runtime/user-message": [
+        "./client-runtime/userMessage.ts"
+      ],
+      "@t3tools/client-runtime/voice-input": [
+        "./client-runtime/voice-input/index.ts"
+      ],
+      "@t3tools/client-runtime/webhook-address": [
+        "./client-runtime/webhookAddress.ts"
+      ],
+      "@t3tools/client-runtime/work-log/command-label": [
+        "./client-runtime/work-log/commandLabel.ts"
+      ],
+      "@t3tools/client-runtime/work-log/embedded-scripts": [
+        "./client-runtime/work-log/embeddedScripts.ts"
+      ],
+      "@t3tools/client-runtime/work-log/item-detail": [
+        "./client-runtime/work-log/itemDetail.ts"
+      ],
+      "@t3tools/client-runtime/work-log/presentation": [
+        "./client-runtime/work-log/presentation.ts"
+      ],
+      "@t3tools/client-runtime/work-log/scroll-anchor": [
+        "./client-runtime/work-log/scrollAnchor.ts"
+      ],
+      "@t3tools/client-runtime/work-log/tool-presentation": [
+        "./client-runtime/work-log/toolPresentation.ts"
+      ],
+      "@t3tools/client-runtime/work-log/user-input": [
+        "./client-runtime/work-log/userInput.ts"
+      ],
+      "@t3tools/client-runtime/workspace-basename-lookup": [
+        "./client-runtime/workspaceBasenameLookup.ts"
+      ],
+      "@t3tools/client-runtime/worktree-setup": [
+        "./client-runtime/worktreeSetup.ts"
+      ],
+      "@t3tools/client-runtime/zip/bounded-zip": [
+        "./client-runtime/zip/boundedZip.ts"
+      ],
+      "@t3tools/client-runtime/zip/directory": [
+        "./client-runtime/zip/zipDirectory.ts"
+      ],
+      "@t3tools/client-runtime/zip/error": [
+        "./client-runtime/zip/zipError.ts"
+      ],
+      "@t3tools/client-runtime/zip/error-messages": [
+        "./client-runtime/zip/zipErrorMessages.ts"
+      ],
+      "@t3tools/contracts": [
+        "./contracts/index.ts"
+      ],
+      "@t3tools/contracts/relay": [
+        "./contracts/relay.ts"
+      ],
+      "@t3tools/contracts/settings": [
+        "./contracts/settings.ts"
+      ],
+      "@t3tools/issue-tracker-linear/shared/issueUrl": [
+        "./issue-tracker-linear/shared/issueUrl.ts"
+      ],
+      "@t3tools/provider-acp-registry/client": [
+        "./provider-acp-registry/client.ts"
+      ],
+      "@t3tools/provider-acp-registry/settings": [
+        "./provider-acp-registry/settings.ts"
+      ],
+      "@t3tools/provider-core/client": [
+        "./provider-core/client.ts"
+      ],
+      "@t3tools/provider-core/modelShortName": [
+        "./provider-core/modelShortName.ts"
+      ],
+      "@t3tools/provider-cursor/client": [
+        "./provider-cursor/client.ts"
+      ],
+      "@t3tools/provider-cursor/settings": [
+        "./provider-cursor/settings.ts"
+      ],
+      "@t3tools/provider-fx/client": [
+        "./provider-fx/client.ts"
+      ],
+      "@t3tools/provider-fx/settings": [
+        "./provider-fx/settings.ts"
+      ],
+      "@t3tools/provider-grok/client": [
+        "./provider-grok/client.ts"
+      ],
+      "@t3tools/provider-grok/settings": [
+        "./provider-grok/settings.ts"
+      ],
+      "@t3tools/provider-kiro/client": [
+        "./provider-kiro/client.ts"
+      ],
+      "@t3tools/provider-kiro/settings": [
+        "./provider-kiro/settings.ts"
+      ],
+      "@t3tools/provider-muse/client": [
+        "./provider-muse/client.ts"
+      ],
+      "@t3tools/provider-muse/settings": [
+        "./provider-muse/settings.ts"
+      ],
+      "@t3tools/provider-opencode/client": [
+        "./provider-opencode/client.ts"
+      ],
+      "@t3tools/provider-opencode/settings": [
+        "./provider-opencode/settings.ts"
+      ],
+      "@t3tools/provider-pi/client": [
+        "./provider-pi/client.ts"
+      ],
+      "@t3tools/provider-pi/settings": [
+        "./provider-pi/settings.ts"
+      ],
+      "@t3tools/secret-provider-core/shared/definition": [
+        "./secret-provider-core/shared/definition.ts"
+      ],
+      "@t3tools/secret-provider-definitions/registry": [
+        "./secret-provider-definitions/registry.ts"
+      ],
+      "@t3tools/secret-provider-onepassword/shared/definition": [
+        "./secret-provider-onepassword/shared/definition.ts"
+      ],
+      "@t3tools/shared/Array": [
+        "./shared/Array.ts"
+      ],
+      "@t3tools/shared/KeyedLock": [
+        "./shared/KeyedLock.ts"
+      ],
+      "@t3tools/shared/String": [
+        "./shared/String.ts"
+      ],
+      "@t3tools/shared/Struct": [
+        "./shared/Struct.ts"
+      ],
+      "@t3tools/shared/advertisedEndpoint": [
+        "./shared/advertisedEndpoint.ts"
+      ],
+      "@t3tools/shared/assistantCitations": [
+        "./shared/assistantCitations.ts"
+      ],
+      "@t3tools/shared/authScopeOptions": [
+        "./shared/authScopeOptions.ts"
+      ],
+      "@t3tools/shared/backgroundActivitySettings": [
+        "./shared/backgroundActivitySettings.ts"
+      ],
+      "@t3tools/shared/changedFileKind": [
+        "./shared/changedFileKind.ts"
+      ],
+      "@t3tools/shared/chatList": [
+        "./shared/chatList.ts"
+      ],
+      "@t3tools/shared/claudeCompaction": [
+        "./shared/claudeCompaction.ts"
+      ],
+      "@t3tools/shared/cliRelease": [
+        "./shared/cliRelease.ts"
+      ],
+      "@t3tools/shared/cloneUrl": [
+        "./shared/cloneUrl.ts"
+      ],
+      "@t3tools/shared/codexArtifactTemplates": [
+        "./shared/codexArtifactTemplates.ts"
+      ],
+      "@t3tools/shared/codexArtifactTemplatesCopy": [
+        "./shared/codexArtifactTemplatesCopy.ts"
+      ],
+      "@t3tools/shared/codexAuthHandoff": [
+        "./shared/codexAuthHandoff.ts"
+      ],
+      "@t3tools/shared/codexFileCitations": [
+        "./shared/codexFileCitations.ts"
+      ],
+      "@t3tools/shared/codexMarkdownDirectives": [
+        "./shared/codexMarkdownDirectives.ts"
+      ],
+      "@t3tools/shared/commandOutput": [
+        "./shared/commandOutput.ts"
+      ],
+      "@t3tools/shared/composerContextClipboard": [
+        "./shared/composerContextClipboard.ts"
+      ],
+      "@t3tools/shared/composerContextLegacy": [
+        "./shared/composerContextLegacy.ts"
+      ],
+      "@t3tools/shared/composerContextReferences": [
+        "./shared/composerContextReferences.ts"
+      ],
+      "@t3tools/shared/composerInlineTokens": [
+        "./shared/composerInlineTokens.ts"
+      ],
+      "@t3tools/shared/composerPullRequestMatches": [
+        "./shared/composerPullRequestMatches.ts"
+      ],
+      "@t3tools/shared/composerTrigger": [
+        "./shared/composerTrigger.ts"
+      ],
+      "@t3tools/shared/connectAuth": [
+        "./shared/connectAuth.ts"
+      ],
+      "@t3tools/shared/delimitedPreview": [
+        "./shared/delimitedPreview.ts"
+      ],
+      "@t3tools/shared/diffCutLines": [
+        "./shared/diffCutLines.ts"
+      ],
+      "@t3tools/shared/dpop": [
+        "./shared/dpop.ts"
+      ],
+      "@t3tools/shared/dpopCommon": [
+        "./shared/dpopCommon.ts"
+      ],
+      "@t3tools/shared/favicon": [
+        "./shared/favicon.ts"
+      ],
+      "@t3tools/shared/fileLinks": [
+        "./shared/fileLinks.ts"
+      ],
+      "@t3tools/shared/filePreview": [
+        "./shared/filePreview.ts"
+      ],
+      "@t3tools/shared/git": [
+        "./shared/git.ts"
+      ],
+      "@t3tools/shared/hostClassification": [
+        "./shared/hostClassification.ts"
+      ],
+      "@t3tools/shared/htmlRender": [
+        "./shared/htmlRender.ts"
+      ],
+      "@t3tools/shared/httpObservability": [
+        "./shared/httpObservability.ts"
+      ],
+      "@t3tools/shared/image": [
+        "./shared/image.ts"
+      ],
+      "@t3tools/shared/imageDimensions": [
+        "./shared/imageDimensions.ts"
+      ],
+      "@t3tools/shared/inlineSkills": [
+        "./shared/inlineSkills.ts"
+      ],
+      "@t3tools/shared/keybindingMatching": [
+        "./shared/keybindingMatching.ts"
+      ],
+      "@t3tools/shared/keybindings": [
+        "./shared/keybindings.ts"
+      ],
+      "@t3tools/shared/markdownFrontmatter": [
+        "./shared/markdownFrontmatter.ts"
+      ],
+      "@t3tools/shared/markdownGithubAlerts": [
+        "./shared/markdownGithubAlerts.ts"
+      ],
+      "@t3tools/shared/markdownLinks": [
+        "./shared/markdownLinks.ts"
+      ],
+      "@t3tools/shared/markdownListIndentation": [
+        "./shared/markdownListIndentation.ts"
+      ],
+      "@t3tools/shared/markdownMath": [
+        "./shared/markdownMath.ts"
+      ],
+      "@t3tools/shared/markdownPipeline": [
+        "./shared/markdownPipeline.ts"
+      ],
+      "@t3tools/shared/markdownTaskList": [
+        "./shared/markdownTaskList.ts"
+      ],
+      "@t3tools/shared/markdownWindowsPaths": [
+        "./shared/markdownWindowsPaths.ts"
+      ],
+      "@t3tools/shared/mcpApp": [
+        "./shared/mcpApp.ts"
+      ],
+      "@t3tools/shared/mediaPreview": [
+        "./shared/mediaPreview.ts"
+      ],
+      "@t3tools/shared/model": [
+        "./shared/model.ts"
+      ],
+      "@t3tools/shared/oauthScope": [
+        "./shared/oauthScope.ts"
+      ],
+      "@t3tools/shared/orchestrationTiming": [
+        "./shared/orchestrationTiming.ts"
+      ],
+      "@t3tools/shared/orchestrationTimingCopy": [
+        "./shared/orchestrationTimingCopy.ts"
+      ],
+      "@t3tools/shared/orchestrationV2BoundedSnapshot": [
+        "./shared/orchestrationV2BoundedSnapshot.ts"
+      ],
+      "@t3tools/shared/orchestrationV2DedupedBodies": [
+        "./shared/orchestrationV2DedupedBodies.ts"
+      ],
+      "@t3tools/shared/orchestrationV2ManualContinuation": [
+        "./shared/orchestrationV2ManualContinuation.ts"
+      ],
+      "@t3tools/shared/orchestrationV2PendingBackgroundWork": [
+        "./shared/orchestrationV2PendingBackgroundWork.ts"
+      ],
+      "@t3tools/shared/orchestrationV2ThreadError": [
+        "./shared/orchestrationV2ThreadError.ts"
+      ],
+      "@t3tools/shared/orchestrationV2Timeline": [
+        "./shared/orchestrationV2Timeline.ts"
+      ],
+      "@t3tools/shared/paletteSearch": [
+        "./shared/paletteSearch.ts"
+      ],
+      "@t3tools/shared/paletteSearchCopy": [
+        "./shared/paletteSearchCopy.ts"
+      ],
+      "@t3tools/shared/path": [
+        "./shared/path.ts"
+      ],
+      "@t3tools/shared/pinOrderKey": [
+        "./shared/pinOrderKey.ts"
+      ],
+      "@t3tools/shared/png": [
+        "./shared/png.ts"
+      ],
+      "@t3tools/shared/preview": [
+        "./shared/preview.ts"
+      ],
+      "@t3tools/shared/previewViewport": [
+        "./shared/previewViewport.ts"
+      ],
+      "@t3tools/shared/projectFavicon": [
+        "./shared/projectFavicon.ts"
+      ],
+      "@t3tools/shared/projectScripts": [
+        "./shared/projectScripts.ts"
+      ],
+      "@t3tools/shared/projectScriptsCopy": [
+        "./shared/projectScriptsCopy.ts"
+      ],
+      "@t3tools/shared/projectSettings": [
+        "./shared/projectSettings.ts"
+      ],
+      "@t3tools/shared/promptLinks": [
+        "./shared/promptLinks.ts"
+      ],
+      "@t3tools/shared/promptLinksCopy": [
+        "./shared/promptLinksCopy.ts"
+      ],
+      "@t3tools/shared/proposedPlanText": [
+        "./shared/proposedPlanText.ts"
+      ],
+      "@t3tools/shared/providerAuthReturnUrl": [
+        "./shared/providerAuthReturnUrl.ts"
+      ],
+      "@t3tools/shared/pullRequestAnchor": [
+        "./shared/pullRequestAnchor.ts"
+      ],
+      "@t3tools/shared/pullRequestComposerTrigger": [
+        "./shared/pullRequestComposerTrigger.ts"
+      ],
+      "@t3tools/shared/qrCode": [
+        "./shared/qrCode.ts"
+      ],
+      "@t3tools/shared/relayAuth": [
+        "./shared/relayAuth.ts"
+      ],
+      "@t3tools/shared/relayJwt": [
+        "./shared/relayJwt.ts"
+      ],
+      "@t3tools/shared/relaySigning": [
+        "./shared/relaySigning.ts"
+      ],
+      "@t3tools/shared/relayTracing": [
+        "./shared/relayTracing.ts"
+      ],
+      "@t3tools/shared/relayUrl": [
+        "./shared/relayUrl.ts"
+      ],
+      "@t3tools/shared/releaseResource": [
+        "./shared/releaseResource.ts"
+      ],
+      "@t3tools/shared/remote": [
+        "./shared/remote.ts"
+      ],
+      "@t3tools/shared/schemaJson": [
+        "./shared/schemaJson.ts"
+      ],
+      "@t3tools/shared/searchRanking": [
+        "./shared/searchRanking.ts"
+      ],
+      "@t3tools/shared/semver": [
+        "./shared/semver.ts"
+      ],
+      "@t3tools/shared/serverSettings": [
+        "./shared/serverSettings.ts"
+      ],
+      "@t3tools/shared/socketFrameParts": [
+        "./shared/socketFrameParts.ts"
+      ],
+      "@t3tools/shared/sourceControl": [
+        "./shared/sourceControl.ts"
+      ],
+      "@t3tools/shared/speech": [
+        "./shared/speech.ts"
+      ],
+      "@t3tools/shared/speechCopy": [
+        "./shared/speechCopy.ts"
+      ],
+      "@t3tools/shared/t3McpToolPresentation": [
+        "./shared/t3McpToolPresentation.ts"
+      ],
+      "@t3tools/shared/t3ProjectFile": [
+        "./shared/t3ProjectFile.ts"
+      ],
+      "@t3tools/shared/telemetryId": [
+        "./shared/telemetryId.ts"
+      ],
+      "@t3tools/shared/terminalLabels": [
+        "./shared/terminalLabels.ts"
+      ],
+      "@t3tools/shared/terminalLabelsCopy": [
+        "./shared/terminalLabelsCopy.ts"
+      ],
+      "@t3tools/shared/terminalOutput": [
+        "./shared/terminalOutput.ts"
+      ],
+      "@t3tools/shared/textDirection": [
+        "./shared/textDirection.ts"
+      ],
+      "@t3tools/shared/themeCss": [
+        "./shared/themeCss.ts"
+      ],
+      "@t3tools/shared/themePalettes": [
+        "./shared/themePalettes.ts"
+      ],
+      "@t3tools/shared/themePreview": [
+        "./shared/themePreview.ts"
+      ],
+      "@t3tools/shared/thirdPartyLicenses": [
+        "./shared/thirdPartyLicenses.ts"
+      ],
+      "@t3tools/shared/threadFindText": [
+        "./shared/threadFindText.ts"
+      ],
+      "@t3tools/shared/threadLinks": [
+        "./shared/threadLinks.ts"
+      ],
+      "@t3tools/shared/threadLinksCopy": [
+        "./shared/threadLinksCopy.ts"
+      ],
+      "@t3tools/shared/threadPullRequests": [
+        "./shared/threadPullRequests.ts"
+      ],
+      "@t3tools/shared/threadSearch": [
+        "./shared/threadSearch.ts"
+      ],
+      "@t3tools/shared/threadTranscript": [
+        "./shared/threadTranscript.ts"
+      ],
+      "@t3tools/shared/toolActivity": [
+        "./shared/toolActivity.ts"
+      ],
+      "@t3tools/shared/toolActivityCopy": [
+        "./shared/toolActivityCopy.ts"
+      ],
+      "@t3tools/shared/toolOutput": [
+        "./shared/toolOutput.ts"
+      ],
+      "@t3tools/shared/triagePrompt": [
+        "./shared/triagePrompt.ts"
+      ],
+      "@t3tools/shared/url": [
+        "./shared/url.ts"
+      ],
+      "@t3tools/shared/usageFormat": [
+        "./shared/usageFormat.ts"
+      ],
+      "@t3tools/shared/usageFormatCopy": [
+        "./shared/usageFormatCopy.ts"
+      ],
+      "@t3tools/shared/usageLimits": [
+        "./shared/usageLimits.ts"
+      ],
+      "@t3tools/shared/usageLimitsCopy": [
+        "./shared/usageLimitsCopy.ts"
+      ],
+      "@t3tools/shared/usageMerge": [
+        "./shared/usageMerge.ts"
+      ],
+      "@t3tools/shared/video": [
+        "./shared/video.ts"
+      ],
+      "@t3tools/source-control-azure-devops/shared/definition": [
+        "./source-control-azure-devops/shared/definition.ts"
+      ],
+      "@t3tools/source-control-bitbucket/shared/definition": [
+        "./source-control-bitbucket/shared/definition.ts"
+      ],
+      "@t3tools/source-control-core/shared/definition": [
+        "./source-control-core/shared/definition.ts"
+      ],
+      "@t3tools/source-control-core/shared/threadPullRequests": [
+        "./source-control-core/shared/threadPullRequests.ts"
+      ],
+      "@t3tools/source-control-cursor-origin/shared/definition": [
+        "./source-control-cursor-origin/shared/definition.ts"
+      ],
+      "@t3tools/source-control-definitions/registry": [
+        "./source-control-definitions/registry.ts"
+      ],
+      "@t3tools/source-control-forgejo/shared/definition": [
+        "./source-control-forgejo/shared/definition.ts"
+      ],
+      "@t3tools/source-control-gitcafe/shared/definition": [
+        "./source-control-gitcafe/shared/definition.ts"
+      ],
+      "@t3tools/source-control-github/shared/definition": [
+        "./source-control-github/shared/definition.ts"
+      ],
+      "@t3tools/source-control-gitlab/shared/definition": [
+        "./source-control-gitlab/shared/definition.ts"
+      ],
+      "canvas-confetti": [
+        "./stubs/canvas-confetti.ts"
+      ],
+      "entities": [
+        "./stubs/entities.ts"
+      ],
+      "fast-xml-parser": [
+        "./stubs/fast-xml-parser.ts"
+      ],
+      "gt-i18n": [
+        "./shims/gt-i18n.ts"
+      ],
+      "gt-i18n/types": [
+        "./shims/gt-i18n/types.ts"
+      ],
+      "gt-react": [
+        "./shims/gt-react.tsx"
+      ],
+      "heic-to/csp": [
+        "./stubs/heic-to/csp.ts"
+      ],
+      "jsonc-parser": [
+        "./stubs/jsonc-parser.ts"
+      ],
+      "jszip": [
+        "./shims/jszip.ts"
+      ],
+      "saxes": [
+        "./stubs/saxes.ts"
+      ],
+      "sql.js": [
+        "./stubs/sql.js.ts"
+      ],
+      "three": [
+        "./stubs/three.ts"
+      ],
+      "three/addons/environments/RoomEnvironment.js": [
+        "./stubs/three/addons/environments/RoomEnvironment.js.ts"
+      ],
+      "three/addons/loaders/GLTFLoader.js": [
+        "./stubs/three/addons/loaders/GLTFLoader.js.ts"
+      ],
+      "tiff": [
+        "./stubs/tiff.ts"
+      ],
+      "trusted-types/lib/index.js": [
+        "./types/trusted-types/lib/index.d.ts"
+      ]
+    },
+    "moduleSuffixes": [
+      ".hoh",
+      ""
+    ]
+  },
+  "files": [
+    "client-runtime/assemblyHighlighting.ts",
+    "client-runtime/authorization/index.ts",
+    "client-runtime/authorization/remote.ts",
+    "client-runtime/authorization/service.ts",
+    "client-runtime/authorization/tokenStore.ts",
+    "client-runtime/changeRequestLinks.ts",
+    "client-runtime/clock.ts",
+    "client-runtime/composerModelMentions.ts",
+    "client-runtime/composerThreadItems.ts",
+    "client-runtime/connection/catalog.ts",
+    "client-runtime/connection/compatibility.ts",
+    "client-runtime/connection/connectivity.ts",
+    "client-runtime/connection/credentialStore.ts",
+    "client-runtime/connection/diagnosis.ts",
+    "client-runtime/connection/driver.ts",
+    "client-runtime/connection/errors.ts",
+    "client-runtime/connection/hostFreeze.ts",
+    "client-runtime/connection/index.ts",
+    "client-runtime/connection/layer.ts",
+    "client-runtime/connection/model.ts",
+    "client-runtime/connection/onboarding.ts",
+    "client-runtime/connection/outdatedHostUpdate.ts",
+    "client-runtime/connection/presentation.ts",
+    "client-runtime/connection/profileStore.ts",
+    "client-runtime/connection/pullRequestRoutingPermissions.ts",
+    "client-runtime/connection/registry.ts",
+    "client-runtime/connection/resolver.ts",
+    "client-runtime/connection/routes.ts",
+    "client-runtime/connection/supervisor.ts",
+    "client-runtime/connection/wakeups.ts",
+    "client-runtime/contractLabels.ts",
+    "client-runtime/delayedStatus.ts",
+    "client-runtime/device/duoControl.ts",
+    "client-runtime/device/frame.ts",
+    "client-runtime/device/hubAccess.ts",
+    "client-runtime/device/model.ts",
+    "client-runtime/device/phoneInteraction.ts",
+    "client-runtime/device/renderScheduler.ts",
+    "client-runtime/device/screenshot.ts",
+    "client-runtime/device/shapeProfile.ts",
+    "client-runtime/device/stream.ts",
+    "client-runtime/diffCount.ts",
+    "client-runtime/environment/descriptor.ts",
+    "client-runtime/environment/endpoint.ts",
+    "client-runtime/environment/index.ts",
+    "client-runtime/environment/scoped.ts",
+    "client-runtime/errors/errorTrace.ts",
+    "client-runtime/errors/index.ts",
+    "client-runtime/errors/network.ts",
+    "client-runtime/errors/orchestration.ts",
+    "client-runtime/errors/safeLog.ts",
+    "client-runtime/errors/translatable.ts",
+    "client-runtime/errors/transport.ts",
+    "client-runtime/filePreview.ts",
+    "client-runtime/handoff.ts",
+    "client-runtime/imageAttachmentSize.ts",
+    "client-runtime/issueLinks.ts",
+    "client-runtime/issueList.ts",
+    "client-runtime/issuePresentation.ts",
+    "client-runtime/issueSelection.ts",
+    "client-runtime/linkRequest.ts",
+    "client-runtime/listFormat.ts",
+    "client-runtime/load-balancing.ts",
+    "client-runtime/locales.ts",
+    "client-runtime/markdownImages.ts",
+    "client-runtime/mcpApps/host.ts",
+    "client-runtime/mediaActions.ts",
+    "client-runtime/mediaReference.ts",
+    "client-runtime/mediaSource.ts",
+    "client-runtime/modelSearch.ts",
+    "client-runtime/modelTraits.ts",
+    "client-runtime/operations/commands.ts",
+    "client-runtime/operations/index.ts",
+    "client-runtime/operations/projects.ts",
+    "client-runtime/operations/threadTitle.ts",
+    "client-runtime/platform/capabilities.ts",
+    "client-runtime/platform/hostYield.ts",
+    "client-runtime/platform/index.ts",
+    "client-runtime/platform/orchestrationCache.ts",
+    "client-runtime/platform/persistence.ts",
+    "client-runtime/platform/shellCacheEncoding.ts",
+    "client-runtime/platform/source.ts",
+    "client-runtime/platform/storageDocument.ts",
+    "client-runtime/platform/threadCacheEncoding.ts",
+    "client-runtime/preview/serverBrowserStream.ts",
+    "client-runtime/projectFaviconCache.ts",
+    "client-runtime/promptLinks.ts",
+    "client-runtime/providerClients.ts",
+    "client-runtime/providerInstanceIds.ts",
+    "client-runtime/providerSkills.ts",
+    "client-runtime/providerSubProviders.ts",
+    "client-runtime/providerUpdateRequiredModels.ts",
+    "client-runtime/pullRequestChecks.ts",
+    "client-runtime/pullRequestDiffFold.ts",
+    "client-runtime/pullRequestEditing.ts",
+    "client-runtime/pullRequestLinkInput.ts",
+    "client-runtime/pullRequestMarkdown.ts",
+    "client-runtime/pullRequestProjectFilter.ts",
+    "client-runtime/pullRequestQuery.ts",
+    "client-runtime/pullRequestReactions.ts",
+    "client-runtime/pullRequestReply.ts",
+    "client-runtime/pullRequestReviewers.ts",
+    "client-runtime/pullRequestSelection.ts",
+    "client-runtime/queuedRunEdit.ts",
+    "client-runtime/relay/cloudAccountService.ts",
+    "client-runtime/relay/discovery.ts",
+    "client-runtime/relay/dpopProof.ts",
+    "client-runtime/relay/errorPresentation.ts",
+    "client-runtime/relay/index.ts",
+    "client-runtime/relay/managedRelay.ts",
+    "client-runtime/relay/managedRelayState.ts",
+    "client-runtime/reviewGuideTour.ts",
+    "client-runtime/rpc/client.ts",
+    "client-runtime/rpc/http.ts",
+    "client-runtime/rpc/index.ts",
+    "client-runtime/rpc/protocol.ts",
+    "client-runtime/rpc/session.ts",
+    "client-runtime/savedViews.ts",
+    "client-runtime/scheduledTaskTimeZone.ts",
+    "client-runtime/scheduledTaskWebhook.ts",
+    "client-runtime/secretRequest.ts",
+    "client-runtime/sourceControlClients.ts",
+    "client-runtime/state/archivedThreads.ts",
+    "client-runtime/state/assets.ts",
+    "client-runtime/state/attachmentUploads.ts",
+    "client-runtime/state/attachments.ts",
+    "client-runtime/state/auth.ts",
+    "client-runtime/state/boundedThreadSnapshotHttp.ts",
+    "client-runtime/state/cachePersistence.ts",
+    "client-runtime/state/checkpointDiff.ts",
+    "client-runtime/state/commandOutput.ts",
+    "client-runtime/state/commandPermissions.ts",
+    "client-runtime/state/composerDispatch.ts",
+    "client-runtime/state/composerPathSearch.ts",
+    "client-runtime/state/connectMcpApproval.ts",
+    "client-runtime/state/connections.ts",
+    "client-runtime/state/contextWindow.ts",
+    "client-runtime/state/device.ts",
+    "client-runtime/state/deviceHubAccess.ts",
+    "client-runtime/state/entities.ts",
+    "client-runtime/state/environmentHttpAuth.ts",
+    "client-runtime/state/environmentStreams.ts",
+    "client-runtime/state/fileMetadata.ts",
+    "client-runtime/state/filesystem.ts",
+    "client-runtime/state/git.ts",
+    "client-runtime/state/gitActions.ts",
+    "client-runtime/state/issueTrackers.ts",
+    "client-runtime/state/issues.ts",
+    "client-runtime/state/itemSupport.ts",
+    "client-runtime/state/mcpApps.ts",
+    "client-runtime/state/models.ts",
+    "client-runtime/state/olderSettledThreads.ts",
+    "client-runtime/state/orchestration.ts",
+    "client-runtime/state/orchestrationV2Projection.ts",
+    "client-runtime/state/outdatedServerUpdate.ts",
+    "client-runtime/state/peerLinks.ts",
+    "client-runtime/state/peerPairingCode.ts",
+    "client-runtime/state/pendingUserInput.ts",
+    "client-runtime/state/presentation.ts",
+    "client-runtime/state/preview.ts",
+    "client-runtime/state/previewTunnel.ts",
+    "client-runtime/state/projectCommands.ts",
+    "client-runtime/state/projectEntities.ts",
+    "client-runtime/state/projectGrouping.ts",
+    "client-runtime/state/projectRemoval.ts",
+    "client-runtime/state/projects.ts",
+    "client-runtime/state/providerInstanceDisplay.ts",
+    "client-runtime/state/pullRequestDiffHttp.ts",
+    "client-runtime/state/pullRequestRouting.ts",
+    "client-runtime/state/pullRequestStatsPersistence.ts",
+    "client-runtime/state/pullRequests.ts",
+    "client-runtime/state/queryPersistence.ts",
+    "client-runtime/state/relayDiscovery.ts",
+    "client-runtime/state/review.ts",
+    "client-runtime/state/runtime.ts",
+    "client-runtime/state/server.ts",
+    "client-runtime/state/serverConfigProjection.ts",
+    "client-runtime/state/session.ts",
+    "client-runtime/state/sharedSettings.ts",
+    "client-runtime/state/shell.ts",
+    "client-runtime/state/shellCommands.ts",
+    "client-runtime/state/shellPullRequests.ts",
+    "client-runtime/state/shellReducer.ts",
+    "client-runtime/state/shellSnapshotHttp.ts",
+    "client-runtime/state/snapshots.ts",
+    "client-runtime/state/sourceControl.ts",
+    "client-runtime/state/steadyShells.ts",
+    "client-runtime/state/subagentDisplay.ts",
+    "client-runtime/state/subagentRuntime.ts",
+    "client-runtime/state/terminal.ts",
+    "client-runtime/state/terminalOutput.ts",
+    "client-runtime/state/terminalSession.ts",
+    "client-runtime/state/threadActivityAnnouncement.ts",
+    "client-runtime/state/threadCheckpoints.ts",
+    "client-runtime/state/threadCommands.ts",
+    "client-runtime/state/threadDetail.ts",
+    "client-runtime/state/threadExecution.ts",
+    "client-runtime/state/threadFamilies.ts",
+    "client-runtime/state/threadFeedback.ts",
+    "client-runtime/state/threadHistoryController.ts",
+    "client-runtime/state/threadHistoryHttp.ts",
+    "client-runtime/state/threadHistoryMerge.ts",
+    "client-runtime/state/threadInbox.ts",
+    "client-runtime/state/threadLifecycle.ts",
+    "client-runtime/state/threadRelationships.ts",
+    "client-runtime/state/threadRequests.ts",
+    "client-runtime/state/threadRetention.ts",
+    "client-runtime/state/threadSearch.ts",
+    "client-runtime/state/threadSettled.ts",
+    "client-runtime/state/threadShell.ts",
+    "client-runtime/state/threadSnapshotHttp.ts",
+    "client-runtime/state/threadSort.ts",
+    "client-runtime/state/threadState.ts",
+    "client-runtime/state/threadSubagents.ts",
+    "client-runtime/state/threadTagFilter.ts",
+    "client-runtime/state/threadTitleRegeneration.ts",
+    "client-runtime/state/threadTranscriptHttp.ts",
+    "client-runtime/state/threadUndo.ts",
+    "client-runtime/state/threadVisits.ts",
+    "client-runtime/state/threadWorkflows.ts",
+    "client-runtime/state/threads.ts",
+    "client-runtime/state/turnItemPresentation.ts",
+    "client-runtime/state/usage.ts",
+    "client-runtime/state/usageAccess.ts",
+    "client-runtime/state/usageProgress.ts",
+    "client-runtime/state/vcs.ts",
+    "client-runtime/state/vcsAction.ts",
+    "client-runtime/state/vcsCommandScheduler.ts",
+    "client-runtime/state/vcsRef.ts",
+    "client-runtime/state/vcsRefInvalidation.ts",
+    "client-runtime/state/vcsStatusRevalidation.ts",
+    "client-runtime/t3ToolSummary.ts",
+    "client-runtime/textPaste.ts",
+    "client-runtime/threadPullRequestCompatibility.ts",
+    "client-runtime/threadPullRequests.ts",
+    "client-runtime/threadReference.ts",
+    "client-runtime/userMessage.ts",
+    "client-runtime/voice-input/controller.ts",
+    "client-runtime/voice-input/environment.ts",
+    "client-runtime/voice-input/index.ts",
+    "client-runtime/voice-input/stream.ts",
+    "client-runtime/voice-input/transcription.ts",
+    "client-runtime/webhookAddress.ts",
+    "client-runtime/work-log/commandLabel.ts",
+    "client-runtime/work-log/embeddedScripts.ts",
+    "client-runtime/work-log/itemDetail.ts",
+    "client-runtime/work-log/presentation.ts",
+    "client-runtime/work-log/scrollAnchor.ts",
+    "client-runtime/work-log/t3ToolSentences.ts",
+    "client-runtime/work-log/toolPresentation.ts",
+    "client-runtime/work-log/userInput.ts",
+    "client-runtime/workspaceBasenameLookup.ts",
+    "client-runtime/worktreeSetup.ts",
+    "client-runtime/zip/boundedZip.ts",
+    "client-runtime/zip/zipDirectory.ts",
+    "client-runtime/zip/zipError.ts",
+    "client-runtime/zip/zipErrorMessages.ts",
+    "contracts/acpRegistry.ts",
+    "contracts/agentSessions.ts",
+    "contracts/applicationEvent.ts",
+    "contracts/assets.ts",
+    "contracts/assistantCitations.ts",
+    "contracts/auth.ts",
+    "contracts/background.ts",
+    "contracts/baseSchemas.ts",
+    "contracts/browserImport.ts",
+    "contracts/browserProfile.ts",
+    "contracts/chatAttachment.ts",
+    "contracts/checkpointDiff.ts",
+    "contracts/clientRpcPermissions.ts",
+    "contracts/composerContext.ts",
+    "contracts/composerContextClipboard.ts",
+    "contracts/desktopAppActivation.ts",
+    "contracts/desktopBootstrap.ts",
+    "contracts/desktopBrowser.ts",
+    "contracts/device.ts",
+    "contracts/editor.ts",
+    "contracts/environment.ts",
+    "contracts/environmentHttp.ts",
+    "contracts/filesystem.ts",
+    "contracts/git.ts",
+    "contracts/guestShare.ts",
+    "contracts/guestStream.ts",
+    "contracts/index.ts",
+    "contracts/ipc.ts",
+    "contracts/issue.ts",
+    "contracts/keybindings.ts",
+    "contracts/managedPolicy.ts",
+    "contracts/mcpApps.ts",
+    "contracts/model.ts",
+    "contracts/modelSelection.ts",
+    "contracts/orchestrationDispatch.ts",
+    "contracts/orchestrationProject.ts",
+    "contracts/orchestrationV2.ts",
+    "contracts/orchestrationV2IdTable.ts",
+    "contracts/orchestratorMcp.ts",
+    "contracts/peerLink.ts",
+    "contracts/preview.ts",
+    "contracts/previewAutomation.ts",
+    "contracts/previewCapture.ts",
+    "contracts/project.ts",
+    "contracts/projectClone.ts",
+    "contracts/provider.ts",
+    "contracts/providerInstance.ts",
+    "contracts/providerPolicy.ts",
+    "contracts/providerRuntime.ts",
+    "contracts/providerSetup.ts",
+    "contracts/providerUsageLimits.ts",
+    "contracts/pullRequest.ts",
+    "contracts/pullRequestReviewGuide.ts",
+    "contracts/relay.ts",
+    "contracts/relayClient.ts",
+    "contracts/remoteAccess.ts",
+    "contracts/resourceTelemetry.ts",
+    "contracts/review.ts",
+    "contracts/rpc.ts",
+    "contracts/scheduledTask.ts",
+    "contracts/secretReference.ts",
+    "contracts/secretRequest.ts",
+    "contracts/server.ts",
+    "contracts/settings.ts",
+    "contracts/settingsSecretValue.ts",
+    "contracts/sourceControl.ts",
+    "contracts/speech.ts",
+    "contracts/t3ProjectFile.ts",
+    "contracts/terminal.ts",
+    "contracts/threadMetadataMcp.ts",
+    "contracts/threadPullRequest.ts",
+    "contracts/threadSearch.ts",
+    "contracts/threadTags.ts",
+    "contracts/threadTitle.ts",
+    "contracts/usage.ts",
+    "contracts/usageLimitSourceId.ts",
+    "contracts/vcs.ts",
+    "contracts/worktreeMcp.ts",
+    "contracts/worktreeSetup.ts",
+    "issue-tracker-linear/shared/issueUrl.ts",
+    "provider-acp-registry/client.ts",
+    "provider-acp-registry/settings.ts",
+    "provider-core/client.ts",
+    "provider-core/modelShortName.ts",
+    "provider-cursor/client.ts",
+    "provider-cursor/settings.ts",
+    "provider-fx/client.ts",
+    "provider-fx/settings.ts",
+    "provider-grok/client.ts",
+    "provider-grok/settings.ts",
+    "provider-kiro/client.ts",
+    "provider-kiro/settings.ts",
+    "provider-muse/client.ts",
+    "provider-muse/settings.ts",
+    "provider-opencode/client.ts",
+    "provider-opencode/settings.ts",
+    "provider-pi/client.ts",
+    "provider-pi/settings.ts",
+    "secret-provider-core/shared/definition.ts",
+    "secret-provider-definitions/registry.ts",
+    "secret-provider-onepassword/shared/definition.ts",
+    "shared/Array.ts",
+    "shared/KeyedLock.ts",
+    "shared/String.ts",
+    "shared/Struct.ts",
+    "shared/advertisedEndpoint.ts",
+    "shared/assistantCitations.ts",
+    "shared/authScopeOptions.ts",
+    "shared/backgroundActivitySettings.ts",
+    "shared/changedFileKind.ts",
+    "shared/chatList.ts",
+    "shared/claudeCompaction.ts",
+    "shared/cliRelease.ts",
+    "shared/cloneUrl.ts",
+    "shared/codexArtifactTemplates.ts",
+    "shared/codexArtifactTemplatesCopy.ts",
+    "shared/codexAuthHandoff.ts",
+    "shared/codexFileCitations.ts",
+    "shared/codexMarkdownDirectives.ts",
+    "shared/commandOutput.ts",
+    "shared/composerContextClipboard.ts",
+    "shared/composerContextLegacy.ts",
+    "shared/composerContextReferences.ts",
+    "shared/composerInlineTokens.ts",
+    "shared/composerPullRequestMatches.ts",
+    "shared/composerTrigger.ts",
+    "shared/connectAuth.ts",
+    "shared/delimitedPreview.ts",
+    "shared/diffCutLines.ts",
+    "shared/dpopCommon.ts",
+    "shared/favicon.ts",
+    "shared/fileLinks.ts",
+    "shared/filePreview.ts",
+    "shared/git.ts",
+    "shared/hostClassification.ts",
+    "shared/htmlRender.ts",
+    "shared/httpObservability.ts",
+    "shared/image.ts",
+    "shared/imageDimensions.ts",
+    "shared/inlineSkills.ts",
+    "shared/keybindingMatching.ts",
+    "shared/keybindings.ts",
+    "shared/markdownFrontmatter.ts",
+    "shared/markdownGithubAlerts.ts",
+    "shared/markdownLeadingWhitespace.ts",
+    "shared/markdownLinks.ts",
+    "shared/markdownListIndentation.ts",
+    "shared/markdownMath.ts",
+    "shared/markdownOrderedListNumbers.ts",
+    "shared/markdownPipeline.ts",
+    "shared/markdownTaskList.ts",
+    "shared/markdownWindowsPaths.ts",
+    "shared/mcpApp.ts",
+    "shared/mediaPreview.ts",
+    "shared/model.ts",
+    "shared/oauthScope.ts",
+    "shared/orchestrationTiming.ts",
+    "shared/orchestrationTimingCopy.ts",
+    "shared/orchestrationV2BoundedSnapshot.ts",
+    "shared/orchestrationV2DedupedBodies.ts",
+    "shared/orchestrationV2ManualContinuation.ts",
+    "shared/orchestrationV2PendingBackgroundWork.ts",
+    "shared/orchestrationV2ThreadError.ts",
+    "shared/orchestrationV2Timeline.ts",
+    "shared/paletteSearch.ts",
+    "shared/paletteSearchCopy.ts",
+    "shared/path.ts",
+    "shared/pinOrderKey.ts",
+    "shared/png.ts",
+    "shared/preview.ts",
+    "shared/previewViewport.ts",
+    "shared/projectFavicon.ts",
+    "shared/projectScripts.ts",
+    "shared/projectScriptsCopy.ts",
+    "shared/projectSettings.ts",
+    "shared/promptLinks.ts",
+    "shared/promptLinksCopy.ts",
+    "shared/proposedPlanText.ts",
+    "shared/providerAuthReturnUrl.ts",
+    "shared/pullRequestAnchor.ts",
+    "shared/pullRequestComposerTrigger.ts",
+    "shared/qrCode.ts",
+    "shared/relayAuth.ts",
+    "shared/relayJwt.ts",
+    "shared/relaySigning.ts",
+    "shared/relayTracing.ts",
+    "shared/relayUrl.ts",
+    "shared/releaseResource.ts",
+    "shared/remote.ts",
+    "shared/schemaJson.ts",
+    "shared/searchRanking.ts",
+    "shared/semver.ts",
+    "shared/serverSettings.ts",
+    "shared/socketFrameParts.ts",
+    "shared/sourceControl.ts",
+    "shared/speech.ts",
+    "shared/speechCopy.ts",
+    "shared/t3McpToolPresentation.ts",
+    "shared/t3ProjectFile.ts",
+    "shared/telemetryId.ts",
+    "shared/terminalLabels.ts",
+    "shared/terminalLabelsCopy.ts",
+    "shared/terminalOutput.ts",
+    "shared/textDirection.ts",
+    "shared/themeCss.ts",
+    "shared/themePalettes.ts",
+    "shared/themePreview.ts",
+    "shared/thirdPartyLicenses.ts",
+    "shared/threadFindText.ts",
+    "shared/threadLinks.ts",
+    "shared/threadLinksCopy.ts",
+    "shared/threadPullRequests.ts",
+    "shared/threadSearch.ts",
+    "shared/threadTranscript.ts",
+    "shared/toolActivity.ts",
+    "shared/toolActivityCopy.ts",
+    "shared/toolOutput.ts",
+    "shared/triagePrompt.ts",
+    "shared/url.ts",
+    "shared/usageFormat.ts",
+    "shared/usageFormatCopy.ts",
+    "shared/usageLimits.ts",
+    "shared/usageLimitsCopy.ts",
+    "shared/usageMerge.ts",
+    "shared/video.ts",
+    "source-control-azure-devops/shared/definition.ts",
+    "source-control-azure-devops/shared/icon.ts",
+    "source-control-bitbucket/shared/definition.ts",
+    "source-control-bitbucket/shared/icon.ts",
+    "source-control-core/shared/definition.ts",
+    "source-control-core/shared/threadPullRequests.ts",
+    "source-control-cursor-origin/shared/definition.ts",
+    "source-control-cursor-origin/shared/icon.ts",
+    "source-control-definitions/registry.ts",
+    "source-control-forgejo/shared/definition.ts",
+    "source-control-forgejo/shared/icon.ts",
+    "source-control-gitcafe/shared/definition.ts",
+    "source-control-gitcafe/shared/icon.ts",
+    "source-control-github/shared/definition.ts",
+    "source-control-github/shared/gitHubMedia.ts",
+    "source-control-github/shared/icon.ts",
+    "source-control-github/shared/referenceAutolinks.ts",
+    "source-control-gitlab/shared/definition.ts",
+    "source-control-gitlab/shared/icon.ts",
+    "source-control-gitlab/shared/referenceAutolinks.ts",
+    "web/AppRoot.tsx",
+    "web/appInit.tsx",
+    "web/appearanceContrast.ts",
+    "web/appearanceFonts.ts",
+    "web/assets/assetUrls.ts",
+    "web/assets/longLivedAssetUrls.ts",
+    "web/assets/projectFaviconCache.ts",
+    "web/bootstrap.ts",
+    "web/branding.logic.ts",
+    "web/branding.ts",
+    "web/browser/BrowserDeviceToolbar.tsx",
+    "web/browser/BrowserProfileReporter.ts",
+    "web/browser/BrowserSurfaceSlot.tsx",
+    "web/browser/BrowserViewportResizeHandles.tsx",
+    "web/browser/ElectronBrowserHost.tsx",
+    "web/browser/HostedBrowserWebview.tsx",
+    "web/browser/ScreenRotationIcon.tsx",
+    "web/browser/ServerBrowserSurface.tsx",
+    "web/browser/annotationTheme.ts",
+    "web/browser/browserDefaults.ts",
+    "web/browser/browserDeviceToolbarState.ts",
+    "web/browser/browserLinkTarget.ts",
+    "web/browser/browserPointerStore.ts",
+    "web/browser/browserRecording.ts",
+    "web/browser/browserSurfaceStore.ts",
+    "web/browser/browserTargetResolver.ts",
+    "web/browser/browserViewportActions.ts",
+    "web/browser/browserViewportLayout.ts",
+    "web/browser/desktopTabLifetime.ts",
+    "web/browser/hostedBrowserWebviewStyle.ts",
+    "web/browser/openFileInPreview.ts",
+    "web/browser/previewRuntime.ts",
+    "web/browser/previewRuntimeTabId.ts",
+    "web/browser/previewWebviewConfigState.ts",
+    "web/browser/recordingCompositor.ts",
+    "web/browser/serverPictureInPicture.ts",
+    "web/browser/useBrowserLayoutZoomFactor.ts",
+    "web/browser/useBrowserViewportResize.ts",
+    "web/browser/useOpenLink.ts",
+    "web/browser/webUrl.ts",
+    "web/browser/webviewCrashRecovery.ts",
+    "web/browserFaviconLogic.ts",
+    "web/browserFaviconStore.ts",
+    "web/browserHistoryStore.ts",
+    "web/clientPersistenceStorage.ts",
+    "web/closedViewStore.ts",
+    "web/cloud/cloudLinkState.ts",
+    "web/cloud/connectCliAuth.ts",
+    "web/cloud/connectOnboarding.ts",
+    "web/cloud/linkEnvironment.ts",
+    "web/cloud/linkEnvironmentAtoms.ts",
+    "web/cloud/managedRelayState.ts",
+    "web/cloud/publicConfig.ts",
+    "web/cloud/relayClientInstallDialog.ts",
+    "web/cloud/relayFailureReason.ts",
+    "web/cloud/t3ConnectState.ts",
+    "web/cloud/useT3ConnectTurnOn.ts",
+    "web/commandPaletteBus.ts",
+    "web/commandPaletteStore.ts",
+    "web/components/AddProjectToMachineDialog.tsx",
+    "web/components/AnimatedHeight.tsx",
+    "web/components/AnimatedWidth.tsx",
+    "web/components/AppRouteModal.tsx",
+    "web/components/AppSidebarLayout.tsx",
+    "web/components/BackgroundThreadAnnouncer.tsx",
+    "web/components/BranchPicker.tsx",
+    "web/components/BranchToolbar.logic.ts",
+    "web/components/BranchToolbar.tsx",
+    "web/components/BranchToolbarBranchSelector.tsx",
+    "web/components/BranchToolbarEnvModeSelector.tsx",
+    "web/components/BranchToolbarEnvironmentSelector.tsx",
+    "web/components/ChatMarkdown.tsx",
+    "web/components/ChatView.logic.ts",
+    "web/components/ChatView.tsx",
+    "web/components/CommandBlock.tsx",
+    "web/components/CommandPalette.drag.ts",
+    "web/components/CommandPalette.logic.ts",
+    "web/components/CommandPalette.tsx",
+    "web/components/CommandPaletteAddProject.tsx",
+    "web/components/CommandPaletteContent.tsx",
+    "web/components/CommandPaletteLookups.ts",
+    "web/components/CommandPaletteProjectItems.tsx",
+    "web/components/CommandPaletteResults.tsx",
+    "web/components/CommandPaletteThemeItems.tsx",
+    "web/components/CommandPaletteThreadItems.tsx",
+    "web/components/ComposerContextLabel.tsx",
+    "web/components/ComposerContextPermissions.tsx",
+    "web/components/ComposerPromptEditorTiptap.tsx",
+    "web/components/ConfirmDialogHost.tsx",
+    "web/components/ConnectDeviceApprovalCoordinator.tsx",
+    "web/components/ConnectionStatusDot.tsx",
+    "web/components/ContextChip.tsx",
+    "web/components/DevReplayHost.tsx",
+    "web/components/DiffFilePathCopyButton.tsx",
+    "web/components/DiffPanel.tsx",
+    "web/components/DiffPanelShell.tsx",
+    "web/components/DiffWorkerPoolProvider.tsx",
+    "web/components/EnvironmentContextChip.tsx",
+    "web/components/EnvironmentMachineIcon.tsx",
+    "web/components/GitActionsControl.logic.ts",
+    "web/components/GitActionsControl.tsx",
+    "web/components/HistorySwipeNavigation.tsx",
+    "web/components/HostFreezeToastCoordinator.ts",
+    "web/components/Icons.tsx",
+    "web/components/InstallT3Commands.tsx",
+    "web/components/JetBrainsIcons.tsx",
+    "web/components/KeybindingsConfigWarning.tsx",
+    "web/components/KeybindingsUpdateToast.logic.ts",
+    "web/components/KeybindingsUpdateToast.tsx",
+    "web/components/LegacyThreadMigrationToast.ts",
+    "web/components/ManagedPolicy.tsx",
+    "web/components/NoActiveThreadState.tsx",
+    "web/components/NoProjectsHero.tsx",
+    "web/components/PermissionUpdateNotice.ts",
+    "web/components/PersistentThreadTerminals.tsx",
+    "web/components/PreviousWorktreeItemContent.tsx",
+    "web/components/ProjectCloneToastCoordinator.tsx",
+    "web/components/ProjectComboboxRow.tsx",
+    "web/components/ProjectEnvironmentBadge.tsx",
+    "web/components/ProjectFavicon.tsx",
+    "web/components/ProjectMonogram.tsx",
+    "web/components/ProjectPinButton.tsx",
+    "web/components/ProjectScriptsControl.tsx",
+    "web/components/ProviderUpdateLaunchNotification.logic.ts",
+    "web/components/ProviderUpdatesAction.tsx",
+    "web/components/PullRequestContextDetails.tsx",
+    "web/components/PullRequestThreadDialog.tsx",
+    "web/components/QuitHoldOverlay.tsx",
+    "web/components/RelativeTime.tsx",
+    "web/components/RenderErrorBoundary.tsx",
+    "web/components/ReopenClosedViewShortcut.tsx",
+    "web/components/RightPanelSheet.tsx",
+    "web/components/RightPanelTabs.tsx",
+    "web/components/SavedViewsMenu.tsx",
+    "web/components/ServerUpdateAction.tsx",
+    "web/components/Sidebar.drag.ts",
+    "web/components/Sidebar.logic.ts",
+    "web/components/Sidebar.motion.ts",
+    "web/components/Sidebar.pointer.ts",
+    "web/components/Sidebar.shiftGuard.ts",
+    "web/components/Sidebar.snooze.ts",
+    "web/components/Sidebar.tsx",
+    "web/components/SidebarStageBackdrop.tsx",
+    "web/components/SlowRpcRequestToastCoordinator.tsx",
+    "web/components/SourceControlAppAccessNotice.tsx",
+    "web/components/SourceControlIconArtwork.tsx",
+    "web/components/StartTruncatedPath.tsx",
+    "web/components/T3AppIcon.tsx",
+    "web/components/T3Wordmark.tsx",
+    "web/components/ThreadCommandSubtitle.tsx",
+    "web/components/ThreadContextChip.tsx",
+    "web/components/ThreadHoverCard.tsx",
+    "web/components/ThreadLinkPicker.tsx",
+    "web/components/ThreadNotificationCoordinator.logic.ts",
+    "web/components/ThreadNotificationCoordinator.tsx",
+    "web/components/ThreadRouteView.tsx",
+    "web/components/ThreadSearchMatch.tsx",
+    "web/components/ThreadStatusIndicators.tsx",
+    "web/components/ThreadTerminalDrawer.tsx",
+    "web/components/WorkspaceBreadcrumb.tsx",
+    "web/components/WorkspacePageContainer.tsx",
+    "web/components/WorkspacePageHeader.tsx",
+    "web/components/WorktreeBaseBranchPicker.tsx",
+    "web/components/auth/ConnectAgentSurface.logic.ts",
+    "web/components/auth/ConnectAgentSurface.tsx",
+    "web/components/auth/PairingRouteSurface.tsx",
+    "web/components/backgroundThreadAnnouncement.ts",
+    "web/components/chat/AgentElapsed.tsx",
+    "web/components/chat/AssistantCitationChip.tsx",
+    "web/components/chat/AssistantCitationCommentEditor.tsx",
+    "web/components/chat/AssistantCitationSource.tsx",
+    "web/components/chat/AssistantSelectionToolbar.tsx",
+    "web/components/chat/BackgroundWorkDetails.tsx",
+    "web/components/chat/ChangedFilesTree.tsx",
+    "web/components/chat/ChatBannerLane.tsx",
+    "web/components/chat/ChatCanvas.tsx",
+    "web/components/chat/ChatCanvasContext.ts",
+    "web/components/chat/ChatComposer.tsx",
+    "web/components/chat/ChatGptSharingControl.tsx",
+    "web/components/chat/ChatHeader.tsx",
+    "web/components/chat/ChatMarkdownMedia.tsx",
+    "web/components/chat/ChatOverlayHosts.tsx",
+    "web/components/chat/ChatRightPanel.tsx",
+    "web/components/chat/ChatTerminalDrawers.tsx",
+    "web/components/chat/ChildThreadApprovals.tsx",
+    "web/components/chat/CollapsedComposerPromptPreview.tsx",
+    "web/components/chat/CommandOutputPanel.tsx",
+    "web/components/chat/CompactComposerControlsMenu.tsx",
+    "web/components/chat/ComposerBanner.tsx",
+    "web/components/chat/ComposerBannerStack.tsx",
+    "web/components/chat/ComposerCodeBlockLanguagePicker.tsx",
+    "web/components/chat/ComposerCodeBlockNodeView.tsx",
+    "web/components/chat/ComposerCommandMenu.tsx",
+    "web/components/chat/ComposerCommandMenuLayer.tsx",
+    "web/components/chat/ComposerControl.tsx",
+    "web/components/chat/ComposerControlsBar.tsx",
+    "web/components/chat/ComposerFeedback.tsx",
+    "web/components/chat/ComposerFooterControls.tsx",
+    "web/components/chat/ComposerFreshSession.tsx",
+    "web/components/chat/ComposerModelEffort.tsx",
+    "web/components/chat/ComposerPendingApprovalActions.tsx",
+    "web/components/chat/ComposerPendingTerminalContexts.tsx",
+    "web/components/chat/ComposerPendingUserInputPanel.tsx",
+    "web/components/chat/ComposerPrimaryActions.tsx",
+    "web/components/chat/ComposerPromptLengthValidation.tsx",
+    "web/components/chat/ComposerServerUpdateStatus.tsx",
+    "web/components/chat/ComposerSpeechButton.tsx",
+    "web/components/chat/ComposerStashBadge.tsx",
+    "web/components/chat/ComposerStashMenu.tsx",
+    "web/components/chat/ComposerSurface.tsx",
+    "web/components/chat/ComposerUsageLimits.tsx",
+    "web/components/chat/DiffStatLabel.tsx",
+    "web/components/chat/DraftHeroHeadline.tsx",
+    "web/components/chat/DraftHeroProjectHeading.tsx",
+    "web/components/chat/DraftProjectName.tsx",
+    "web/components/chat/EffortGlyph.tsx",
+    "web/components/chat/ExpandedImageDialog.tsx",
+    "web/components/chat/ExpandedImagePreview.tsx",
+    "web/components/chat/FileTagChip.tsx",
+    "web/components/chat/GlobalVoiceInputIndicator.tsx",
+    "web/components/chat/GuestMessageAttachments.tsx",
+    "web/components/chat/GuestShareControls.tsx",
+    "web/components/chat/HighlightedCodeLines.tsx",
+    "web/components/chat/HighlightedTokens.tsx",
+    "web/components/chat/HtmlRenderDialog.tsx",
+    "web/components/chat/HtmlRenderFrame.tsx",
+    "web/components/chat/LinkRequestCard.tsx",
+    "web/components/chat/MarkdownCodeBlock.logic.ts",
+    "web/components/chat/MarkdownCodeBlock.tsx",
+    "web/components/chat/MarkdownDetails.tsx",
+    "web/components/chat/MarkdownExternalLink.tsx",
+    "web/components/chat/MarkdownFileLink.logic.ts",
+    "web/components/chat/MarkdownFileLink.tsx",
+    "web/components/chat/MarkdownMath.tsx",
+    "web/components/chat/MarkdownMermaidCodeBlock.tsx",
+    "web/components/chat/MarkdownTable.tsx",
+    "web/components/chat/MarkdownThreadLink.tsx",
+    "web/components/chat/MathTypeset.logic.ts",
+    "web/components/chat/MathTypeset.tsx",
+    "web/components/chat/McpAppFrame.tsx",
+    "web/components/chat/MermaidDiagram.tsx",
+    "web/components/chat/MessageCopyButton.tsx",
+    "web/components/chat/MessagesTimeline.logic.ts",
+    "web/components/chat/MessagesTimeline.tsx",
+    "web/components/chat/ModelListRow.tsx",
+    "web/components/chat/ModelMentionChip.tsx",
+    "web/components/chat/ModelPickerContent.tsx",
+    "web/components/chat/ModelPickerSidebar.tsx",
+    "web/components/chat/NativeChildWorkDialog.tsx",
+    "web/components/chat/OpenInPicker.logic.ts",
+    "web/components/chat/OpenInPicker.tsx",
+    "web/components/chat/OpenInPickerShortcut.ts",
+    "web/components/chat/PanelLayoutControls.tsx",
+    "web/components/chat/PierreEntryIcon.tsx",
+    "web/components/chat/ProposedPlanCard.tsx",
+    "web/components/chat/ProviderInstanceIcon.tsx",
+    "web/components/chat/ProviderModelPicker.logic.ts",
+    "web/components/chat/ProviderModelPicker.tsx",
+    "web/components/chat/ProviderPackageIcon.tsx",
+    "web/components/chat/ProviderStatusBanner.tsx",
+    "web/components/chat/ProviderSubagentBar.tsx",
+    "web/components/chat/QueuedRunsControl.tsx",
+    "web/components/chat/RightPanelSurfaceContent.tsx",
+    "web/components/chat/SecretRequestCard.tsx",
+    "web/components/chat/ShellCommandBlock.tsx",
+    "web/components/chat/SideChatPane.tsx",
+    "web/components/chat/SkillInlineText.tsx",
+    "web/components/chat/SnapShotAttachmentDetails.tsx",
+    "web/components/chat/SubagentTooltipContent.tsx",
+    "web/components/chat/TerminalContextInlineChip.tsx",
+    "web/components/chat/ThreadActivityAnnouncer.tsx",
+    "web/components/chat/ThreadActivityBanners.tsx",
+    "web/components/chat/ThreadAutomationsPanel.tsx",
+    "web/components/chat/ThreadContextDragGhost.tsx",
+    "web/components/chat/ThreadDetailsCard.tsx",
+    "web/components/chat/ThreadDetailsControl.tsx",
+    "web/components/chat/ThreadDetailsIssueRows.tsx",
+    "web/components/chat/ThreadDetailsItemsMenu.tsx",
+    "web/components/chat/ThreadDetailsPanel.tsx",
+    "web/components/chat/ThreadDetailsPrRow.tsx",
+    "web/components/chat/ThreadDetailsPrRows.tsx",
+    "web/components/chat/ThreadDetailsSection.tsx",
+    "web/components/chat/ThreadDetailsUsage.tsx",
+    "web/components/chat/ThreadErrorBanner.tsx",
+    "web/components/chat/ThreadFindBar.tsx",
+    "web/components/chat/ThreadFindProvider.tsx",
+    "web/components/chat/ThreadLineageWorkflowRow.tsx",
+    "web/components/chat/ThreadNow.tsx",
+    "web/components/chat/ThreadRelationshipIcon.tsx",
+    "web/components/chat/ThreadRelationshipsControl.tsx",
+    "web/components/chat/ThreadServersPanel.tsx",
+    "web/components/chat/ThreadStatusLine.tsx",
+    "web/components/chat/ThreadTimeline.tsx",
+    "web/components/chat/ThreadVisitWatermark.tsx",
+    "web/components/chat/TimelineAssistantRows.tsx",
+    "web/components/chat/TimelineMinimap.tsx",
+    "web/components/chat/TimelineOverlays.tsx",
+    "web/components/chat/TimelinePendingApprovalRow.tsx",
+    "web/components/chat/TimelineRowParts.tsx",
+    "web/components/chat/TimelineSystemDivider.tsx",
+    "web/components/chat/TimelineToolActivityIcon.tsx",
+    "web/components/chat/TimelineUserMessageRow.logic.ts",
+    "web/components/chat/TimelineUserMessageRow.tsx",
+    "web/components/chat/TimelineV2EventRow.logic.ts",
+    "web/components/chat/TimelineV2EventRow.tsx",
+    "web/components/chat/TimelineWorkEntryRow.logic.ts",
+    "web/components/chat/TimelineWorkEntryRow.tsx",
+    "web/components/chat/TimelineWorkGroupRows.logic.ts",
+    "web/components/chat/TimelineWorkGroupRows.tsx",
+    "web/components/chat/TraitsPicker.tsx",
+    "web/components/chat/TraitsSpeed.tsx",
+    "web/components/chat/TriageDraftHero.tsx",
+    "web/components/chat/UsageLimitRecoveryBanner.tsx",
+    "web/components/chat/UserMessageContextChips.tsx",
+    "web/components/chat/V2ItemInspector.tsx",
+    "web/components/chat/V2LifecycleRow.logic.ts",
+    "web/components/chat/V2LifecycleRow.tsx",
+    "web/components/chat/VoiceInputErrorPill.tsx",
+    "web/components/chat/VoiceInputPill.tsx",
+    "web/components/chat/VoiceInputSetup.tsx",
+    "web/components/chat/WorkLog.tsx",
+    "web/components/chat/WorkflowOpeningBlock.tsx",
+    "web/components/chat/WorkspaceEntryIcon.tsx",
+    "web/components/chat/WorktreeSetupCard.tsx",
+    "web/components/chat/ZoomableImage.tsx",
+    "web/components/chat/assistantCitationCommentDismissal.ts",
+    "web/components/chat/backgroundThread.ts",
+    "web/components/chat/canvasStore.ts",
+    "web/components/chat/chatCanvasLayout.ts",
+    "web/components/chat/chatViewSend.ts",
+    "web/components/chat/citationProcedure.ts",
+    "web/components/chat/compaction.logic.ts",
+    "web/components/chat/composerAttachmentFiles.ts",
+    "web/components/chat/composerAttachmentReferences.ts",
+    "web/components/chat/composerCommandKey.ts",
+    "web/components/chat/composerContextUndo.ts",
+    "web/components/chat/composerControlsOwnership.ts",
+    "web/components/chat/composerEventScope.ts",
+    "web/components/chat/composerFocusRedirect.ts",
+    "web/components/chat/composerImagePersistence.ts",
+    "web/components/chat/composerMentionDrag.ts",
+    "web/components/chat/composerMenuHighlight.ts",
+    "web/components/chat/composerModelMentions.ts",
+    "web/components/chat/composerPromptHistory.ts",
+    "web/components/chat/composerProviderState.tsx",
+    "web/components/chat/composerSend.logic.ts",
+    "web/components/chat/composerShortcuts.ts",
+    "web/components/chat/composerSlashCommandSearch.ts",
+    "web/components/chat/composerSubmission.ts",
+    "web/components/chat/composerThreadImport.ts",
+    "web/components/chat/composerTypingGuard.ts",
+    "web/components/chat/copySnapshot.ts",
+    "web/components/chat/draftHeroTransition.ts",
+    "web/components/chat/externalLinkContextMenu.ts",
+    "web/components/chat/folderDrop.ts",
+    "web/components/chat/freshSessionArms.ts",
+    "web/components/chat/guestMessageStyle.tsx",
+    "web/components/chat/guestShareAvailability.ts",
+    "web/components/chat/guestShareDialogState.ts",
+    "web/components/chat/hostImageUrl.ts",
+    "web/components/chat/markdownActionFailure.ts",
+    "web/components/chat/markdownChipPunctuation.ts",
+    "web/components/chat/markdownFindContext.ts",
+    "web/components/chat/markdownFragments.ts",
+    "web/components/chat/markdownHast.logic.ts",
+    "web/components/chat/markdownImageGallery.ts",
+    "web/components/chat/markdownRenderer.ts",
+    "web/components/chat/markdownStreamBlocks.ts",
+    "web/components/chat/markdownSyntaxGates.ts",
+    "web/components/chat/markdownTextDirection.ts",
+    "web/components/chat/modelPickerKeys.ts",
+    "web/components/chat/optimisticUserMessages.ts",
+    "web/components/chat/pageScrollController.ts",
+    "web/components/chat/pendingDraftWork.ts",
+    "web/components/chat/preparingComposerImages.ts",
+    "web/components/chat/providerIconUtils.ts",
+    "web/components/chat/queuedMessageEdit.ts",
+    "web/components/chat/restingComposerControlsMeasurement.ts",
+    "web/components/chat/runtimeModeConfig.ts",
+    "web/components/chat/threadContextDrag.ts",
+    "web/components/chat/threadContextDrop.logic.ts",
+    "web/components/chat/threadDetailsCardLayout.ts",
+    "web/components/chat/threadDetailsItems.ts",
+    "web/components/chat/threadDetailsPanelStyles.ts",
+    "web/components/chat/threadFind.ts",
+    "web/components/chat/threadFindHighlights.ts",
+    "web/components/chat/threadFindPosition.ts",
+    "web/components/chat/threadFindStore.ts",
+    "web/components/chat/threadOverlayRetention.ts",
+    "web/components/chat/timelineMinimapItems.ts",
+    "web/components/chat/timelineMinimapWheel.ts",
+    "web/components/chat/timelineRowContext.ts",
+    "web/components/chat/timelineScrollAnchoring.ts",
+    "web/components/chat/timelineScrollTarget.ts",
+    "web/components/chat/timelineViewport.ts",
+    "web/components/chat/turnDetailAnnouncement.ts",
+    "web/components/chat/useApplyThreadModelPick.ts",
+    "web/components/chat/useAssistantCitationTarget.ts",
+    "web/components/chat/useAttachmentPreviewHandoff.ts",
+    "web/components/chat/useAutoBalanceUpdateBanner.tsx",
+    "web/components/chat/useChatShortcuts.ts",
+    "web/components/chat/useChatTerminalActions.ts",
+    "web/components/chat/useComposerAttachmentIntake.ts",
+    "web/components/chat/useComposerContextImport.ts",
+    "web/components/chat/useComposerFocus.ts",
+    "web/components/chat/useComposerImageGroups.ts",
+    "web/components/chat/useComposerMenuItems.ts",
+    "web/components/chat/useComposerMenuState.ts",
+    "web/components/chat/useComposerMultilinePrompt.ts",
+    "web/components/chat/useComposerProviderModel.ts",
+    "web/components/chat/useComposerRestingTransition.ts",
+    "web/components/chat/useComposerResume.ts",
+    "web/components/chat/useComposerSelection.ts",
+    "web/components/chat/useComposerSend.ts",
+    "web/components/chat/useComposerStash.ts",
+    "web/components/chat/useComposerTriggerState.ts",
+    "web/components/chat/useComposerTypingGuard.ts",
+    "web/components/chat/useDraftEnvironmentRouting.ts",
+    "web/components/chat/useDraftHeroLayoutTransition.ts",
+    "web/components/chat/useFocusComposerOnThreadOpen.ts",
+    "web/components/chat/useForceStopThread.ts",
+    "web/components/chat/useLocalDispatchState.ts",
+    "web/components/chat/useMultipleModelSend.ts",
+    "web/components/chat/usePasteToFocusComposer.ts",
+    "web/components/chat/usePendingThreadRequests.ts",
+    "web/components/chat/useProjectCloneBanner.tsx",
+    "web/components/chat/useProjectScriptEditing.ts",
+    "web/components/chat/usePromptSuggestion.ts",
+    "web/components/chat/useProviderWorkspaceSnapshotRefresh.ts",
+    "web/components/chat/usePullRequestDraftThread.ts",
+    "web/components/chat/useQueuedRunEdit.ts",
+    "web/components/chat/useRestingComposerControlsLayout.ts",
+    "web/components/chat/useRightPanelActions.ts",
+    "web/components/chat/useSideChat.ts",
+    "web/components/chat/useSystemComposerBanners.tsx",
+    "web/components/chat/useTallEnoughToFold.ts",
+    "web/components/chat/useThreadFind.ts",
+    "web/components/chat/useThreadFindNavigation.ts",
+    "web/components/chat/useThreadFindPositionReader.ts",
+    "web/components/chat/useThreadLifecycle.tsx",
+    "web/components/chat/useTimelineFollow.ts",
+    "web/components/chat/useTimelinePositionRestore.ts",
+    "web/components/chat/useTimelineRewind.ts",
+    "web/components/chat/useTimelineRows.ts",
+    "web/components/chat/useUsageLimitsPanel.ts",
+    "web/components/chat/useWorktreeSetup.ts",
+    "web/components/chat/workspaceFileDrop.ts",
+    "web/components/clerk/ClerkUserProfilePage.tsx",
+    "web/components/clerk/MobileClientsUserProfilePage.logic.ts",
+    "web/components/clerk/MobileClientsUserProfilePage.tsx",
+    "web/components/clerk/T3ChatUserProfilePage.tsx",
+    "web/components/clerk/T3ConnectUserProfilePage.tsx",
+    "web/components/clerk/authRedirect.ts",
+    "web/components/clerk/useT3ChatLink.ts",
+    "web/components/cloud/CloudEnvironmentConnectList.tsx",
+    "web/components/cloud/RelayClientInstallDialog.tsx",
+    "web/components/cloud/TunnelUsage.tsx",
+    "web/components/cloud/cloudEnvironmentConnectionPresentation.ts",
+    "web/components/composerAttachmentInsertion.ts",
+    "web/components/composerCodeBlockHighlight.ts",
+    "web/components/composerContextActions.ts",
+    "web/components/composerContextPresentation.tsx",
+    "web/components/composerFooterLayout.ts",
+    "web/components/composerInlineChip.ts",
+    "web/components/composerInlineTokenPaste.ts",
+    "web/components/composerSelection.ts",
+    "web/components/contextChipParts.tsx",
+    "web/components/contextPresentationRegistry.ts",
+    "web/components/desktop/DesktopAppActivationCoordinator.tsx",
+    "web/components/desktop/DesktopWebLinkCoordinator.tsx",
+    "web/components/desktop/RunningThreadKeepAlive.tsx",
+    "web/components/desktop/SnapShotShortcutKeys.tsx",
+    "web/components/desktop/SshPasswordPromptDialog.tsx",
+    "web/components/desktopUpdate.logic.ts",
+    "web/components/desktopUpdate.toast.tsx",
+    "web/components/device/DeviceAndroidFoldControls.tsx",
+    "web/components/device/DeviceDuoControls.tsx",
+    "web/components/device/DeviceDuoGlyph.tsx",
+    "web/components/device/DeviceHostAvailability.tsx",
+    "web/components/device/DeviceHostUpdates.tsx",
+    "web/components/device/DeviceLoadingView.tsx",
+    "web/components/device/DeviceSetup.tsx",
+    "web/components/device/DeviceToolVersions.tsx",
+    "web/components/device/DeviceToolsPanel.tsx",
+    "web/components/device/deviceFold.ts",
+    "web/components/device/deviceFrameLayout.ts",
+    "web/components/device/deviceHubApi.ts",
+    "web/components/device/deviceHubAtoms.ts",
+    "web/components/device/deviceModels.ts",
+    "web/components/device/deviceStreamSession.ts",
+    "web/components/device/mountDeviceViewer.ts",
+    "web/components/device/phoneTrackpad.ts",
+    "web/components/device/useDeviceControls.ts",
+    "web/components/diffs/AnnotatableCodeView.tsx",
+    "web/components/diffs/DiffCommentAnnotation.tsx",
+    "web/components/diffs/DiffFileLoadingBoundary.tsx",
+    "web/components/diffs/DiffFileStatus.tsx",
+    "web/components/diffs/DiffFileTree.tsx",
+    "web/components/diffs/StyledDiffCodeView.tsx",
+    "web/components/diffs/commentSubmitShortcut.ts",
+    "web/components/diffs/diffFileTree.logic.ts",
+    "web/components/diffs/diffHeaderClick.ts",
+    "web/components/diffs/useCodeViewFileReveal.ts",
+    "web/components/diffs/useCodeViewScrollRestore.ts",
+    "web/components/diffs/useHideTestFiles.ts",
+    "web/components/diffs/useReviewFilePatches.ts",
+    "web/components/files/AudioPreview.tsx",
+    "web/components/files/BrowserDocumentFrame.tsx",
+    "web/components/files/DelimitedTablePreview.tsx",
+    "web/components/files/DocumentPages.tsx",
+    "web/components/files/FileBreadcrumbs.tsx",
+    "web/components/files/FileBrowserPanel.tsx",
+    "web/components/files/FileExplorerPane.tsx",
+    "web/components/files/FileMarkdownPreview.tsx",
+    "web/components/files/FilePreviewPanel.tsx",
+    "web/components/files/FontFilePreview.tsx",
+    "web/components/files/FontViewer.tsx",
+    "web/components/files/InlineAudioPreview.tsx",
+    "web/components/files/LargeTextViewer.tsx",
+    "web/components/files/MermaidFilePreview.tsx",
+    "web/components/files/MermaidViewer.tsx",
+    "web/components/files/NotebookPreview.tsx",
+    "web/components/files/PdfViewer.tsx",
+    "web/components/files/PreviewImage.tsx",
+    "web/components/files/PreviewImageContent.tsx",
+    "web/components/files/ProjectFilePicker.logic.ts",
+    "web/components/files/ProjectFilePicker.tsx",
+    "web/components/files/ReadOnlySourcePreview.tsx",
+    "web/components/files/VirtualTablePreview.tsx",
+    "web/components/files/binaryPreviewProtocol.ts",
+    "web/components/files/decodeImagePreview.ts",
+    "web/components/files/fileCommentAnnotations.ts",
+    "web/components/files/fileContentRevision.ts",
+    "web/components/files/fileEditorDismissal.ts",
+    "web/components/files/fileLineReveal.ts",
+    "web/components/files/filePath.ts",
+    "web/components/files/filePreviewMode.ts",
+    "web/components/files/fileSaveCoordinator.ts",
+    "web/components/files/fileSaveSessions.ts",
+    "web/components/files/fileSurfaceChrome.tsx",
+    "web/components/files/fileTreeDragMention.ts",
+    "web/components/files/fileTreeExpansion.ts",
+    "web/components/files/fileTreePathReconciliation.ts",
+    "web/components/files/largeText.worker.ts",
+    "web/components/files/largeTextProtocol.ts",
+    "web/components/files/loadFileAncestors.ts",
+    "web/components/files/office/OfficePages.tsx",
+    "web/components/files/office/image-bitmap.ts",
+    "web/components/files/office/links.ts",
+    "web/components/files/office/sheet-sizing.ts",
+    "web/components/files/office/slide-protocol.ts",
+    "web/components/files/office/vector-pictures.ts",
+    "web/components/files/office/word-protocol.ts",
+    "web/components/files/office/worker-rpc.ts",
+    "web/components/files/officePreviewProtocol.ts",
+    "web/components/files/pdfDocument.ts",
+    "web/components/files/pdfLayout.ts",
+    "web/components/files/previewFailure.ts",
+    "web/components/files/previewFailureMessages.ts",
+    "web/components/files/projectFilesQueryState.ts",
+    "web/components/files/readBinaryPreview.ts",
+    "web/components/files/readBoundedDocument.ts",
+    "web/components/files/sourceSelection.ts",
+    "web/components/files/useDirectoryEntries.ts",
+    "web/components/guest/GuestHtmlRender.tsx",
+    "web/components/guest/GuestPage.tsx",
+    "web/components/guest/guestStream.logic.ts",
+    "web/components/guest/guestTurnItemSource.ts",
+    "web/components/issue/IssueCommentComposer.tsx",
+    "web/components/issue/IssueDetailGhost.tsx",
+    "web/components/issue/IssueDetailPanel.tsx",
+    "web/components/issue/IssueLinkPreview.tsx",
+    "web/components/issue/IssueListFilterPickers.tsx",
+    "web/components/issue/IssueRow.tsx",
+    "web/components/issue/IssueThreadLinks.tsx",
+    "web/components/issue/IssuesPage.tsx",
+    "web/components/issue/issueListPreferences.ts",
+    "web/components/issue/issuePresentation.tsx",
+    "web/components/issue/issueSavedViews.ts",
+    "web/components/issue/issuesSearch.logic.ts",
+    "web/components/mcp/mcpApps.ts",
+    "web/components/mcp/mcpGate.ts",
+    "web/components/media/AttachmentImage.tsx",
+    "web/components/media/MediaActions.tsx",
+    "web/components/media/MediaVideoPlayer.tsx",
+    "web/components/media/OpenMediaLink.tsx",
+    "web/components/media/mediaContent.ts",
+    "web/components/onboarding/FirstRunGate.tsx",
+    "web/components/onboarding/WelcomePage.tsx",
+    "web/components/permissions/PermissionChecklist.tsx",
+    "web/components/permissions/usePermissionStatus.ts",
+    "web/components/preview/AgentBrowserCursor.tsx",
+    "web/components/preview/BrowserMockup.tsx",
+    "web/components/preview/PreviewAnnotationSpeech.tsx",
+    "web/components/preview/PreviewChromeRow.tsx",
+    "web/components/preview/PreviewEmptyState.tsx",
+    "web/components/preview/PreviewFaviconIcon.tsx",
+    "web/components/preview/PreviewFindBar.tsx",
+    "web/components/preview/PreviewLocalServerCard.tsx",
+    "web/components/preview/PreviewMoreMenu.tsx",
+    "web/components/preview/PreviewPanelShell.tsx",
+    "web/components/preview/PreviewRecentUrlCard.tsx",
+    "web/components/preview/PreviewUnreachable.tsx",
+    "web/components/preview/RightPanelResizeHandle.tsx",
+    "web/components/preview/ZoomIndicator.tsx",
+    "web/components/preview/addBrowserSurface.ts",
+    "web/components/preview/agentBrowserCursorLogic.ts",
+    "web/components/preview/agentOpenedPreviews.ts",
+    "web/components/preview/closePreviewSession.ts",
+    "web/components/preview/errorCodeMessages.ts",
+    "web/components/preview/fileExplorerLabel.ts",
+    "web/components/preview/openDiscoveredPort.ts",
+    "web/components/preview/openPreviewSession.ts",
+    "web/components/preview/openTerminalLinkInPreview.ts",
+    "web/components/preview/previewActionBus.ts",
+    "web/components/preview/previewBridge.ts",
+    "web/components/preview/previewConstants.ts",
+    "web/components/preview/previewEmptyStateLogic.ts",
+    "web/components/preview/previewMiniPlayerGesture.ts",
+    "web/components/preview/previewMiniPlayerLayout.ts",
+    "web/components/preview/showPreviewPopup.ts",
+    "web/components/preview/thumbButtons.ts",
+    "web/components/preview/useDiscoveredLocalServers.ts",
+    "web/components/preview/usePreviewBridge.ts",
+    "web/components/preview/usePreviewSession.ts",
+    "web/components/projectScriptEditor.tsx",
+    "web/components/promptLinks/HostedPromptLinkLanding.tsx",
+    "web/components/promptLinks/NewThreadLinkView.tsx",
+    "web/components/promptLinks/ThreadLinkPrompt.tsx",
+    "web/components/promptLinks/copyPromptLink.ts",
+    "web/components/promptLinks/linkedPrompt.ts",
+    "web/components/pullRequest/ChangeBreakdownGrid.tsx",
+    "web/components/pullRequest/LinkPullRequestDialog.tsx",
+    "web/components/pullRequest/PullRequestActionsMenu.tsx",
+    "web/components/pullRequest/PullRequestActivityUnavailableState.tsx",
+    "web/components/pullRequest/PullRequestBaseBranch.tsx",
+    "web/components/pullRequest/PullRequestCandidatePicker.tsx",
+    "web/components/pullRequest/PullRequestChangeBreakdownStat.tsx",
+    "web/components/pullRequest/PullRequestChecksPopover.tsx",
+    "web/components/pullRequest/PullRequestCodeTab.tsx",
+    "web/components/pullRequest/PullRequestCommentBody.tsx",
+    "web/components/pullRequest/PullRequestCommentForm.tsx",
+    "web/components/pullRequest/PullRequestCompactFilterMenu.tsx",
+    "web/components/pullRequest/PullRequestComposer.tsx",
+    "web/components/pullRequest/PullRequestCopyableCode.tsx",
+    "web/components/pullRequest/PullRequestDetailActions.tsx",
+    "web/components/pullRequest/PullRequestDetailCrumbs.tsx",
+    "web/components/pullRequest/PullRequestDetailLayout.tsx",
+    "web/components/pullRequest/PullRequestDetailPanel.tsx",
+    "web/components/pullRequest/PullRequestDiffUnavailableState.tsx",
+    "web/components/pullRequest/PullRequestEditButton.tsx",
+    "web/components/pullRequest/PullRequestGhosts.tsx",
+    "web/components/pullRequest/PullRequestGuideTab.tsx",
+    "web/components/pullRequest/PullRequestLabelPicker.tsx",
+    "web/components/pullRequest/PullRequestLinkPreview.tsx",
+    "web/components/pullRequest/PullRequestListEmptyState.tsx",
+    "web/components/pullRequest/PullRequestListFilters.tsx",
+    "web/components/pullRequest/PullRequestListGroups.tsx",
+    "web/components/pullRequest/PullRequestListRow.tsx",
+    "web/components/pullRequest/PullRequestMarkdown.tsx",
+    "web/components/pullRequest/PullRequestMarkdownEditor.tsx",
+    "web/components/pullRequest/PullRequestMarkdownTextarea.tsx",
+    "web/components/pullRequest/PullRequestMoreReplies.tsx",
+    "web/components/pullRequest/PullRequestReactions.tsx",
+    "web/components/pullRequest/PullRequestResolveThreadButton.tsx",
+    "web/components/pullRequest/PullRequestReviewAnnotation.tsx",
+    "web/components/pullRequest/PullRequestReviewForm.tsx",
+    "web/components/pullRequest/PullRequestReviewerPicker.tsx",
+    "web/components/pullRequest/PullRequestRow.tsx",
+    "web/components/pullRequest/PullRequestSpeedActions.tsx",
+    "web/components/pullRequest/PullRequestStackHeader.tsx",
+    "web/components/pullRequest/PullRequestStackLayerContent.tsx",
+    "web/components/pullRequest/PullRequestStackLayers.tsx",
+    "web/components/pullRequest/PullRequestStackMenu.tsx",
+    "web/components/pullRequest/PullRequestStackPopover.tsx",
+    "web/components/pullRequest/PullRequestSummaryTab.tsx",
+    "web/components/pullRequest/PullRequestThreadLinks.tsx",
+    "web/components/pullRequest/PullRequestTimelineTab.tsx",
+    "web/components/pullRequest/PullRequestTitleEditor.tsx",
+    "web/components/pullRequest/PullRequestsColumn.tsx",
+    "web/components/pullRequest/PullRequestsPage.tsx",
+    "web/components/pullRequest/PullRequestsUnavailableState.tsx",
+    "web/components/pullRequest/ThreadPullRequestsPanel.tsx",
+    "web/components/pullRequest/changeRequestTerm.ts",
+    "web/components/pullRequest/cutLineNotes.ts",
+    "web/components/pullRequest/filesViewedStore.ts",
+    "web/components/pullRequest/guide/GuideExcerpt.logic.ts",
+    "web/components/pullRequest/guide/GuideExcerpt.tsx",
+    "web/components/pullRequest/guide/GuideFileDiff.tsx",
+    "web/components/pullRequest/guide/GuideNotes.tsx",
+    "web/components/pullRequest/guide/GuideProse.tsx",
+    "web/components/pullRequest/guide/GuideRail.tsx",
+    "web/components/pullRequest/guide/GuideStop.tsx",
+    "web/components/pullRequest/guide/GuideTour.tsx",
+    "web/components/pullRequest/guide/PullRequestGuideRunCoordinator.tsx",
+    "web/components/pullRequest/guide/guideRunStore.ts",
+    "web/components/pullRequest/guide/useGuideDiffFiles.ts",
+    "web/components/pullRequest/guide/useReviewGuideWriter.ts",
+    "web/components/pullRequest/holdLinkedNodeInView.ts",
+    "web/components/pullRequest/pullRequestCheckoutToast.ts",
+    "web/components/pullRequest/pullRequestDetail.logic.ts",
+    "web/components/pullRequest/pullRequestDiff.logic.ts",
+    "web/components/pullRequest/pullRequestDiffError.ts",
+    "web/components/pullRequest/pullRequestFileOrder.logic.ts",
+    "web/components/pullRequest/pullRequestFilesViewed.logic.ts",
+    "web/components/pullRequest/pullRequestIcons.tsx",
+    "web/components/pullRequest/pullRequestLinkContextMenu.ts",
+    "web/components/pullRequest/pullRequestList.logic.ts",
+    "web/components/pullRequest/pullRequestListGroups.logic.ts",
+    "web/components/pullRequest/pullRequestListOptions.ts",
+    "web/components/pullRequest/pullRequestListPreferences.ts",
+    "web/components/pullRequest/pullRequestMarkdown.logic.ts",
+    "web/components/pullRequest/pullRequestPresentation.tsx",
+    "web/components/pullRequest/pullRequestProjectAssignment.logic.ts",
+    "web/components/pullRequest/pullRequestReviewStore.ts",
+    "web/components/pullRequest/pullRequestSavedViews.ts",
+    "web/components/pullRequest/pullRequestStackSnapshot.ts",
+    "web/components/pullRequest/pullRequestSummaryScroll.logic.ts",
+    "web/components/pullRequest/useInlineActionConfirm.ts",
+    "web/components/pullRequest/usePullRequestActions.ts",
+    "web/components/pullRequest/usePullRequestDetail.ts",
+    "web/components/pullRequest/usePullRequestFilesViewed.ts",
+    "web/components/pullRequest/usePullRequestIntentPrefetch.ts",
+    "web/components/pullRequest/usePullRequestListView.ts",
+    "web/components/pullRequest/useThreadLinkedPullRequest.ts",
+    "web/components/search/HighlightedSearchLine.tsx",
+    "web/components/search/ProjectContentSearchDialog.tsx",
+    "web/components/settings/AboutVersionTitle.tsx",
+    "web/components/settings/AcpRegistryIcon.tsx",
+    "web/components/settings/AcpRegistrySearchStep.tsx",
+    "web/components/settings/AcpSessionManagementSection.tsx",
+    "web/components/settings/AddCodexAccountDialog.tsx",
+    "web/components/settings/AddEnvironmentDialog.tsx",
+    "web/components/settings/AddProviderInstanceDialog.logic.ts",
+    "web/components/settings/AddProviderInstanceDialog.tsx",
+    "web/components/settings/AddProviderInstanceWizardSteps.tsx",
+    "web/components/settings/AddUsageLimitSourceDialog.logic.ts",
+    "web/components/settings/AddUsageLimitSourceDialog.tsx",
+    "web/components/settings/AdvancedSettings.tsx",
+    "web/components/settings/AppearanceSettingsPanel.tsx",
+    "web/components/settings/ArchivedThreadsPanel.tsx",
+    "web/components/settings/AuthorizedClientsSettings.tsx",
+    "web/components/settings/BackgroundActivitySettings.tsx",
+    "web/components/settings/BranchNamingSettings.tsx",
+    "web/components/settings/BrowserImportWizard.tsx",
+    "web/components/settings/CaptureShortcutConfig.tsx",
+    "web/components/settings/ChatGptAccountPicker.tsx",
+    "web/components/settings/ChatGptConnectionButton.tsx",
+    "web/components/settings/ChatGptUsageButton.tsx",
+    "web/components/settings/ChatGptWelcomeCoordinator.tsx",
+    "web/components/settings/CliCommandSettingsRow.tsx",
+    "web/components/settings/CloudVoiceConfiguration.tsx",
+    "web/components/settings/CodexSetupSection.logic.ts",
+    "web/components/settings/CodexSetupSection.tsx",
+    "web/components/settings/ConnectDeviceApprovalSettings.tsx",
+    "web/components/settings/ConnectionDiagnosisDetails.tsx",
+    "web/components/settings/ConnectionsSettings.logic.ts",
+    "web/components/settings/ConnectionsSettings.tsx",
+    "web/components/settings/CustomModelEditor.tsx",
+    "web/components/settings/DatabaseStorageNotice.tsx",
+    "web/components/settings/DeviceHostEditor.tsx",
+    "web/components/settings/DeviceSourcesSettings.tsx",
+    "web/components/settings/DiagnosticsSettings.logic.ts",
+    "web/components/settings/DiagnosticsSettings.tsx",
+    "web/components/settings/EasDeviceHostEditor.tsx",
+    "web/components/settings/EnvironmentIconPicker.tsx",
+    "web/components/settings/EnvironmentRoutesList.tsx",
+    "web/components/settings/EnvironmentRow.tsx",
+    "web/components/settings/ExpandableText.tsx",
+    "web/components/settings/FoldedSettingsSection.tsx",
+    "web/components/settings/FontFamilyPicker.tsx",
+    "web/components/settings/IntegrationsSettings.tsx",
+    "web/components/settings/IntervalSecondsField.tsx",
+    "web/components/settings/IssueTrackerSettings.tsx",
+    "web/components/settings/KeybindingsSettings.logic.ts",
+    "web/components/settings/KeybindingsSettings.tsx",
+    "web/components/settings/LinkAccessPicker.tsx",
+    "web/components/settings/LinkMachineSelect.tsx",
+    "web/components/settings/LinkedEnvironmentsSettings.tsx",
+    "web/components/settings/LoadBalancingSettings.tsx",
+    "web/components/settings/LocalEnvironmentSetting.tsx",
+    "web/components/settings/MicrophoneOrderList.tsx",
+    "web/components/settings/MicrophoneTest.tsx",
+    "web/components/settings/MobileAppSettingsRow.tsx",
+    "web/components/settings/MultipleAccountsNote.tsx",
+    "web/components/settings/NotificationSettings.tsx",
+    "web/components/settings/OpenSourceLicenses.tsx",
+    "web/components/settings/PanelAnimationsPreview.tsx",
+    "web/components/settings/ProcessSignalActions.tsx",
+    "web/components/settings/ProjectActionsList.tsx",
+    "web/components/settings/ProjectActionsSettings.tsx",
+    "web/components/settings/ProjectDefaultsSettings.logic.ts",
+    "web/components/settings/ProjectDefaultsSettings.tsx",
+    "web/components/settings/ProjectFaviconPickerDialog.tsx",
+    "web/components/settings/ProjectFaviconThumbnail.tsx",
+    "web/components/settings/ProjectIconPickerDialog.tsx",
+    "web/components/settings/ProjectSettingsPanel.logic.ts",
+    "web/components/settings/ProjectSettingsPanel.tsx",
+    "web/components/settings/ProjectsSettings.tsx",
+    "web/components/settings/ProviderAccentColorPicker.tsx",
+    "web/components/settings/ProviderAuthTerminal.tsx",
+    "web/components/settings/ProviderAuthenticationSection.tsx",
+    "web/components/settings/ProviderInstanceCard.tsx",
+    "web/components/settings/ProviderModelsSection.tsx",
+    "web/components/settings/ProviderSettingsForm.tsx",
+    "web/components/settings/ProviderSettingsPanel.logic.ts",
+    "web/components/settings/ProviderSettingsPanel.tsx",
+    "web/components/settings/ProviderSetupSection.tsx",
+    "web/components/settings/ProviderWizardAuthenticationStep.tsx",
+    "web/components/settings/PullRequestRoutingSettings.tsx",
+    "web/components/settings/RedactedSensitiveText.tsx",
+    "web/components/settings/ResourceTelemetryDiagnostics.logic.ts",
+    "web/components/settings/ResourceTelemetryDiagnostics.tsx",
+    "web/components/settings/RevokeConnectDeviceDialog.tsx",
+    "web/components/settings/SavedEnvironmentRows.tsx",
+    "web/components/settings/ScheduledTasksSettings.tsx",
+    "web/components/settings/ScopedSwitch.tsx",
+    "web/components/settings/SecretInput.tsx",
+    "web/components/settings/SecretProviderDialog.logic.ts",
+    "web/components/settings/SecretProviderDialog.tsx",
+    "web/components/settings/SecretSourceInput.tsx",
+    "web/components/settings/SecretsSettings.logic.ts",
+    "web/components/settings/SecretsSettings.tsx",
+    "web/components/settings/SessionPermissions.tsx",
+    "web/components/settings/SettingInheritance.tsx",
+    "web/components/settings/SettingsBreadcrumb.tsx",
+    "web/components/settings/SettingsFontPreviews.tsx",
+    "web/components/settings/SettingsGroup.tsx",
+    "web/components/settings/SettingsPanels.logic.ts",
+    "web/components/settings/SettingsPanels.tsx",
+    "web/components/settings/SettingsScopeContext.tsx",
+    "web/components/settings/SettingsScopeNotice.tsx",
+    "web/components/settings/SettingsScopeSentence.tsx",
+    "web/components/settings/SettingsSidebarNav.tsx",
+    "web/components/settings/SimlockDeviceHostEditor.tsx",
+    "web/components/settings/SnapShotSettings.logic.ts",
+    "web/components/settings/SnapShotSettings.tsx",
+    "web/components/settings/SnapShotSetupDialog.logic.ts",
+    "web/components/settings/SnapShotSetupDialog.tsx",
+    "web/components/settings/SnoozePresetsSettings.logic.ts",
+    "web/components/settings/SnoozePresetsSettings.tsx",
+    "web/components/settings/SourceControlAccountSettings.logic.ts",
+    "web/components/settings/SourceControlAccountSettings.tsx",
+    "web/components/settings/SourceControlAppSignInSettings.tsx",
+    "web/components/settings/SourceControlHostSettings.tsx",
+    "web/components/settings/SourceControlSettings.tsx",
+    "web/components/settings/SourceControlTokenSettings.tsx",
+    "web/components/settings/SourceControlWritingSettings.tsx",
+    "web/components/settings/SpeechLanguageSelect.tsx",
+    "web/components/settings/SpeechModelComparison.tsx",
+    "web/components/settings/StorageSettings.tsx",
+    "web/components/settings/TelemetryExportSettings.tsx",
+    "web/components/settings/TextGeneratorsSettings.tsx",
+    "web/components/settings/ThemeColorPicker.tsx",
+    "web/components/settings/ThemeCssEditor.tsx",
+    "web/components/settings/ThemeEditorHost.tsx",
+    "web/components/settings/ThemeEditorPanel.tsx",
+    "web/components/settings/ThemeImportDialog.tsx",
+    "web/components/settings/ThemePreviewCircles.tsx",
+    "web/components/settings/ThemeSearchSection.tsx",
+    "web/components/settings/ThemeSettings.tsx",
+    "web/components/settings/ThemeWireframe.tsx",
+    "web/components/settings/ThreadDetailsItemsRow.tsx",
+    "web/components/settings/ThreadTitleInstructionsSettings.tsx",
+    "web/components/settings/TypographySettings.tsx",
+    "web/components/settings/UpdateTrackSwitchDialog.tsx",
+    "web/components/settings/UsageProviderSettings.tsx",
+    "web/components/settings/VoiceSettingsPanel.tsx",
+    "web/components/settings/WorktreesSettings.tsx",
+    "web/components/settings/browserImportWizard.logic.ts",
+    "web/components/settings/customModelEditor.logic.ts",
+    "web/components/settings/customModelSaves.logic.ts",
+    "web/components/settings/deviceHostConnectionChecks.ts",
+    "web/components/settings/deviceHostsSettings.logic.ts",
+    "web/components/settings/easDeviceHostsSettings.logic.ts",
+    "web/components/settings/itemRows.ts",
+    "web/components/settings/pairingUrls.ts",
+    "web/components/settings/providerDriverMeta.ts",
+    "web/components/settings/providerStatus.ts",
+    "web/components/settings/scheduledTasksSettings.logic.ts",
+    "web/components/settings/scopedSettings.ts",
+    "web/components/settings/settingsLayout.tsx",
+    "web/components/settings/settingsScope.ts",
+    "web/components/settings/settingsScopeAxis.ts",
+    "web/components/settings/settingsScopeNavigation.ts",
+    "web/components/settings/settingsSearch.ts",
+    "web/components/settings/settingsSectionNavigation.ts",
+    "web/components/settings/simlockDeviceHostsSettings.logic.ts",
+    "web/components/settings/speechModelBrowser.ts",
+    "web/components/settings/themeEditorStore.ts",
+    "web/components/settings/themeInspector.ts",
+    "web/components/settings/updateTrackSwitch.logic.ts",
+    "web/components/settings/useAccessEnvironment.ts",
+    "web/components/settings/useAvailableSettingsSearchItems.ts",
+    "web/components/settings/useHostConnectionChecks.ts",
+    "web/components/settings/useProjectScriptSettings.ts",
+    "web/components/settings/useScopedModelAvailability.ts",
+    "web/components/settings/useScopedSettings.ts",
+    "web/components/settings/useSettingsProjectGroups.ts",
+    "web/components/settings/useSnapShotShortcutRecorder.tsx",
+    "web/components/sidebar/DesktopUpdateStatusIcon.tsx",
+    "web/components/sidebar/SidebarChrome.tsx",
+    "web/components/sidebar/SidebarDraftBlock.tsx",
+    "web/components/sidebar/SidebarFolderDrop.tsx",
+    "web/components/sidebar/SidebarListMarkers.tsx",
+    "web/components/sidebar/SidebarProjectFolderHeader.tsx",
+    "web/components/sidebar/SidebarProviderUpdatePill.tsx",
+    "web/components/sidebar/SidebarThreadHeader.tsx",
+    "web/components/sidebar/SidebarThreadRow.tsx",
+    "web/components/sidebar/SidebarThreadUndoNotice.tsx",
+    "web/components/sidebar/SidebarUpdateCapsule.tsx",
+    "web/components/sidebar/SidebarUpdatePill.tsx",
+    "web/components/sidebar/SidebarUpdateReleaseNotes.tsx",
+    "web/components/sidebar/UpdateEverythingDialog.tsx",
+    "web/components/sidebar/mainAppLocation.ts",
+    "web/components/sidebar/routeReveal.ts",
+    "web/components/sidebar/updateEverything.logic.ts",
+    "web/components/sidebar/updateEverythingRun.tsx",
+    "web/components/sidebar/useUpdateEverything.ts",
+    "web/components/sourceControlAppAccessToast.ts",
+    "web/components/terminal/closingTerminals.ts",
+    "web/components/terminal/terminalInputWriter.ts",
+    "web/components/terminal/useThreadTerminalActions.ts",
+    "web/components/threadActionMenu.logic.ts",
+    "web/components/threadSidebarWidth.ts",
+    "web/components/threadTitleRegenerationToast.ts",
+    "web/components/ui/alert-dialog.tsx",
+    "web/components/ui/alert.tsx",
+    "web/components/ui/anchoredCopyToast.ts",
+    "web/components/ui/autocomplete.tsx",
+    "web/components/ui/badge.tsx",
+    "web/components/ui/button.tsx",
+    "web/components/ui/checkbox.tsx",
+    "web/components/ui/closing-positioner.tsx",
+    "web/components/ui/collapsible-section-header.tsx",
+    "web/components/ui/collapsible.tsx",
+    "web/components/ui/color-picker.tsx",
+    "web/components/ui/combobox.tsx",
+    "web/components/ui/command.tsx",
+    "web/components/ui/dialog-styles.ts",
+    "web/components/ui/dialog.tsx",
+    "web/components/ui/discovery-list.tsx",
+    "web/components/ui/draft-input.tsx",
+    "web/components/ui/empty.tsx",
+    "web/components/ui/group.tsx",
+    "web/components/ui/input-group.tsx",
+    "web/components/ui/input.tsx",
+    "web/components/ui/kbd.tsx",
+    "web/components/ui/label.tsx",
+    "web/components/ui/menu.tsx",
+    "web/components/ui/middle-truncate.tsx",
+    "web/components/ui/number-field.tsx",
+    "web/components/ui/panel-tab-close-button.tsx",
+    "web/components/ui/popover.tsx",
+    "web/components/ui/preview-card.tsx",
+    "web/components/ui/qr-code.tsx",
+    "web/components/ui/radio-group.tsx",
+    "web/components/ui/refresh-icon.tsx",
+    "web/components/ui/scroll-area.tsx",
+    "web/components/ui/select.tsx",
+    "web/components/ui/separator.tsx",
+    "web/components/ui/sheet.tsx",
+    "web/components/ui/sidebar.tsx",
+    "web/components/ui/sidebarState.ts",
+    "web/components/ui/skeleton.tsx",
+    "web/components/ui/spinner.tsx",
+    "web/components/ui/standalone-page.tsx",
+    "web/components/ui/switch.tsx",
+    "web/components/ui/table.tsx",
+    "web/components/ui/textarea.tsx",
+    "web/components/ui/toast.logic.ts",
+    "web/components/ui/toast.tsx",
+    "web/components/ui/toastHelpers.ts",
+    "web/components/ui/toggle-group.tsx",
+    "web/components/ui/toggle.tsx",
+    "web/components/ui/tooltip.tsx",
+    "web/components/ui/wizard.tsx",
+    "web/components/usage/UsageLimits.tsx",
+    "web/components/usage/UsageLimitsPooled.tsx",
+    "web/components/usage/UsageModelDialog.tsx",
+    "web/components/usage/UsagePage.tsx",
+    "web/components/usage/UsagePriceOverrides.tsx",
+    "web/components/usage/UsageProviderChart.tsx",
+    "web/components/usage/UsageShareBar.tsx",
+    "web/components/usage/usageBreakdown.ts",
+    "web/components/usage/usagePagePreferences.ts",
+    "web/components/usage/usagePriceForm.ts",
+    "web/components/usage/usagePriceTable.ts",
+    "web/components/usage/usagePriceTargets.ts",
+    "web/components/usage/usageProviders.ts",
+    "web/components/usage/usageShortcuts.ts",
+    "web/composer-code-block.ts",
+    "web/composer-code-languages.ts",
+    "web/composer-editor-mentions.ts",
+    "web/composer-list-continuation.ts",
+    "web/composer-logic.ts",
+    "web/composer-markdown-source.ts",
+    "web/composer-rich-text-doc.ts",
+    "web/composer-rich-text.ts",
+    "web/composer-text-direction.ts",
+    "web/composer-undo-grouping.ts",
+    "web/composerDraftStore.ts",
+    "web/composerHandleContext.ts",
+    "web/composerPlaceholder.ts",
+    "web/confirmDialog.ts",
+    "web/connection/catalog.ts",
+    "web/connection/clientMetadata.ts",
+    "web/connection/desktopLocal.ts",
+    "web/connection/onboarding.ts",
+    "web/connection/platform.ts",
+    "web/connection/runtime.ts",
+    "web/connection/storage.ts",
+    "web/connection/useDesktopLocalBootstraps.ts",
+    "web/contextMenuFallback.ts",
+    "web/contextMenuSource.ts",
+    "web/desktopAppActivation.ts",
+    "web/diffFileActions.ts",
+    "web/diffPanelStore.ts",
+    "web/editorLabels.ts",
+    "web/editorPreferences.ts",
+    "web/env.ts",
+    "web/environments/primary/auth.ts",
+    "web/environments/primary/desktopAuth.ts",
+    "web/environments/primary/httpClient.ts",
+    "web/environments/primary/httpLayer.ts",
+    "web/environments/primary/index.ts",
+    "web/environments/primary/target.ts",
+    "web/fileContextMenu.ts",
+    "web/filePathDisplay.ts",
+    "web/guestPage.ts",
+    "web/hooks/FileMetadataThreadProvider.tsx",
+    "web/hooks/showThreadUndoNotice.ts",
+    "web/hooks/useActiveProjectTarget.ts",
+    "web/hooks/useActiveThreadRef.ts",
+    "web/hooks/useAddProjectTargets.ts",
+    "web/hooks/useAttachmentUploadProgress.ts",
+    "web/hooks/useCommitOnBlur.ts",
+    "web/hooks/useCopyToClipboard.ts",
+    "web/hooks/useCustomThemes.ts",
+    "web/hooks/useDeadline.ts",
+    "web/hooks/useDefaultTheme.ts",
+    "web/hooks/useDelayedStatus.ts",
+    "web/hooks/useEnvironmentDisconnectDelay.ts",
+    "web/hooks/useEnvironmentTheme.ts",
+    "web/hooks/useFileMetadata.ts",
+    "web/hooks/useHandleNewThread.ts",
+    "web/hooks/useHtmlRenderTheme.ts",
+    "web/hooks/useIncrementalTimelineEntries.ts",
+    "web/hooks/useLegendListRef.ts",
+    "web/hooks/useLiveRefresh.ts",
+    "web/hooks/useLiveRegion.ts",
+    "web/hooks/useLoadBalancedEnvironment.ts",
+    "web/hooks/useLocalStorage.ts",
+    "web/hooks/useLogicalProjectEnvironments.ts",
+    "web/hooks/useMediaQuery.ts",
+    "web/hooks/useNewProject.ts",
+    "web/hooks/useNowMinute.ts",
+    "web/hooks/useNowSecond.ts",
+    "web/hooks/useOpenLocalWorkspace.ts",
+    "web/hooks/useOpenPanelPullRequestUrl.ts",
+    "web/hooks/useOrderWhileOpen.ts",
+    "web/hooks/usePreviewPanelInlineSize.ts",
+    "web/hooks/useProactivePanels.ts",
+    "web/hooks/useProjectGroupUpdate.ts",
+    "web/hooks/usePullRequestChecksRefresh.ts",
+    "web/hooks/usePullRequestLinking.ts",
+    "web/hooks/useRelativeTimeState.ts",
+    "web/hooks/useRemoveClonedProject.ts",
+    "web/hooks/useResizableWidth.ts",
+    "web/hooks/useResizeDrag.ts",
+    "web/hooks/useRightPanelSurfaceClose.ts",
+    "web/hooks/useScratchProject.ts",
+    "web/hooks/useSettings.ts",
+    "web/hooks/useShownThreadRouteTarget.ts",
+    "web/hooks/useSidebarProjectGroups.ts",
+    "web/hooks/useSoftwareKeyboardOpen.ts",
+    "web/hooks/useStableCallback.ts",
+    "web/hooks/useStartTriage.ts",
+    "web/hooks/useSupportsMultiplePullRequests.ts",
+    "web/hooks/useT3ProjectFileScripts.ts",
+    "web/hooks/useTheme.ts",
+    "web/hooks/useThreadActionMenu.ts",
+    "web/hooks/useThreadActions.ts",
+    "web/hooks/useThreadRouteTarget.ts",
+    "web/hooks/useThreadVisitedMigration.ts",
+    "web/hooks/useViewportSize.ts",
+    "web/hooks/useWorkspaceMutationRefresh.ts",
+    "web/hostedPairing.ts",
+    "web/i18n/I18nProvider.tsx",
+    "web/i18n/initializeI18n.ts",
+    "web/i18n/locales.ts",
+    "web/i18n/messages.ts",
+    "web/i18n/runtime.ts",
+    "web/keybindings.ts",
+    "web/legalLinks.ts",
+    "web/lib/accessibilityAnnouncements.ts",
+    "web/lib/addProjectToMachine.ts",
+    "web/lib/announce.ts",
+    "web/lib/archivedThreadsState.ts",
+    "web/lib/assistantCitationNavigation.ts",
+    "web/lib/assistantTextSelection.ts",
+    "web/lib/attachmentUploadQueue.ts",
+    "web/lib/attachmentUploadState.ts",
+    "web/lib/backgroundActivityReporter.ts",
+    "web/lib/baseRefChoices.ts",
+    "web/lib/bootError.ts",
+    "web/lib/chatThreadActions.ts",
+    "web/lib/chunkReloadGuard.ts",
+    "web/lib/color.ts",
+    "web/lib/composerContextRecords.ts",
+    "web/lib/composerContextReferences.ts",
+    "web/lib/composerDraftUploads.ts",
+    "web/lib/contextChipAccents.ts",
+    "web/lib/contextWindow.ts",
+    "web/lib/copiedComposerAttachments.ts",
+    "web/lib/copyThreadReference.ts",
+    "web/lib/desktopPasteAsText.ts",
+    "web/lib/desktopSnapShot.ts",
+    "web/lib/diffCollapse.ts",
+    "web/lib/diffFileContents.ts",
+    "web/lib/diffRendering.ts",
+    "web/lib/discardComposerDraft.ts",
+    "web/lib/documentActivity.ts",
+    "web/lib/editableFocus.ts",
+    "web/lib/elementContext.ts",
+    "web/lib/formatBytes.ts",
+    "web/lib/incrementalHighlighting.ts",
+    "web/lib/lruCache.ts",
+    "web/lib/lucideIconByName.ts",
+    "web/lib/observeIntersection.ts",
+    "web/lib/observeResize.ts",
+    "web/lib/openIssueLink.ts",
+    "web/lib/openPullRequestLink.ts",
+    "web/lib/previewFocus.ts",
+    "web/lib/projectScriptKeybindings.ts",
+    "web/lib/projectScriptTerminal.ts",
+    "web/lib/readableSyntaxTheme.ts",
+    "web/lib/resourceTelemetryState.ts",
+    "web/lib/revealThreadTerminal.ts",
+    "web/lib/runtime.ts",
+    "web/lib/seedDraftModelSelection.ts",
+    "web/lib/selectionActions.ts",
+    "web/lib/sideChatPane.ts",
+    "web/lib/sidebarTree.ts",
+    "web/lib/snapShotAnimation.ts",
+    "web/lib/snapShotSetupResume.ts",
+    "web/lib/snapShotShortcut.ts",
+    "web/lib/snapShotSound.ts",
+    "web/lib/snapShotSource.ts",
+    "web/lib/softwareKeyboard.ts",
+    "web/lib/storage.ts",
+    "web/lib/surfaceShortcutKey.ts",
+    "web/lib/syntaxHighlighting.ts",
+    "web/lib/t3ProjectFileDefaults.ts",
+    "web/lib/terminalCloseConfirm.ts",
+    "web/lib/terminalCloseShortcut.ts",
+    "web/lib/terminalContext.ts",
+    "web/lib/terminalFocus.ts",
+    "web/lib/threadContextAttachment.ts",
+    "web/lib/tickTextContent.ts",
+    "web/lib/toolCallDiff.ts",
+    "web/lib/triageTarget.ts",
+    "web/lib/turnDiffTree.ts",
+    "web/lib/utils.ts",
+    "web/lib/videoFirstFrame.ts",
+    "web/lib/visibleAnimation.ts",
+    "web/lib/windowControlsOverlay.ts",
+    "web/lib/workspaceFocus.ts",
+    "web/localApi.ts",
+    "web/localEnvironment.ts",
+    "web/main.tsx",
+    "web/markdown-clipboard.ts",
+    "web/markdown-incremental.ts",
+    "web/markdown-links.ts",
+    "web/markdownFileHostPath.ts",
+    "web/modelOrdering.ts",
+    "web/modelPickerVisibility.ts",
+    "web/modelSelection.ts",
+    "web/navigationHistory.ts",
+    "web/observability/clientTracer.ts",
+    "web/observability/clientTracing.ts",
+    "web/onboarding/firstRun.logic.ts",
+    "web/onboarding/firstRun.ts",
+    "web/onboarding/projectImport.logic.ts",
+    "web/onboarding/providerReadiness.logic.ts",
+    "web/onboarding/useProjectScans.ts",
+    "web/onboarding/welcomePage.logic.ts",
+    "web/onboarding/welcomeState.ts",
+    "web/panelAnimations.ts",
+    "web/pendingUserInput.ts",
+    "web/pierre-icons.ts",
+    "web/pierre-tree-theme.ts",
+    "web/portDiscoveryState.ts",
+    "web/previewMiniPlayerStore.ts",
+    "web/previewStateStore.ts",
+    "web/projectIconColors.ts",
+    "web/projectIconOptions.ts",
+    "web/projectIdentity.ts",
+    "web/projectScripts.ts",
+    "web/promptStashStore.ts",
+    "web/proposedPlan.ts",
+    "web/providerAuthDelivery.ts",
+    "web/providerInstances.ts",
+    "web/providerModels.ts",
+    "web/providerSkillSearch.ts",
+    "web/questionAttachments.ts",
+    "web/remoteOpen.ts",
+    "web/reopenClosedView.ts",
+    "web/reviewCommentContext.ts",
+    "web/rightPanelLayout.ts",
+    "web/rightPanelStore.ts",
+    "web/routeTree.gen.ts",
+    "web/router.ts",
+    "web/routes/__root.tsx",
+    "web/routes/_chat.$environmentId.$threadId.tsx",
+    "web/routes/_chat.draft.$draftId.tsx",
+    "web/routes/_chat.index.tsx",
+    "web/routes/_chat.issues.tsx",
+    "web/routes/_chat.new.tsx",
+    "web/routes/_chat.pull-requests.tsx",
+    "web/routes/_chat.settings.about.tsx",
+    "web/routes/_chat.settings.access.tsx",
+    "web/routes/_chat.settings.appearance.tsx",
+    "web/routes/_chat.settings.archived.tsx",
+    "web/routes/_chat.settings.beta.tsx",
+    "web/routes/_chat.settings.browser.tsx",
+    "web/routes/_chat.settings.chat.tsx",
+    "web/routes/_chat.settings.connections.tsx",
+    "web/routes/_chat.settings.devices.tsx",
+    "web/routes/_chat.settings.diagnostics.tsx",
+    "web/routes/_chat.settings.diffs.tsx",
+    "web/routes/_chat.settings.general.tsx",
+    "web/routes/_chat.settings.integrations.tsx",
+    "web/routes/_chat.settings.keybindings.tsx",
+    "web/routes/_chat.settings.maintenance.tsx",
+    "web/routes/_chat.settings.open-source-licenses.tsx",
+    "web/routes/_chat.settings.projects.tsx",
+    "web/routes/_chat.settings.providers.tsx",
+    "web/routes/_chat.settings.scheduled-tasks.tsx",
+    "web/routes/_chat.settings.secrets.tsx",
+    "web/routes/_chat.settings.snap-shot.tsx",
+    "web/routes/_chat.settings.source-control.tsx",
+    "web/routes/_chat.settings.storage.tsx",
+    "web/routes/_chat.settings.threads.tsx",
+    "web/routes/_chat.settings.tsx",
+    "web/routes/_chat.settings.voice.tsx",
+    "web/routes/_chat.settings.worktrees.tsx",
+    "web/routes/_chat.tsx",
+    "web/routes/_chat.usage.tsx",
+    "web/routes/connect-agent.tsx",
+    "web/routes/guest.tsx",
+    "web/routes/pair.tsx",
+    "web/routes/projects.$projectKey.tsx",
+    "web/routes/threads.$environmentId.$threadId.tsx",
+    "web/routes/welcome.tsx",
+    "web/rpc/atomRegistry.ts",
+    "web/rpc/requestLatencyState.ts",
+    "web/session-logic.ts",
+    "web/settleAndAdvance.ts",
+    "web/shortcutModifierState.ts",
+    "web/shortcuts/chatRouteCommands.ts",
+    "web/shortcuts/commandPaletteCommands.ts",
+    "web/shortcuts/dispatcher.ts",
+    "web/sidebarPendingFileDropStore.ts",
+    "web/sidebarProjectGrouping.ts",
+    "web/sourceControlPresentation.tsx",
+    "web/speech/browserMicrophones.ts",
+    "web/speech/browserPcmCapture.ts",
+    "web/speech/browserVoiceInput.ts",
+    "web/speech/microphoneOrder.ts",
+    "web/speech/pcmResampler.ts",
+    "web/speech/pcmWorklet.ts",
+    "web/speech/preferredSpeechLanguages.ts",
+    "web/speech/requestMicrophone.ts",
+    "web/speech/runEnvironmentSpeech.ts",
+    "web/speech/useDictationShortcut.ts",
+    "web/speech/useDictationSubmissionShortcut.ts",
+    "web/speech/useEnvironmentSpeechInput.ts",
+    "web/speech/useTextFieldSpeech.tsx",
+    "web/speech/voiceConsent.ts",
+    "web/speech/voiceInputSession.ts",
+    "web/state/agentSessions.ts",
+    "web/state/assets.ts",
+    "web/state/attachments.ts",
+    "web/state/auth.ts",
+    "web/state/clientHostEnvironment.ts",
+    "web/state/connectMcpApproval.ts",
+    "web/state/desktopCliCommand.ts",
+    "web/state/desktopNetworkAccess.ts",
+    "web/state/desktopSnapShot.ts",
+    "web/state/desktopSshHosts.ts",
+    "web/state/desktopUpdate.ts",
+    "web/state/desktopWslState.ts",
+    "web/state/device.ts",
+    "web/state/entities.ts",
+    "web/state/environmentAtomList.ts",
+    "web/state/environments.ts",
+    "web/state/filesystem.ts",
+    "web/state/git.ts",
+    "web/state/issueTrackers.ts",
+    "web/state/issues.ts",
+    "web/state/managedPolicy.ts",
+    "web/state/mcpApps.ts",
+    "web/state/npmRelease.ts",
+    "web/state/olderSettledShelf.ts",
+    "web/state/orchestration.ts",
+    "web/state/paginatedBranches.ts",
+    "web/state/peerLinks.ts",
+    "web/state/peerPairingCode.ts",
+    "web/state/presentation.ts",
+    "web/state/preview.ts",
+    "web/state/previewStream.ts",
+    "web/state/previewTunnel.ts",
+    "web/state/primaryEnvironment.ts",
+    "web/state/projectClones.ts",
+    "web/state/projects.ts",
+    "web/state/pullRequests.ts",
+    "web/state/queries.ts",
+    "web/state/query.ts",
+    "web/state/relay.ts",
+    "web/state/review.ts",
+    "web/state/revisionedQuery.ts",
+    "web/state/server.ts",
+    "web/state/serverProviders.logic.ts",
+    "web/state/session.ts",
+    "web/state/shell.ts",
+    "web/state/sourceControl.ts",
+    "web/state/sourceControlActions.ts",
+    "web/state/terminal.ts",
+    "web/state/terminalSessions.ts",
+    "web/state/threads.ts",
+    "web/state/usage.ts",
+    "web/state/use-atom-command.ts",
+    "web/state/use-atom-query-runner.ts",
+    "web/state/use-orchestration-command.ts",
+    "web/state/usePullRequestStack.ts",
+    "web/state/v2ItemSupport.ts",
+    "web/state/vcs.ts",
+    "web/state/waitForAtomValue.ts",
+    "web/state/waitForQuerySettled.ts",
+    "web/terminal-links.ts",
+    "web/terminal/ghostty/core.ts",
+    "web/terminal/ghostty/keyCodes.ts",
+    "web/terminal/ghostty/renderer.ts",
+    "web/terminal/ghostty/runtime.ts",
+    "web/terminal/ghostty/surface.ts",
+    "web/terminalUiStateStore.ts",
+    "web/test-fixtures.ts",
+    "web/textDirection.ts",
+    "web/textGenerators.ts",
+    "web/themeBackground.ts",
+    "web/themeCss.ts",
+    "web/themePalette.ts",
+    "web/threadNotifications.ts",
+    "web/threadRoutes.ts",
+    "web/threadSelectionStore.ts",
+    "web/threadSync.ts",
+    "web/timestampFormat.ts",
+    "web/types.ts",
+    "web/uiStateStore.ts",
+    "web/useNativeFileDrag.ts",
+    "web/versionSkew.ts",
+    "web/vite-env.d.ts",
+    "web/workspaceTitlebar.ts",
+    "web/worktreeCleanup.ts",
+    "web/wslPaths.ts",
+    "shims/gt-i18n.ts",
+    "shims/gt-i18n/types.ts",
+    "shims/gt-react.tsx",
+    "shims/jszip.ts",
+    "stubs/@betteroffice/docx/editor.ts",
+    "stubs/@betteroffice/docx/layout.ts",
+    "stubs/@betteroffice/docx/layout/render.ts",
+    "stubs/@betteroffice/docx/yrs.ts",
+    "stubs/@betteroffice/fonts.ts",
+    "stubs/@betteroffice/pptx.ts",
+    "stubs/@betteroffice/xlsx.ts",
+    "stubs/@betteroffice/xlsx/headless.ts",
+    "stubs/@clerk/electron/passkeys.ts",
+    "stubs/@clerk/electron/react.ts",
+    "stubs/@clerk/react.ts",
+    "stubs/@daypicker/react.ts",
+    "stubs/@noble/curves/nist.ts",
+    "stubs/absent-url.ts",
+    "stubs/absent.ts",
+    "stubs/canvas-confetti.ts",
+    "stubs/entities.ts",
+    "stubs/fast-xml-parser.ts",
+    "stubs/heic-to/csp.ts",
+    "stubs/jsonc-parser.ts",
+    "stubs/saxes.ts",
+    "stubs/sql.js.ts",
+    "stubs/three.ts",
+    "stubs/three/addons/environments/RoomEnvironment.js.ts",
+    "stubs/three/addons/loaders/GLTFLoader.js.ts",
+    "stubs/tiff.ts",
+    "web/components/T3AppIcon.tsx",
+    "web/components/T3Wordmark.tsx"
+  ]
+}

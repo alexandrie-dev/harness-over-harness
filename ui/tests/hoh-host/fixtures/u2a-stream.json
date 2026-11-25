@@ -1,0 +1,364 @@
+[
+  {
+    "jsonrpc": "2.0",
+    "method": "session.event",
+    "params": {
+      "sessionId": "c7-real",
+      "event": {
+        "type": "plugin:external-harness/session",
+        "seq": 0,
+        "time": 1795528903162,
+        "data": {},
+        "ignorable": true
+      }
+    }
+  },
+  {
+    "jsonrpc": "2.0",
+    "method": "session.status",
+    "params": {
+      "sessionId": "c7-real",
+      "status": "running"
+    }
+  },
+  {
+    "jsonrpc": "2.0",
+    "method": "session.event",
+    "params": {
+      "sessionId": "c7-real",
+      "event": {
+        "type": "turn/start",
+        "seq": 1,
+        "time": 1795528903250,
+        "data": {
+          "turn": 1
+        }
+      }
+    }
+  },
+  {
+    "jsonrpc": "2.0",
+    "method": "session.event",
+    "params": {
+      "sessionId": "c7-real",
+      "event": {
+        "type": "step/start",
+        "seq": 2,
+        "time": 1795528903251,
+        "data": {
+          "turn": 1,
+          "step": 1
+        }
+      }
+    }
+  },
+  {
+    "jsonrpc": "2.0",
+    "method": "session.event",
+    "params": {
+      "sessionId": "c7-real",
+      "event": {
+        "type": "user/message",
+        "seq": 3,
+        "time": 1795528903251,
+        "data": {
+          "content": [
+            {
+              "type": "text",
+              "text": "short"
+            }
+          ],
+          "source": {
+            "kind": "user"
+          },
+          "role": "user",
+          "id": "06ca2db5-c36f-4dea-add3-e8e75b5c79b1"
+        },
+        "surfaceOp": "append"
+      }
+    }
+  },
+  {
+    "jsonrpc": "2.0",
+    "method": "session.event",
+    "params": {
+      "sessionId": "c7-real",
+      "event": {
+        "type": "working-directory/change",
+        "seq": 4,
+        "time": 1795528903253,
+        "data": {
+          "cwd": "/work/alexandrie"
+        }
+      }
+    }
+  },
+  {
+    "jsonrpc": "2.0",
+    "method": "session.event",
+    "params": {
+      "sessionId": "c7-real",
+      "event": {
+        "type": "plugin:external-harness/session",
+        "seq": 5,
+        "time": 1795528903369,
+        "data": {},
+        "ignorable": true
+      }
+    }
+  },
+  {
+    "jsonrpc": "2.0",
+    "method": "session.event",
+    "params": {
+      "sessionId": "c7-real",
+      "event": {
+        "type": "plugin:external-harness/launch",
+        "seq": 6,
+        "time": 1795528903369,
+        "data": {
+          "runtimeMode": "confirm"
+        },
+        "ignorable": true
+      }
+    }
+  },
+  {
+    "jsonrpc": "2.0",
+    "method": "session.event",
+    "params": {
+      "sessionId": "c7-real",
+      "event": {
+        "type": "plugin:hoh/context-usage",
+        "seq": 7,
+        "time": 1795528903370,
+        "data": {},
+        "ignorable": true
+      }
+    }
+  },
+  {
+    "jsonrpc": "2.0",
+    "method": "session.assistant-stream",
+    "params": {
+      "sessionId": "c7-real",
+      "frame": {
+        "type": "start",
+        "attemptId": "c7-real:1:reasoning:msg-1:0",
+        "revision": 1,
+        "turn": 1,
+        "step": 1
+      }
+    }
+  },
+  {
+    "jsonrpc": "2.0",
+    "method": "session.assistant-stream",
+    "params": {
+      "sessionId": "c7-real",
+      "frame": {
+        "type": "chunk",
+        "attemptId": "c7-real:1:reasoning:msg-1:0",
+        "revision": 1,
+        "index": 0,
+        "time": 1795528903372,
+        "chunk": {
+          "type": "reasoning-delta",
+          "text": ""
+        }
+      }
+    }
+  },
+  {
+    "jsonrpc": "2.0",
+    "method": "session.assistant-stream",
+    "params": {
+      "sessionId": "c7-real",
+      "frame": {
+        "type": "start",
+        "attemptId": "c7-real:1:text:msg-1:0",
+        "revision": 2,
+        "turn": 1,
+        "step": 1
+      }
+    }
+  },
+  {
+    "jsonrpc": "2.0",
+    "method": "session.assistant-stream",
+    "params": {
+      "sessionId": "c7-real",
+      "frame": {
+        "type": "chunk",
+        "attemptId": "c7-real:1:text:msg-1:0",
+        "revision": 2,
+        "index": 0,
+        "time": 1795528903621,
+        "chunk": {
+          "type": "text-delta",
+          "text": "Hello "
+        }
+      }
+    }
+  },
+  {
+    "jsonrpc": "2.0",
+    "method": "session.assistant-stream",
+    "params": {
+      "sessionId": "c7-real",
+      "frame": {
+        "type": "chunk",
+        "attemptId": "c7-real:1:text:msg-1:0",
+        "revision": 2,
+        "index": 1,
+        "time": 1795528903871,
+        "chunk": {
+          "type": "text-delta",
+          "text": "from the test "
+        }
+      }
+    }
+  },
+  {
+    "jsonrpc": "2.0",
+    "method": "session.assistant-stream",
+    "params": {
+      "sessionId": "c7-real",
+      "frame": {
+        "type": "chunk",
+        "attemptId": "c7-real:1:text:msg-1:0",
+        "revision": 2,
+        "index": 2,
+        "time": 1795528904122,
+        "chunk": {
+          "type": "text-delta",
+          "text": "stream."
+        }
+      }
+    }
+  },
+  {
+    "jsonrpc": "2.0",
+    "method": "session.event",
+    "params": {
+      "sessionId": "c7-real",
+      "event": {
+        "type": "assistant/message",
+        "seq": 8,
+        "time": 1795528904122,
+        "data": {
+          "turn": 1,
+          "step": 1,
+          "stream": [],
+          "message": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "Hello from the test stream."
+              }
+            ],
+            "source": {
+              "kind": "model",
+              "provider": "claude",
+              "model": "default"
+            },
+            "id": "23cb8c64-d2e1-4e51-a7ba-e8b991e3aadb"
+          }
+        },
+        "surfaceOp": "append"
+      }
+    }
+  },
+  {
+    "jsonrpc": "2.0",
+    "method": "session.assistant-stream",
+    "params": {
+      "sessionId": "c7-real",
+      "frame": {
+        "type": "end",
+        "attemptId": "c7-real:1:reasoning:msg-1:0",
+        "revision": 1,
+        "index": 1,
+        "outcome": "committed"
+      }
+    }
+  },
+  {
+    "jsonrpc": "2.0",
+    "method": "session.assistant-stream",
+    "params": {
+      "sessionId": "c7-real",
+      "frame": {
+        "type": "end",
+        "attemptId": "c7-real:1:text:msg-1:0",
+        "revision": 2,
+        "index": 3,
+        "outcome": "committed"
+      }
+    }
+  },
+  {
+    "jsonrpc": "2.0",
+    "method": "session.event",
+    "params": {
+      "sessionId": "c7-real",
+      "event": {
+        "type": "plugin:hoh/context-usage",
+        "seq": 9,
+        "time": 1795528904122,
+        "data": {},
+        "ignorable": true
+      }
+    }
+  },
+  {
+    "jsonrpc": "2.0",
+    "method": "session.event",
+    "params": {
+      "sessionId": "c7-real",
+      "event": {
+        "type": "step/end",
+        "seq": 10,
+        "time": 1795528904122,
+        "data": {
+          "turn": 1,
+          "step": 1
+        }
+      }
+    }
+  },
+  {
+    "jsonrpc": "2.0",
+    "method": "session.event",
+    "params": {
+      "sessionId": "c7-real",
+      "event": {
+        "type": "turn/end",
+        "seq": 11,
+        "time": 1795528904122,
+        "data": {
+          "turn": 1,
+          "reason": {
+            "kind": "completed"
+          },
+          "usage": {
+            "inputTokens": 17,
+            "cacheCreationInputTokens": 0,
+            "cacheReadInputTokens": 23,
+            "outputTokens": 0,
+            "maxTokens": null
+          }
+        }
+      }
+    }
+  },
+  {
+    "jsonrpc": "2.0",
+    "method": "session.status",
+    "params": {
+      "sessionId": "c7-real",
+      "status": "idle"
+    }
+  }
+]

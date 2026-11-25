@@ -1,0 +1,16 @@
+--- a/web/components/sidebar/SidebarProjectFolderHeader.tsx
++++ b/web/components/sidebar/SidebarProjectFolderHeader.tsx
+@@ -44,0 +45 @@
++  totalThreads: number;
+@@ -100 +101 @@
+-        {collapsed && hiddenThreads.length > 0 ? (
++        {collapsed && props.totalThreads > 0 ? (
+@@ -102 +103 @@
+-            {hiddenThreads.length}
++            {props.totalThreads}
+@@ -122 +123 @@
+-                aria-label={gt("New thread in {project}", { project: group.displayName })}
++                aria-label={gt("New chat in {project}", { project: group.displayName })}
+@@ -131 +132 @@
+-              New thread in <Var>{group.displayName}</Var>
++              New chat in <Var>{group.displayName}</Var>

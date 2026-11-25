@@ -1,5 +1,6 @@
 //! packages/sdk/server/src/server.ts. One SDK owner over an existing harness runtime.
 use crate::{
+    HohRpcMethods,
     error::{ForeignErrorValue, SdkServerError, error, type_error},
     lock,
     query_activity::{QUERY_INVOCATION, QueryActivity},
@@ -30,16 +31,16 @@ use hoh_error::{BoxError, HarnessError, SharedError};
 use hoh_goal::Goals;
 use hoh_kernel::{Context, Disposer, Fiber, Inject, Service, Undo};
 use hoh_llm::{
-    ContentBlock, Llm, LlmCallConfig, LlmCallControls, MessageSource, NewUserMessage,
-    ReasoningEffortId, StreamChunk, create_user_message,
+    ContentBlock, Llm, LlmCallConfig, LlmCallControls, MessageId, MessageSource, ReasoningEffortId,
+    StreamChunk, UserMessage,
 };
 use hoh_protocol::{
     ApprovalHost, HohInitializeResult, InitializeParams, InitializeResult, SecretString,
     ServerInfo, SessionAssistantStreamChunk, SessionAssistantStreamFrame,
     SessionAssistantStreamNotification, SessionAssistantStreamOutcome, SessionPromptParams,
     SessionPromptResult, SessionQueryParams, SessionQueryResult, SessionResumeParams,
-    SessionWaitParams, SessionWorkingDirectoryParams, SessionWorkingDirectoryResult,
-    SessionWorkingDirectorySetParams,
+    SessionWaitParams, SessionWorkingDirectoryParams, SessionWorkingDirectoryRebindParams,
+    SessionWorkingDirectoryResult, SessionWorkingDirectorySetParams, WorkingDirectoryRootIdentity,
 };
 use hoh_session::{SessionCreated, SessionEventEmitted, SessionId, SessionLogOffset};
 use hoh_session_persistence::SessionPersistenceService;
@@ -153,6 +154,19 @@ fn assistant_stream_frame(
             time: *time,
             chunk: SessionAssistantStreamChunk::TextDelta { text: text.clone() },
         },
+        AgentAssistantStreamFrame::Chunk {
+            attempt_id,
+            revision,
+            index,
+            time,
+            chunk: StreamChunk::ReasoningDelta { text, .. },
+        } => SessionAssistantStreamFrame::Chunk {
+            attempt_id: attempt_id.to_string(),
+            revision: *revision,
+            index: *index,
+            time: *time,
+            chunk: SessionAssistantStreamChunk::ReasoningDelta { text: text.clone() },
+        },
         AgentAssistantStreamFrame::Chunk { .. } => return None,
         AgentAssistantStreamFrame::End {
             attempt_id,
@@ -211,6 +225,9 @@ struct State {
     shutting_down: bool,
     approval_requests: bool,
     sessions: IndexMap<SessionId, Arc<SessionRecord>>,
+    deleting: std::collections::HashSet<SessionId>,
+    deleted: std::collections::HashSet<SessionId>,
+    prompt_admissions: std::collections::HashMap<SessionId, usize>,
     creations: IndexMap<SessionId, Creation>,
     scheduled: IndexMap<SessionId, Creation>,
     activities: IndexMap<u64, Arc<QueryActivity>>,
@@ -265,6 +282,9 @@ impl HarnessSdkJsonRpcServer {
                     shutting_down: false,
                     approval_requests: false,
                     sessions: IndexMap::new(),
+                    deleting: std::collections::HashSet::new(),
+                    deleted: std::collections::HashSet::new(),
+                    prompt_admissions: std::collections::HashMap::new(),
                     creations: IndexMap::new(),
                     scheduled: IndexMap::new(),
                     activities: IndexMap::new(),
@@ -574,6 +594,9 @@ impl HarnessSdkJsonRpcServer {
                 Arc::new(TransportApprovalPeer(self.inner.transport.clone())),
             )?;
         }
+        if let Some(working_directory) = self.inner.ctx.get::<WorkingDirectoryKey>() {
+            working_directory.set_initial_default_directory(cwd.clone());
+        }
         {
             let mut state = lock(&self.inner.state);
             state.route = Route {
@@ -608,33 +631,78 @@ impl HarnessSdkJsonRpcServer {
         &self,
         params: SessionPromptParams,
     ) -> Result<SessionPromptResult, BoxError> {
+        let listener_params = serde_json::to_value(&params)?;
         let blocks = params
             .content_blocks
             .iter()
             .map(serde_json::to_value)
             .collect::<Result<Vec<_>, _>>()?;
-        self.prompt_blocks(SessionId::from(params.session_id), blocks)
-            .await
+        self.prompt_blocks(
+            SessionId::from(params.session_id),
+            blocks,
+            Some(&listener_params),
+        )
+        .await
     }
+    /// `params`: those of a `session/prompt` request, for its listener (HOH-40).
     async fn prompt_blocks(
         &self,
         session_id: SessionId,
         blocks: Vec<Value>,
+        params: Option<&Value>,
     ) -> Result<SessionPromptResult, BoxError> {
         self.assert_initialized()?;
+        let message_id: MessageId = hoh_util_crypto::random_uuid().as_str().into();
+        // Capture the permission selected when the request is accepted, before attachment I/O
+        // can let a later access change overtake this message.
+        if let Some(methods) = self.inner.ctx.get::<HohRpcMethods>() {
+            methods.prompted(
+                session_id.as_ref(),
+                message_id.as_ref(),
+                params.unwrap_or(&Value::Null),
+            );
+        }
         let rec = self.get_or_create_session(session_id.clone()).await?;
         self.inner.lifetime.signal().throw_if_aborted()?;
         self.assert_live_agent(&rec, &session_id)?;
         let content = durable_prompt_content(&self.inner.ctx, blocks).await?;
         self.inner.lifetime.signal().throw_if_aborted()?;
         self.assert_live_agent(&rec, &session_id)?;
-        let message = create_user_message(NewUserMessage {
+        let message = UserMessage {
             content,
             source: MessageSource::new("user"),
-        });
-        let message_id = message.id.to_string();
-        rec.handle.agent.followup(message)?;
-        Ok(SessionPromptResult { message_id })
+            id: message_id.clone(),
+        };
+        {
+            let mut state = lock(&self.inner.state);
+            if state.deleting.contains(&session_id)
+                || !state
+                    .sessions
+                    .get(&session_id)
+                    .is_some_and(|live| Arc::ptr_eq(live, &rec))
+            {
+                return Err(error("Chat is being deleted"));
+            }
+            *state
+                .prompt_admissions
+                .entry(session_id.clone())
+                .or_default() += 1;
+        }
+        // followup emits synchronous events that themselves need the server lock.
+        let sent = rec.handle.agent.followup(message);
+        {
+            let mut state = lock(&self.inner.state);
+            if let Some(count) = state.prompt_admissions.get_mut(&session_id) {
+                *count -= 1;
+                if *count == 0 {
+                    state.prompt_admissions.remove(&session_id);
+                }
+            }
+        }
+        sent?;
+        Ok(SessionPromptResult {
+            message_id: message_id.to_string(),
+        })
     }
     pub async fn query(&self, params: SessionQueryParams) -> Result<SessionQueryResult, BoxError> {
         self.query_blocks(
@@ -677,9 +745,24 @@ impl HarnessSdkJsonRpcServer {
                         }
                     },
                 )?;
-                lock(&self.inner.state)
-                    .activities
-                    .insert(activity.id(), activity.clone());
+                let admitted = {
+                    let mut state = lock(&self.inner.state);
+                    if state.deleting.contains(&session_id)
+                        || !state
+                            .sessions
+                            .get(&session_id)
+                            .is_some_and(|live| Arc::ptr_eq(live, &rec))
+                    {
+                        false
+                    } else {
+                        state.activities.insert(activity.id(), activity.clone());
+                        true
+                    }
+                };
+                if !admitted {
+                    activity.close();
+                    return Err(error("Chat is being deleted"));
+                }
                 let id = {
                     let mut state = lock(&self.inner.state);
                     state.next_task += 1;
@@ -743,7 +826,7 @@ impl HarnessSdkJsonRpcServer {
                 });
             }
         }
-        let receipt = self.prompt_blocks(session_id, blocks).await?;
+        let receipt = self.prompt_blocks(session_id, blocks, None).await?;
         Ok(SessionQueryResult::Prompt {
             message_id: receipt.message_id,
         })
@@ -755,6 +838,9 @@ impl HarnessSdkJsonRpcServer {
             let mut state = lock(&self.inner.state);
             if state.shutting_down {
                 return Err(error("SDK server is shutting down"));
+            }
+            if state.deleting.contains(&id) {
+                return Err(error("Chat is being deleted"));
             }
             if let Some(pending) = state.scheduled.shift_remove(&id) {
                 (pending, true)
@@ -866,9 +952,20 @@ impl HarnessSdkJsonRpcServer {
             .ctx
             .get::<WorkingDirectoryKey>()
             .ok_or_else(|| error("workingDirectory service is unavailable"))?;
-        Ok(SessionWorkingDirectoryResult {
-            cwd: directory.ensure(&directory_agent(agent), None).await?,
-        })
+        let cwd = directory
+            .ensure(&directory_agent(agent.clone()), None)
+            .await?;
+        let (verified, identity) = directory.verify_for_read(agent.session())?;
+        if verified != cwd {
+            return Err(error(
+                "The conversation folder changed while it was being read",
+            ));
+        }
+        let root_identity = Some(WorkingDirectoryRootIdentity {
+            device: identity[0].to_string(),
+            inode: identity[1].to_string(),
+        });
+        Ok(SessionWorkingDirectoryResult { cwd, root_identity })
     }
     pub async fn set_working_directory(
         &self,
@@ -882,11 +979,15 @@ impl HarnessSdkJsonRpcServer {
             .ctx
             .get::<WorkingDirectoryKey>()
             .ok_or_else(|| error("workingDirectory service is unavailable"))?;
-        Ok(SessionWorkingDirectoryResult {
-            cwd: directory
-                .set(&directory_agent(agent), &params.path, None)
-                .await?,
-        })
+        let cwd = directory
+            .set(&directory_agent(agent.clone()), &params.path, None)
+            .await?;
+        let (_, identity) = directory.verify_for_spawn(agent.session())?;
+        let root_identity = Some(WorkingDirectoryRootIdentity {
+            device: identity[0].to_string(),
+            inode: identity[1].to_string(),
+        });
+        Ok(SessionWorkingDirectoryResult { cwd, root_identity })
     }
     async fn working_directory_agent(&self, id: SessionId) -> Result<Arc<dyn Agent>, BoxError> {
         self.assert_initialized()?;
@@ -909,10 +1010,25 @@ impl HarnessSdkJsonRpcServer {
         }
     }
     async fn get_or_create_session(&self, id: SessionId) -> Result<Arc<SessionRecord>, BoxError> {
+        let stored = if let Some(persistence) = self.inner.ctx.get::<SessionPersistenceService>() {
+            let exists = persistence.stat(&id, None).await?.is_some();
+            if !exists && persistence.is_trashed(&id).await? {
+                return Err(error("Chat was deleted"));
+            }
+            exists
+        } else {
+            false
+        };
         let pending = {
             let mut state = lock(&self.inner.state);
             if state.shutting_down {
                 return Err(error("SDK server is shutting down"));
+            }
+            if state.deleted.contains(&id) {
+                return Err(error("Chat was deleted"));
+            }
+            if state.deleting.contains(&id) {
+                return Err(error("Chat is being deleted"));
             }
             state.scheduled.shift_remove(&id);
             if let Some(rec) = state.sessions.get(&id) {
@@ -921,7 +1037,7 @@ impl HarnessSdkJsonRpcServer {
             if let Some(pending) = state.creations.get(&id) {
                 pending.clone()
             } else {
-                self.open_session_locked(&mut state, id, false)
+                self.open_session_locked(&mut state, id, stored)
             }
         };
         pending.await.map_err(Into::into)
@@ -1208,18 +1324,36 @@ impl HarnessSdkJsonRpcServer {
             }
             "session/prompt" => {
                 self.assert_initialized()?;
-                let id = string_field(
+                // Preserve the SDK-compatible diagnostics for the two required fields while the
+                // typed decode below enforces the rest of the closed request contract.
+                string_field(
                     &params,
                     "sessionId",
                     "session/prompt requires a sessionId string",
                 )?;
-                let blocks = params
+                params
                     .get("contentBlocks")
                     .and_then(Value::as_array)
-                    .cloned()
                     .ok_or_else(|| type_error("session/prompt requires contentBlocks"))?;
-                serde_json::to_value(self.prompt_blocks(SessionId::from(id), blocks).await?)
-                    .map_err(Into::into)
+                // `effort` is private glue consumed by the prompt listener, not the public SDK
+                // struct. Everything else crosses the typed protocol boundary before a session,
+                // message, mode choice, or followup can be created.
+                let mut typed = params.clone();
+                if let Some(object) = typed.as_object_mut() {
+                    object.remove("effort");
+                }
+                let typed: SessionPromptParams =
+                    serde_json::from_value(typed).map_err(|error| type_error(error.to_string()))?;
+                let blocks = typed
+                    .content_blocks
+                    .iter()
+                    .map(serde_json::to_value)
+                    .collect::<Result<Vec<_>, _>>()?;
+                serde_json::to_value(
+                    self.prompt_blocks(SessionId::from(typed.session_id), blocks, Some(&params))
+                        .await?,
+                )
+                .map_err(Into::into)
             }
             "session/query" => {
                 let valid = params
@@ -1271,6 +1405,48 @@ impl HarnessSdkJsonRpcServer {
                 })
                 .await
             }
+            "session/working-directory/status" | "session/working-directory/rebind" => {
+                let id = string_field(
+                    &params,
+                    "sessionId",
+                    "working-directory requests require a sessionId",
+                )?;
+                if id.is_empty() {
+                    return Err(type_error(
+                        "working-directory requests require a non-empty sessionId",
+                    ));
+                }
+                self.assert_initialized()?;
+                let session_id = SessionId::from(id.to_owned());
+                let record = lock(&self.inner.state)
+                    .sessions
+                    .get(&session_id)
+                    .cloned()
+                    .ok_or_else(|| error(format!("unknown SDK session: {session_id}")))?;
+                self.assert_live_agent(&record, &session_id)?;
+                let agent = record.handle.agent.clone();
+                let directory = self
+                    .inner
+                    .ctx
+                    .get::<WorkingDirectoryKey>()
+                    .ok_or_else(|| error("workingDirectory service is unavailable"))?;
+                if method == "session/working-directory/status" {
+                    let (cwd, identity, changed) = directory.folder_status(agent.session())?;
+                    Ok(
+                        json!({"cwd": cwd, "rootIdentity": {"device": identity[0].to_string(), "inode": identity[1].to_string()}, "changed": changed}),
+                    )
+                } else {
+                    let request: SessionWorkingDirectoryRebindParams =
+                        serde_json::from_value(params.clone())?;
+                    let identity = [
+                        request.root_identity.device.parse::<u64>()?,
+                        request.root_identity.inode.parse::<u64>()?,
+                    ];
+                    self.approve_privileged(method, &params).await?;
+                    let cwd = directory.rebind(&agent, &request.path, identity).await?;
+                    Ok(json!({"cwd": cwd, "rootIdentity": request.root_identity}))
+                }
+            }
             "session/working-directory/get" | "session/working-directory/set" => {
                 let id = string_field(
                     &params,
@@ -1302,6 +1478,7 @@ impl HarnessSdkJsonRpcServer {
                 };
                 serde_json::to_value(result).map_err(Into::into)
             }
+            "session/delete" => self.session_delete(params).await,
             "session/list" => self.session_list(params).await,
             "session/events" => self.session_events(params).await,
             "session/cancel" => self.session_cancel(params),

@@ -1,5 +1,5 @@
 use hoh_protocol::{approval::*, framing::RequestFrame, transport::FrameReader, *};
-use serde_json::json;
+use serde_json::{Value, json};
 use std::io::{BufReader, Cursor};
 
 const KEY_HEX: &str = "2b60f8989cf1e8a3ddf60735427531e71bb462960be719332c43f0851c5e5484";
@@ -138,6 +138,43 @@ fn typed_dsh_no_argument_frames_and_integral_fields() {
     assert!(serde_json::from_value::<Dimensions>(json!({"width":1.5,"height":1})).is_err());
     let _: ApprovalOutcome = serde_json::from_value(json!("unavailable")).unwrap();
     let _:InitializeResult=serde_json::from_value(json!({"serverInfo":{"name":"n","version":"v"},"hoh":{"protocolVersion":1,"approvals":"host"}})).unwrap();
+}
+
+#[test]
+fn session_prompt_interaction_mode_is_a_closed_wire_choice() {
+    let base = json!({"sessionId":"s","contentBlocks":[]});
+    validate_params("session/prompt", &base).unwrap();
+    for mode in ["default", "plan"] {
+        let mut params = base.clone();
+        params["interactionMode"] = json!(mode);
+        validate_params("session/prompt", &params).unwrap();
+        let decoded: SessionPromptParams = serde_json::from_value(params).unwrap();
+        assert!(decoded.interaction_mode.is_some());
+    }
+    for invalid in [json!("Plan"), json!("future-mode"), json!(1), Value::Null] {
+        let mut params = base.clone();
+        params["interactionMode"] = invalid;
+        assert!(validate_params("session/prompt", &params).is_err());
+        assert!(serde_json::from_value::<SessionPromptParams>(params).is_err());
+    }
+}
+
+#[test]
+fn title_prompt_has_a_protocol_boundary() {
+    let accepted = "x".repeat(EXECUTOR_TITLE_PROMPT_MAX_CHARS);
+    validate_params(
+        "hoh/executor/title/generate",
+        &json!({"executor":"claude","prompt":accepted}),
+    )
+    .unwrap();
+    let refused = "x".repeat(EXECUTOR_TITLE_PROMPT_MAX_CHARS + 1);
+    assert!(
+        validate_params(
+            "hoh/executor/title/generate",
+            &json!({"executor":"claude","prompt":refused})
+        )
+        .is_err()
+    );
 }
 #[test]
 fn network_line_limit_bounds_buffer_and_recovers_stdio_remains_unlimited() {

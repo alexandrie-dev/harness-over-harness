@@ -1217,6 +1217,7 @@ dependencies = [
  "libc",
  "serde",
  "serde_json",
+ "soup3",
  "tauri",
  "tauri-build",
  "webkit2gtk",

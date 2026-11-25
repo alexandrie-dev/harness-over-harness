@@ -12,16 +12,18 @@
       {
         "label": "main",
         "create": true,
-        "title": "HoH — Помощник",
+        "title": "HoH",
         "width": 1200,
         "height": 800,
-        "minWidth": 800,
-        "minHeight": 600,
-        "url": "index.html"
+        "minWidth": 400,
+        "minHeight": 360,
+        "url": "index.html",
+        "backgroundColor": "#000000",
+        "dragDropEnabled": false
       }
     ],
     "security": {
-      "csp": "default-src 'self'; script-src 'self'; style-src 'self'; font-src 'self'; img-src 'self' data:; connect-src ipc: http://ipc.localhost; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none'",
+      "csp": "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data: blob:; connect-src ipc: http://ipc.localhost; object-src 'none'; frame-src hoh-preview:; base-uri 'none'; form-action 'none'",
       "capabilities": [
         "main",
         "approval"
@@ -31,7 +33,13 @@
   "bundle": {
     "active": false,
     "icon": [
-      "icons/icon.png"
+      "icons/icon.png",
+      "icons/32x32.png",
+      "icons/48x48.png",
+      "icons/64x64.png",
+      "icons/128x128.png",
+      "icons/256x256.png",
+      "icons/512x512.png"
     ]
   }
 }

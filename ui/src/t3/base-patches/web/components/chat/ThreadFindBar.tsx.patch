@@ -1,0 +1,10 @@
+--- a/web/components/chat/ThreadFindBar.tsx
++++ b/web/components/chat/ThreadFindBar.tsx
+@@ -91 +91 @@
+-        aria-label={gt("Find in thread")}
++        aria-label={gt("Find in chat")}
+@@ -100,2 +100,2 @@
+-          aria-label={gt("Find in thread")}
+-          placeholder={gt("Find in thread")}
++          aria-label={gt("Find in chat")}
++          placeholder={gt("Find in chat")}

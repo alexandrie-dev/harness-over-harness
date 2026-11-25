@@ -73,7 +73,7 @@ async function openChat(viewport, { engine = seededEngine(), history, failAll = 
     window.__hohChatNotify = n => { for (const l of listeners) l(n); };
   }, { history });
   engine.subscribe(n => page.evaluate(value => window.__hohChatNotify(value), n).catch(() => {}));
-  await page.goto(dist('index.html'));
+  await page.goto(dist('legacy.html')); // прежняя оболочка (HOH-40: index.html — веб-клиент T3)
   return { page, context, engine };
 }
 

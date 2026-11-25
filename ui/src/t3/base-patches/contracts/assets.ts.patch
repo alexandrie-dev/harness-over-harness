@@ -1,0 +1,24 @@
+--- a/contracts/assets.ts
++++ b/contracts/assets.ts
+@@ -95,7 +95,11 @@
+ export const AssetCreateUrlResult = Schema.Struct({
++  // HoH (ui/T3-MAP.md): attachment bytes live in the window, so the host may mint a
++  // process-local Blob URL. CSP admits blob: images but no additional network origin.
+   relativeUrl: TrimmedNonEmptyString.check(
+     Schema.isMaxLength(4096),
+-    Schema.isPattern(/^\/api\/assets\/(?!\.{1,2}\/)[\w.-]+\/(?!(?:\.|%2[eE]){1,2}$)[^/\\?#\s]+$/u),
++    Schema.isPattern(
++      /^(?:\/api\/assets\/(?!\.{1,2}\/)[\w.-]+\/(?!(?:\.|%2[eE]){1,2}$)[^/\\?#\s]+|blob:[^\s]+)$/u,
++    ),
+   ),
+   expiresAt: Schema.Number,
+   sourcePath: Schema.optional(
+@@ -238,6 +242,8 @@ export class AssetWorkspaceAssetNotFoundError extends Schema.TaggedError<AssetWo
+     resource: AssetResource,
+     // Absolute path after home/workspace resolution; absent on older servers.
+     checkedPath: Schema.optionalKey(Schema.String),
++    // HoH (ui/T3-MAP.md): a bounded, non-sensitive reason from the native image policy.
++    detail: Schema.optionalKey(TrimmedNonEmptyString.check(Schema.isMaxLength(512))),
+   },
+ ) {
+   override get message(): string {

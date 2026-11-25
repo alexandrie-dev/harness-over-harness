@@ -6,6 +6,10 @@ fn main() {
         tauri_build::AppManifest::new().commands(&[
             "engine_request",
             "pick_folder",
+            "browse_folders",
+            "read_image_asset",
+            "read_pasted_image",
+            "preview_html",
             "open_link",
             "question_answer",
             "approval_history",

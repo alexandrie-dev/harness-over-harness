@@ -107,19 +107,39 @@ export type ExecutorAccessGetResult = { "executor": string; "mode": ExecutorAcce
 
 export type ExecutorAccessMode = "confirm" | "full";
 
-export type ExecutorAccessSetParams = { "executor": string; "mode": ExecutorAccessMode; };
+export type ExecutorAccessSetParams = { "executor": string; "mode": ExecutorAccessMode; "sessionId"?: (string | null); "runtimeMode"?: (ExecutorRuntimeMode | null); };
 
-export type ExecutorAccessSetResult = { "executor": string; "mode": ExecutorAccessMode; };
+export type ExecutorAccessSetResult = { "executor": string; "mode": ExecutorAccessMode; "runtimeMode"?: (ExecutorRuntimeMode | null); };
 
 export type ExecutorAuth = "authenticated" | "unauthenticated" | "unknown";
 
-export type ExecutorDiscoverResult = { "executor": string; "installed": boolean; "version"?: (string | null); "versionStatus": ExecutorVersionStatus; "auth": ExecutorAuth; "models": Array<ExecutorModel>; "detail"?: (string | null); };
+export type ExecutorCommand = { "name": string; "description"?: (string | null); "argumentHint"?: (string | null); };
+
+export type ExecutorCommandsParams = { "executor": string; "cwd"?: (string | null); };
+
+export type ExecutorCommandsResult = { "executor": string; "cwd": string; "commands": Array<ExecutorCommand>; "skills": Array<ExecutorCommand>; };
+
+export type ExecutorDiscoverResult = { "executor": string; "installed": boolean; "version"?: (string | null); "versionStatus": ExecutorVersionStatus; "auth": ExecutorAuth; "models": Array<ExecutorModel>; "detail"?: (string | null); "failure"?: ({ "kind": "timeout"; "operation": ExecutorDiscoveryOperation; "timeoutSeconds": number; } | { "kind": "exit"; "operation": ExecutorDiscoveryOperation; "exitCode"?: (number | null); }); };
+
+export type ExecutorDiscoveryOperation = "version" | "initialize";
 
 export type ExecutorEffectiveAccess = { "mode": ExecutorAccessMode; "flags": Array<string>; "text": string; };
 
-export type ExecutorModel = { "id": string; "displayName"?: (string | null); "isDefault"?: (boolean | null); };
+export type ExecutorEffort = { "id": string; "description"?: (string | null); };
+
+export type ExecutorLimitWindow = { "name"?: (string | null); "remainingPercent": number; "windowMinutes"?: (number | null); "resetsAt"?: (number | null); };
+
+export type ExecutorLimitsResult = { "state": ExecutorLimitsState; "windows": Array<ExecutorLimitWindow>; };
+
+export type ExecutorLimitsState = "available" | "unavailable" | "failed";
+
+export type ExecutorModel = { "id": string; "displayName"?: (string | null); "isDefault"?: (boolean | null); "effortLevels"?: (Array<ExecutorEffort> | null); "defaultEffort"?: (string | null); };
 
 export type ExecutorParams = { "executor": string; };
+
+export type ExecutorRunningRuntimeMode = "confirm" | "auto-accept-edits" | "auto" | "full" | "plan";
+
+export type ExecutorRuntimeMode = "confirm" | "auto-accept-edits" | "auto" | "full";
 
 export type ExecutorSelectParams = { "executor"?: (string | null); "model": string; };
 
@@ -127,7 +147,19 @@ export type ExecutorSelectResult = { "executor"?: (string | null); "model"?: (st
 
 export type ExecutorSelection = { "executor"?: (string | null); "model"?: (string | null); };
 
-export type ExecutorSessionAccess = { "executor"?: (string | null); "model"?: (string | null); "privacy"?: (string | null); "mode"?: (ExecutorAccessMode | null); "running"?: (ExecutorAccessMode | null); "pending": boolean; };
+export type ExecutorSessionAccess = { "executor"?: (string | null); "model"?: (string | null); "privacy"?: (string | null); "mode"?: (ExecutorAccessMode | null); "running"?: (ExecutorAccessMode | null); "runtimeMode"?: (ExecutorRuntimeMode | null); "runningRuntimeMode"?: (ExecutorRunningRuntimeMode | null); "builtin"?: (boolean | null); "pending": boolean; };
+
+export type ExecutorTitleGenerateParams = { "executor": string; "prompt": string; };
+
+export type ExecutorTitleGenerateResult = { "title": string; };
+
+export type ExecutorTrustGetParams = { "executor": string; "cwd": string; };
+
+export type ExecutorTrustGetResult = { "executor": string; "cwd": string; "trusted": boolean; "changed": boolean; };
+
+export type ExecutorTrustSetParams = { "executor": string; "cwd": string; "trust": boolean; };
+
+export type ExecutorTrustSetResult = { "executor": string; "cwd": string; "trusted": boolean; "changed": boolean; };
 
 export type ExecutorVersionStatus = "supported" | "unsupported" | "unknown";
 
@@ -171,13 +203,19 @@ export type PermissionSummary = { "employeeId": string; "permissions": Permissio
 
 export type Permissions = { "internet": InternetMode; "domains": Array<string>; "folders": Array<string>; "writeFiles": boolean; "programs": boolean; "programNetwork": Array<string>; "actAsUser": boolean; };
 
+export type PluginInventoryItem = { "id": string; "manifest": unknown; "status": string; "diagnostic"?: (string | null); "data"?: unknown; };
+
+export type PluginListParams = { "sessionId"?: (string | null); };
+
+export type PluginsListResult = Array<PluginInventoryItem>;
+
 export type RenderedPage = { "page": number; "mime": string; "encoding": ArtifactEncoding; "data": string; };
 
 export type Replace = "replace";
 
-export type Request = ({ "method": "session/prompt"; "params": SessionPromptParams; } | { "method": "session/query"; "params": SessionQueryParams; } | { "method": "session/resume"; "params": SessionResumeParams; } | { "method": "session/wait"; "params": SessionResumeParams; } | { "method": "session/working-directory/get"; "params": SessionResumeParams; } | { "method": "session/working-directory/set"; "params": SessionWorkingDirectorySetParams; } | { "method": "session/list"; "params": SessionListParams; } | { "method": "session/events"; "params": SessionEventsParams; } | { "method": "session/cancel"; "params": SessionResumeParams; } | { "method": "hoh/employee/list"; "params": Empty; } | { "method": "hoh/employee/get"; "params": IdParams; } | { "method": "hoh/employee/create"; "params": EmployeeCreateParams; } | { "method": "hoh/employee/update"; "params": EmployeeUpdateParams; } | { "method": "hoh/employee/delete"; "params": IdParams; } | { "method": "hoh/employee/memory/list"; "params": IdParams; } | { "method": "hoh/employee/memory/put"; "params": MemoryPutParams; } | { "method": "hoh/employee/memory/delete"; "params": MemoryDeleteParams; } | { "method": "hoh/employee/open"; "params": IdParams; } | { "method": "hoh/task/draft/start"; "params": TaskDraftStartParams; } | { "method": "hoh/task/draft/decide"; "params": TaskDraftDecideParams; } | { "method": "hoh/task/list"; "params": Empty; } | { "method": "hoh/task/get"; "params": IdParams; } | { "method": "hoh/task/versions"; "params": IdParams; } | { "method": "hoh/task/rollback"; "params": TaskRollbackParams; } | { "method": "hoh/task/delete"; "params": IdParams; } | { "method": "hoh/task/run"; "params": TaskRunParams; } | { "method": "hoh/task/knowledge/get"; "params": TaskIdParams; } | { "method": "hoh/task/knowledge/edit"; "params": TaskKnowledgeEditParams; } | { "method": "hoh/button/list"; "params": Empty; } | { "method": "hoh/button/create"; "params": ButtonCreateParams; } | { "method": "hoh/button/update"; "params": ButtonUpdateParams; } | { "method": "hoh/button/delete"; "params": IdParams; } | { "method": "hoh/schedule/list"; "params": Empty; } | { "method": "hoh/schedule/create"; "params": ScheduleCreateParams; } | { "method": "hoh/schedule/update"; "params": ScheduleUpdateParams; } | { "method": "hoh/schedule/delete"; "params": IdParams; } | { "method": "hoh/schedule/run-now"; "params": IdParams; } | { "method": "hoh/schedule/history"; "params": IdParams; } | { "method": "hoh/artifact/list"; "params": ArtifactListParams; } | { "method": "hoh/artifact/read"; "params": ArtifactReadParams; } | { "method": "hoh/artifact/render"; "params": ArtifactRenderParams; } | { "method": "hoh/model/key/set"; "params": ModelKeySetParams; } | { "method": "hoh/settings/rules/set"; "params": SettingsRulesSetParams; } | { "method": "hoh/model/probe"; "params": ModelProbeParams; } | { "method": "hoh/settings/get"; "params": Empty; } | { "method": "hoh/settings/set"; "params": SettingsSetParams; } | { "method": "hoh/security/summary"; "params": Empty; } | { "method": "hoh/executor/discover"; "params": ExecutorParams; } | { "method": "hoh/executor/select"; "params": ExecutorSelectParams; } | { "method": "hoh/executor/access/get"; "params": ExecutorAccessGetParams; } | { "method": "hoh/executor/access/set"; "params": ExecutorAccessSetParams; });
+export type Request = ({ "method": "session/prompt"; "params": SessionPromptParams; } | { "method": "session/query"; "params": SessionQueryParams; } | { "method": "session/resume"; "params": SessionResumeParams; } | { "method": "session/wait"; "params": SessionResumeParams; } | { "method": "session/working-directory/get"; "params": SessionResumeParams; } | { "method": "session/working-directory/set"; "params": SessionWorkingDirectorySetParams; } | { "method": "session/working-directory/status"; "params": SessionResumeParams; } | { "method": "session/working-directory/rebind"; "params": SessionWorkingDirectoryRebindParams; } | { "method": "session/list"; "params": SessionListParams; } | { "method": "session/events"; "params": SessionEventsParams; } | { "method": "session/cancel"; "params": SessionResumeParams; } | { "method": "session/delete"; "params": SessionResumeParams; } | { "method": "hoh/employee/list"; "params": Empty; } | { "method": "hoh/employee/get"; "params": IdParams; } | { "method": "hoh/employee/create"; "params": EmployeeCreateParams; } | { "method": "hoh/employee/update"; "params": EmployeeUpdateParams; } | { "method": "hoh/employee/delete"; "params": IdParams; } | { "method": "hoh/employee/memory/list"; "params": IdParams; } | { "method": "hoh/employee/memory/put"; "params": MemoryPutParams; } | { "method": "hoh/employee/memory/delete"; "params": MemoryDeleteParams; } | { "method": "hoh/employee/open"; "params": IdParams; } | { "method": "hoh/task/draft/start"; "params": TaskDraftStartParams; } | { "method": "hoh/task/draft/decide"; "params": TaskDraftDecideParams; } | { "method": "hoh/task/list"; "params": Empty; } | { "method": "hoh/task/get"; "params": IdParams; } | { "method": "hoh/task/versions"; "params": IdParams; } | { "method": "hoh/task/rollback"; "params": TaskRollbackParams; } | { "method": "hoh/task/delete"; "params": IdParams; } | { "method": "hoh/task/run"; "params": TaskRunParams; } | { "method": "hoh/task/knowledge/get"; "params": TaskIdParams; } | { "method": "hoh/task/knowledge/edit"; "params": TaskKnowledgeEditParams; } | { "method": "hoh/button/list"; "params": Empty; } | { "method": "hoh/button/create"; "params": ButtonCreateParams; } | { "method": "hoh/button/update"; "params": ButtonUpdateParams; } | { "method": "hoh/button/delete"; "params": IdParams; } | { "method": "hoh/schedule/list"; "params": Empty; } | { "method": "hoh/schedule/create"; "params": ScheduleCreateParams; } | { "method": "hoh/schedule/update"; "params": ScheduleUpdateParams; } | { "method": "hoh/schedule/delete"; "params": IdParams; } | { "method": "hoh/schedule/run-now"; "params": IdParams; } | { "method": "hoh/schedule/history"; "params": IdParams; } | { "method": "hoh/artifact/list"; "params": ArtifactListParams; } | { "method": "hoh/artifact/read"; "params": ArtifactReadParams; } | { "method": "hoh/artifact/render"; "params": ArtifactRenderParams; } | { "method": "hoh/model/key/set"; "params": ModelKeySetParams; } | { "method": "hoh/settings/rules/set"; "params": SettingsRulesSetParams; } | { "method": "hoh/model/probe"; "params": ModelProbeParams; } | { "method": "hoh/plugins/list"; "params": PluginListParams; } | { "method": "hoh/settings/get"; "params": Empty; } | { "method": "hoh/settings/set"; "params": SettingsSetParams; } | { "method": "hoh/security/summary"; "params": Empty; } | { "method": "hoh/executor/discover"; "params": ExecutorParams; } | { "method": "hoh/executor/limits"; "params": ExecutorParams; } | { "method": "hoh/executor/select"; "params": ExecutorSelectParams; } | { "method": "hoh/executor/access/get"; "params": ExecutorAccessGetParams; } | { "method": "hoh/executor/access/set"; "params": ExecutorAccessSetParams; } | { "method": "hoh/executor/trust/get"; "params": ExecutorTrustGetParams; } | { "method": "hoh/executor/trust/set"; "params": ExecutorTrustSetParams; } | { "method": "hoh/executor/commands"; "params": ExecutorCommandsParams; } | { "method": "hoh/workspace/entries"; "params": WorkspaceEntriesParams; } | { "method": "hoh/workspace/add"; "params": WorkspaceAddParams; } | { "method": "hoh/executor/title/generate"; "params": ExecutorTitleGenerateParams; });
 
-export type RequestFrame = ({ "jsonrpc": Version; "id": JsonRpcId; } & ({ "method": "session/prompt"; "params": SessionPromptParams; } | { "method": "session/query"; "params": SessionQueryParams; } | { "method": "session/resume"; "params": SessionResumeParams; } | { "method": "session/wait"; "params": SessionResumeParams; } | { "method": "session/working-directory/get"; "params": SessionResumeParams; } | { "method": "session/working-directory/set"; "params": SessionWorkingDirectorySetParams; } | { "method": "session/list"; "params": SessionListParams; } | { "method": "session/events"; "params": SessionEventsParams; } | { "method": "session/cancel"; "params": SessionResumeParams; } | { "method": "hoh/employee/list"; "params": Empty; } | { "method": "hoh/employee/get"; "params": IdParams; } | { "method": "hoh/employee/create"; "params": EmployeeCreateParams; } | { "method": "hoh/employee/update"; "params": EmployeeUpdateParams; } | { "method": "hoh/employee/delete"; "params": IdParams; } | { "method": "hoh/employee/memory/list"; "params": IdParams; } | { "method": "hoh/employee/memory/put"; "params": MemoryPutParams; } | { "method": "hoh/employee/memory/delete"; "params": MemoryDeleteParams; } | { "method": "hoh/employee/open"; "params": IdParams; } | { "method": "hoh/task/draft/start"; "params": TaskDraftStartParams; } | { "method": "hoh/task/draft/decide"; "params": TaskDraftDecideParams; } | { "method": "hoh/task/list"; "params": Empty; } | { "method": "hoh/task/get"; "params": IdParams; } | { "method": "hoh/task/versions"; "params": IdParams; } | { "method": "hoh/task/rollback"; "params": TaskRollbackParams; } | { "method": "hoh/task/delete"; "params": IdParams; } | { "method": "hoh/task/run"; "params": TaskRunParams; } | { "method": "hoh/task/knowledge/get"; "params": TaskIdParams; } | { "method": "hoh/task/knowledge/edit"; "params": TaskKnowledgeEditParams; } | { "method": "hoh/button/list"; "params": Empty; } | { "method": "hoh/button/create"; "params": ButtonCreateParams; } | { "method": "hoh/button/update"; "params": ButtonUpdateParams; } | { "method": "hoh/button/delete"; "params": IdParams; } | { "method": "hoh/schedule/list"; "params": Empty; } | { "method": "hoh/schedule/create"; "params": ScheduleCreateParams; } | { "method": "hoh/schedule/update"; "params": ScheduleUpdateParams; } | { "method": "hoh/schedule/delete"; "params": IdParams; } | { "method": "hoh/schedule/run-now"; "params": IdParams; } | { "method": "hoh/schedule/history"; "params": IdParams; } | { "method": "hoh/artifact/list"; "params": ArtifactListParams; } | { "method": "hoh/artifact/read"; "params": ArtifactReadParams; } | { "method": "hoh/artifact/render"; "params": ArtifactRenderParams; } | { "method": "hoh/model/key/set"; "params": ModelKeySetParams; } | { "method": "hoh/settings/rules/set"; "params": SettingsRulesSetParams; } | { "method": "hoh/model/probe"; "params": ModelProbeParams; } | { "method": "hoh/settings/get"; "params": Empty; } | { "method": "hoh/settings/set"; "params": SettingsSetParams; } | { "method": "hoh/security/summary"; "params": Empty; } | { "method": "hoh/executor/discover"; "params": ExecutorParams; } | { "method": "hoh/executor/select"; "params": ExecutorSelectParams; } | { "method": "hoh/executor/access/get"; "params": ExecutorAccessGetParams; } | { "method": "hoh/executor/access/set"; "params": ExecutorAccessSetParams; }));
+export type RequestFrame = ({ "jsonrpc": Version; "id": JsonRpcId; } & ({ "method": "session/prompt"; "params": SessionPromptParams; } | { "method": "session/query"; "params": SessionQueryParams; } | { "method": "session/resume"; "params": SessionResumeParams; } | { "method": "session/wait"; "params": SessionResumeParams; } | { "method": "session/working-directory/get"; "params": SessionResumeParams; } | { "method": "session/working-directory/set"; "params": SessionWorkingDirectorySetParams; } | { "method": "session/working-directory/status"; "params": SessionResumeParams; } | { "method": "session/working-directory/rebind"; "params": SessionWorkingDirectoryRebindParams; } | { "method": "session/list"; "params": SessionListParams; } | { "method": "session/events"; "params": SessionEventsParams; } | { "method": "session/cancel"; "params": SessionResumeParams; } | { "method": "session/delete"; "params": SessionResumeParams; } | { "method": "hoh/employee/list"; "params": Empty; } | { "method": "hoh/employee/get"; "params": IdParams; } | { "method": "hoh/employee/create"; "params": EmployeeCreateParams; } | { "method": "hoh/employee/update"; "params": EmployeeUpdateParams; } | { "method": "hoh/employee/delete"; "params": IdParams; } | { "method": "hoh/employee/memory/list"; "params": IdParams; } | { "method": "hoh/employee/memory/put"; "params": MemoryPutParams; } | { "method": "hoh/employee/memory/delete"; "params": MemoryDeleteParams; } | { "method": "hoh/employee/open"; "params": IdParams; } | { "method": "hoh/task/draft/start"; "params": TaskDraftStartParams; } | { "method": "hoh/task/draft/decide"; "params": TaskDraftDecideParams; } | { "method": "hoh/task/list"; "params": Empty; } | { "method": "hoh/task/get"; "params": IdParams; } | { "method": "hoh/task/versions"; "params": IdParams; } | { "method": "hoh/task/rollback"; "params": TaskRollbackParams; } | { "method": "hoh/task/delete"; "params": IdParams; } | { "method": "hoh/task/run"; "params": TaskRunParams; } | { "method": "hoh/task/knowledge/get"; "params": TaskIdParams; } | { "method": "hoh/task/knowledge/edit"; "params": TaskKnowledgeEditParams; } | { "method": "hoh/button/list"; "params": Empty; } | { "method": "hoh/button/create"; "params": ButtonCreateParams; } | { "method": "hoh/button/update"; "params": ButtonUpdateParams; } | { "method": "hoh/button/delete"; "params": IdParams; } | { "method": "hoh/schedule/list"; "params": Empty; } | { "method": "hoh/schedule/create"; "params": ScheduleCreateParams; } | { "method": "hoh/schedule/update"; "params": ScheduleUpdateParams; } | { "method": "hoh/schedule/delete"; "params": IdParams; } | { "method": "hoh/schedule/run-now"; "params": IdParams; } | { "method": "hoh/schedule/history"; "params": IdParams; } | { "method": "hoh/artifact/list"; "params": ArtifactListParams; } | { "method": "hoh/artifact/read"; "params": ArtifactReadParams; } | { "method": "hoh/artifact/render"; "params": ArtifactRenderParams; } | { "method": "hoh/model/key/set"; "params": ModelKeySetParams; } | { "method": "hoh/settings/rules/set"; "params": SettingsRulesSetParams; } | { "method": "hoh/model/probe"; "params": ModelProbeParams; } | { "method": "hoh/plugins/list"; "params": PluginListParams; } | { "method": "hoh/settings/get"; "params": Empty; } | { "method": "hoh/settings/set"; "params": SettingsSetParams; } | { "method": "hoh/security/summary"; "params": Empty; } | { "method": "hoh/executor/discover"; "params": ExecutorParams; } | { "method": "hoh/executor/limits"; "params": ExecutorParams; } | { "method": "hoh/executor/select"; "params": ExecutorSelectParams; } | { "method": "hoh/executor/access/get"; "params": ExecutorAccessGetParams; } | { "method": "hoh/executor/access/set"; "params": ExecutorAccessSetParams; } | { "method": "hoh/executor/trust/get"; "params": ExecutorTrustGetParams; } | { "method": "hoh/executor/trust/set"; "params": ExecutorTrustSetParams; } | { "method": "hoh/executor/commands"; "params": ExecutorCommandsParams; } | { "method": "hoh/workspace/entries"; "params": WorkspaceEntriesParams; } | { "method": "hoh/workspace/add"; "params": WorkspaceAddParams; } | { "method": "hoh/executor/title/generate"; "params": ExecutorTitleGenerateParams; }));
 
 export type ResponseFrame = ({ "jsonrpc": Version; "id": JsonRpcId; "result": unknown; } | { "jsonrpc": Version; "id": JsonRpcId; "error": RpcError; });
 
@@ -233,7 +271,7 @@ export type SecurityModel = { "local": boolean; "host": string; };
 
 export type SecuritySummaryResult = { "model": SecurityModel; "egress": Array<EgressSummary>; "permissions": Array<PermissionSummary>; "approvals": Array<ApprovalSummary>; };
 
-export type SessionAssistantStreamChunk = ({ "type": "text-delta"; "text": string; });
+export type SessionAssistantStreamChunk = ({ "type": "text-delta"; "text": string; } | { "type": "reasoning-delta"; "text": string; });
 
 export type SessionAssistantStreamFrame = ({ "type": "start"; "attemptId": string; "revision": number; "turn": number; "step": number; } | { "type": "chunk"; "attemptId": string; "revision": number; "index": number; "time": number; "chunk": SessionAssistantStreamChunk; } | { "type": "gap"; "attemptId": string; "revision": number; "index": number; } | { "type": "end"; "attemptId": string; "revision": number; "index": number; "outcome": SessionAssistantStreamOutcome; });
 
@@ -242,6 +280,8 @@ export type SessionAssistantStreamNotification = { "sessionId": string; "frame":
 export type SessionAssistantStreamOutcome = "committed" | "abandoned";
 
 export type SessionCancelResult = Record<string, never>;
+
+export type SessionDeleteResult = Record<string, never>;
 
 export type SessionEvent = { "type": string; "seq": number; "time": number; "data": unknown; "ignorable"?: true; "surfaceOp"?: (Append | { "op": Replace; "startSeq": number; "endSeq": number; }); "sourceEventSeqs"?: Array<number>; [key: string]: unknown; };
 
@@ -255,7 +295,7 @@ export type SessionListParams = { "employeeId"?: string; };
 
 export type SessionListResult = { "sessions": Array<SessionSummary>; };
 
-export type SessionPromptParams = { "sessionId": string; "contentBlocks": Array<SdkPromptContentBlock>; };
+export type SessionPromptParams = { "sessionId": string; "contentBlocks": Array<SdkPromptContentBlock>; "interactionMode"?: "default" | "plan"; };
 
 export type SessionPromptResult = { "messageId": string; };
 
@@ -276,6 +316,8 @@ export type SessionStatusNotification = { "sessionId": string; "status": Session
 export type SessionSummary = { "id": string; "title": string; "employeeId": string; "updatedAt": number; };
 
 export type SessionWaitResult = Record<string, never>;
+
+export type SessionWorkingDirectoryRebindParams = { "sessionId": string; "path": string; "rootIdentity": WorkingDirectoryRootIdentity; };
 
 export type SessionWorkingDirectorySetParams = { "sessionId": string; "path": string; };
 
@@ -343,9 +385,27 @@ export type Version = "2.0";
 
 export type ViewSettings = { "theme": Theme; "fontSize": number; };
 
-export type WorkingDirectoryGetResult = { "cwd": string; };
+export type WorkingDirectoryGetResult = { "cwd": string; "rootIdentity"?: { "device": string; "inode": string; }; };
 
-export type WorkingDirectorySetResult = { "cwd": string; };
+export type WorkingDirectoryRebindResult = { "cwd": string; "rootIdentity"?: { "device": string; "inode": string; }; };
+
+export type WorkingDirectoryRootIdentity = { "device": string; "inode": string; };
+
+export type WorkingDirectorySetResult = { "cwd": string; "rootIdentity"?: { "device": string; "inode": string; }; };
+
+export type WorkingDirectoryStatusResult = { "cwd": string; "rootIdentity": WorkingDirectoryRootIdentity; "changed": boolean; };
+
+export type WorkspaceAddParams = { "cwd": string; };
+
+export type WorkspaceAddResult = { "cwd": string; };
+
+export type WorkspaceEntriesParams = { "cwd": string; "query": string; "limit": number; };
+
+export type WorkspaceEntriesResult = { "entries": Array<WorkspaceEntry>; "truncated": boolean; };
+
+export type WorkspaceEntry = { "path": string; "kind": WorkspaceEntryKind; };
+
+export type WorkspaceEntryKind = "file" | "directory";
 
 export interface MethodResultMap {
   "hoh/artifact/list": ArtifactListResult;
@@ -366,10 +426,16 @@ export interface MethodResultMap {
   "hoh/employee/update": EmployeeUpdateResult;
   "hoh/executor/access/get": ExecutorAccessGetResult;
   "hoh/executor/access/set": ExecutorAccessSetResult;
+  "hoh/executor/commands": ExecutorCommandsResult;
   "hoh/executor/discover": ExecutorDiscoverResult;
+  "hoh/executor/limits": ExecutorLimitsResult;
   "hoh/executor/select": ExecutorSelectResult;
+  "hoh/executor/title/generate": ExecutorTitleGenerateResult;
+  "hoh/executor/trust/get": ExecutorTrustGetResult;
+  "hoh/executor/trust/set": ExecutorTrustSetResult;
   "hoh/model/key/set": ModelKeySetResult;
   "hoh/model/probe": ModelProbeResult;
+  "hoh/plugins/list": PluginsListResult;
   "hoh/schedule/create": ScheduleCreateResult;
   "hoh/schedule/delete": ScheduleDeleteResult;
   "hoh/schedule/history": ScheduleHistoryResult;
@@ -378,6 +444,7 @@ export interface MethodResultMap {
   "hoh/schedule/update": ScheduleUpdateResult;
   "hoh/security/summary": SecuritySummaryResult;
   "session/cancel": SessionCancelResult;
+  "session/delete": SessionDeleteResult;
   "session/events": SessionEventsResult;
   "session/list": SessionListResult;
   "session/prompt": SessionPromptResult;
@@ -398,7 +465,11 @@ export interface MethodResultMap {
   "hoh/task/run": TaskRunResult;
   "hoh/task/versions": TaskVersionsResult;
   "session/working-directory/get": WorkingDirectoryGetResult;
+  "session/working-directory/rebind": WorkingDirectoryRebindResult;
   "session/working-directory/set": WorkingDirectorySetResult;
+  "session/working-directory/status": WorkingDirectoryStatusResult;
+  "hoh/workspace/add": WorkspaceAddResult;
+  "hoh/workspace/entries": WorkspaceEntriesResult;
 }
 
 export type MethodParamsMap = { [M in Request["method"]]: Extract<Request, { method: M }> extends { params: infer P } ? P : undefined };

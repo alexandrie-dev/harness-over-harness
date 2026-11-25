@@ -1,0 +1,25 @@
+--- a/web/connection/storage.ts
++++ b/web/connection/storage.ts
+@@ -125,9 +125,9 @@
+   "set-connection-enabled": msg("Could not set connection enabled: {cause}"),
+   "load-shell": msg("Could not load shell: {cause}"),
+   "save-shell": msg("Could not save shell: {cause}"),
+-  "load-thread": msg("Could not load thread: {cause}"),
+-  "save-thread": msg("Could not save thread: {cause}"),
+-  "remove-thread": msg("Could not remove thread: {cause}"),
++  "load-thread": msg("Could not load chat: {cause}"),
++  "save-thread": msg("Could not save chat: {cause}"),
++  "remove-thread": msg("Could not remove chat: {cause}"),
+   "load-server-config": msg("Could not load server config: {cause}"),
+   "save-server-config": msg("Could not save server config: {cause}"),
+   "load-vcs-refs": msg("Could not load vcs refs: {cause}"),
+@@ -871,7 +871,8 @@
+     const cacheStore = Persistence.EnvironmentCacheStore.of({
+       loadShell: Effect.fn("Persistence.EnvironmentCacheStore.loadShell")(function (environmentId) {
+         return readDatabaseValue(database, SHELL_STORE_NAME, environmentId).pipe(
+-          Effect.tap(() => Effect.promise(() => projectFaviconCache.hydrate())),
++          // Project icons are optional; a slow IndexedDB must not hold the shell or chat history.
++          Effect.tap(() => Effect.sync(() => { void projectFaviconCache.hydrate(); })),
+           Effect.flatMap((raw) => {
+             if (typeof raw !== "string") {
+               return Effect.succeedNone;

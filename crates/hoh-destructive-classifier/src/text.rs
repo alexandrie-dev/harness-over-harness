@@ -1,13 +1,9 @@
-//! The question shown to the user, in Russian, as the window's approval screen words it:
-//! what will be done, to which files, and why it cannot be undone. The headline is one line
-//! without control characters (the host protocol rejects anything else) and starts with the
-//! action itself (`Удалить 2 файла: …`). The `explanation` (the window's "Объяснение Помощника")
-//! adds only what the headline lacks and never carries the raw command: that goes to `details`,
-//! folded in the window. The words are for people who never wrote code (HOH-35): no "песочница".
+//! Approval wording for the classified action, its targets, and any irreversible consequences.
+//! The headline fits the host protocol. The details carry the command and any model justification.
 
 use std::path::Path;
 
-use crate::classify::{GitKind, Risk, Source};
+use crate::classify::{GitKind, RestoreSource, Risk, Source};
 
 const MAX_NAMES: usize = 4;
 const MAX_EXPLAINED_NAMES: usize = 20;
@@ -18,11 +14,11 @@ const MAX_COMMAND_CHARS: usize = 2000;
 const MAX_JUSTIFICATION_CHARS: usize = 1500;
 
 /// How an escalation starts: the assistant asks to work outside its folder.
-const OUTSIDE: &str = "Помощник просит разрешения работать за пределами своей папки";
+const OUTSIDE: &str = "The assistant asks to work outside its folder";
 /// Where an escalation's explanation sends the reader for the assistant's own reasons.
-const JUSTIFICATION_HINT: &str = "Обоснование Помощника — в подробностях";
-/// After a question that deletes files: they cannot be brought back.
-const NO_UNDO: &str = ". Файлы не попадут в корзину: вернуть их будет нельзя";
+const JUSTIFICATION_HINT: &str = "See details for the assistant’s justification";
+/// Shell and Git removal do not use the desktop trash.
+const NO_UNDO: &str = ". Removed files bypass the trash and may be unrecoverable";
 
 pub struct Question {
     /// Becomes `humanText`: one line, what will happen and what cannot be undone.
@@ -32,7 +28,7 @@ pub struct Question {
     /// can show the text once.
     pub explanation: String,
     /// Becomes `details` (folded in the window): the command as the assistant wrote it
-    /// (`Команда: …`) and, for an escalation, the assistant's justification after it. At most
+    /// (`Command: …`) and, for an escalation, the assistant's justification after it. At most
     /// 3600 characters, within the protocol's 8192 UTF-16 units.
     pub details: String,
 }
@@ -54,7 +50,10 @@ fn drops_files(risks: &[Risk]) -> bool {
             r,
             Risk::Delete { .. }
                 | Risk::Git {
-                    kind: GitKind::Clean | GitKind::Remove,
+                    kind: GitKind::Clean
+                        | GitKind::CleanIgnored
+                        | GitKind::CleanWithIgnored
+                        | GitKind::Remove,
                     ..
                 }
         )
@@ -67,7 +66,9 @@ fn drops_files(risks: &[Risk]) -> bool {
 pub fn escalation_question(risks: &[Risk], command: &str, justification: &str) -> Question {
     let wording = |limit: usize| {
         let mut text = if risks.is_empty() {
-            format!("{OUTSIDE}: он сможет читать и менять любые файлы на этом компьютере")
+            format!(
+                "{OUTSIDE}: it may read and change files outside its folder with the current user’s permissions"
+            )
         } else {
             format!("{OUTSIDE}: {}", phrases(risks, limit).join("; "))
         };
@@ -93,7 +94,7 @@ pub fn escalation_question(risks: &[Risk], command: &str, justification: &str) -
         headline,
         explanation,
         details: format!(
-            "{}\nОбоснование Помощника: {}",
+            "{}\nAssistant justification: {}",
             command_line(command),
             truncate(justification, MAX_JUSTIFICATION_CHARS)
         ),
@@ -101,13 +102,13 @@ pub fn escalation_question(risks: &[Risk], command: &str, justification: &str) -
 }
 
 /// The question for a command (or a file change) that may delete or overwrite files: the action
-/// first, then the folder it runs in, then that deleted files cannot be brought back.
+/// first, then the folder it runs in and the risk of losing deleted files.
 pub fn question(risks: &[Risk], command: &str, cwd: Option<&Path>) -> Question {
     let folder = cwd.and_then(folder_name);
     let wording = |limit: usize| {
         let mut text = capitalize(&phrases(risks, limit).join("; "));
         if let Some(folder) = &folder {
-            text.push_str(&format!(" (папка {folder})"));
+            text.push_str(&format!(" (folder {folder})"));
         }
         if drops_files(risks) {
             text.push_str(NO_UNDO);
@@ -124,7 +125,7 @@ pub fn question(risks: &[Risk], command: &str, cwd: Option<&Path>) -> Question {
 }
 
 fn command_line(command: &str) -> String {
-    truncate(&format!("Команда: {command}"), MAX_COMMAND_CHARS)
+    truncate(&format!("Command: {command}"), MAX_COMMAND_CHARS)
 }
 
 fn phrase(risk: &Risk, limit: usize) -> String {
@@ -134,61 +135,86 @@ fn phrase(risk: &Risk, limit: usize) -> String {
             folders,
             source,
         } => delete_phrase(names, *folders, *source, limit),
-        Risk::Truncate { names } => match names.len() {
-            0 => "очистить файлы: прежнее содержимое будет потеряно".to_owned(),
-            _ => format!(
-                "очистить {}: прежнее содержимое будет потеряно",
+        Risk::Truncate { names } => {
+            let files = if names.is_empty() {
+                "files".to_owned()
+            } else {
                 list(names, limit)
-            ),
-        },
+            };
+            format!("Resize {files}. If the files shrink, data past the new size is discarded")
+        }
         Risk::Overwrite { names, checked } => overwrite_phrase(names, *checked, limit),
-        Risk::Patch { names } => match names.len() {
-            0 => "применить патч и перезаписать файлы, которые он меняет: прежнее содержимое будет потеряно".to_owned(),
-            1 => format!("применить патч и перезаписать файл {}: прежнее содержимое будет потеряно", list(names, limit)),
-            _ => format!("применить патч и перезаписать файлы {}: прежнее содержимое будет потеряно", list(names, limit)),
-        },
-        Risk::Extract { archive } => match archive {
-            Some(name) => format!(
-                "распаковать архив {} и перезаписать файлы с теми же именами: прежнее содержимое будет потеряно",
-                list(std::slice::from_ref(name), limit)
-            ),
-            None => "распаковать архив и перезаписать файлы с теми же именами: прежнее содержимое будет потеряно".to_owned(),
-        },
+        Risk::MoveOverwrite {
+            sources,
+            names,
+            checked,
+        } => {
+            let source = if sources.is_empty() {
+                "files".to_owned()
+            } else {
+                list(sources, limit)
+            };
+            format!(
+                "Move {source} to a new location. This can {}",
+                overwrite_phrase(names, *checked, limit)
+            )
+        }
+        Risk::Patch { names } => {
+            let files = if names.is_empty() {
+                String::new()
+            } else {
+                format!(" to {}", list(names, limit))
+            };
+            format!(
+                "Apply a patch{files}. It may change or remove existing files and discard their previous contents"
+            )
+        }
+        Risk::Extract { archive } => {
+            let archive = archive.as_ref().map_or_else(
+                || "an archive".to_owned(),
+                |name| format!("archive {}", list(std::slice::from_ref(name), limit)),
+            );
+            format!(
+                "Extract {archive}. Existing destination files with matching paths may be replaced"
+            )
+        }
         Risk::Git { kind, names } => git_phrase(*kind, names, limit),
         Risk::Opaque(what) => format!(
-            "запустить то, что нельзя проверить заранее ({what}); оно может удалить или перезаписать файлы"
+            "run an action that cannot be checked in advance ({what}). It may delete or overwrite files"
         ),
         Risk::Unparsable => {
-            "запустить команду, которую не удалось разобрать; она может удалить или перезаписать файлы"
-                .to_owned()
+            "run a command that could not be parsed. It may delete or overwrite files".to_owned()
         }
     }
 }
 
 fn delete_phrase(names: &[String], folders: bool, source: Source, limit: usize) -> String {
     match source {
-        Source::Find => "удалить все файлы, которые найдёт команда find".to_owned(),
-        Source::Xargs => "удалить файлы из списка, переданного команде xargs".to_owned(),
-        Source::Sync => {
-            "удалить в папке назначения файлы, которых нет в источнике (rsync --delete)".to_owned()
-        }
-        Source::Listed if names.is_empty() => "удалить файлы".to_owned(),
+        Source::Find => "delete paths selected by the removal action in find".to_owned(),
+        Source::Xargs => "delete paths passed to the removal command by xargs".to_owned(),
+        Source::Sync => "sync files with rsync. The deletion options may remove destination paths".to_owned(),
+        Source::SyncSender => "transfer files with rsync and remove successfully duplicated files from the sender".to_owned(),
+        Source::SyncBoth => "sync files with rsync. This can remove successfully duplicated files from the sender and remove paths at the destination".to_owned(),
+        Source::Listed if names.is_empty() => "delete files".to_owned(),
         Source::Listed => {
             let patterns = names.iter().any(|n| n.contains(['*', '?', '[', '(']));
             if patterns {
-                format!("удалить файлы по именам и маскам: {}", list(names, limit))
+                format!(
+                    "delete paths matching the listed names and patterns: {}",
+                    list(names, limit)
+                )
             } else if folders {
                 format!(
-                    "удалить {} {} вместе со всем содержимым: {}",
+                    "delete {} {}: {}. With recursive deletion, directories and their contents can be removed",
                     names.len(),
-                    plural(names.len(), "элемент", "элемента", "элементов"),
+                    if names.len() == 1 { "entry" } else { "entries" },
                     list(names, limit)
                 )
             } else {
                 format!(
-                    "удалить {} {}: {}",
+                    "delete {} {}: {}",
                     names.len(),
-                    plural(names.len(), "файл", "файла", "файлов"),
+                    if names.len() == 1 { "file" } else { "files" },
                     list(names, limit)
                 )
             }
@@ -198,21 +224,18 @@ fn delete_phrase(names: &[String], folders: bool, source: Source, limit: usize) 
 
 fn overwrite_phrase(names: &[String], checked: bool, limit: usize) -> String {
     if names.is_empty() {
-        return "перезаписать файлы, список которых станет известен только при запуске".to_owned();
+        return "overwrite existing destination files. Their names are determined at runtime"
+            .to_owned();
     }
-    let noun = if names.len() == 1 {
-        "файл"
-    } else {
-        "файлы"
-    };
+    let noun = if names.len() == 1 { "file" } else { "files" };
     if checked {
         format!(
-            "перезаписать {noun} {}: прежнее содержимое будет потеряно",
+            "overwrite {noun} {}. Previous contents may be lost",
             list(names, limit)
         )
     } else {
         format!(
-            "перезаписать {noun} {}, если он уже существует (проверить заранее нельзя): прежнее содержимое будет потеряно",
+            "overwrite {noun} {} if present. Previous contents may be lost",
             list(names, limit)
         )
     }
@@ -225,15 +248,35 @@ fn git_phrase(kind: GitKind, names: &[String], limit: usize) -> String {
         format!(": {}", list(names, limit))
     };
     match kind {
-        GitKind::Clean => "удалить файлы, которые git не отслеживает".to_owned(),
-        GitKind::ResetHard => {
-            "сбросить все несохранённые изменения до последнего коммита; изменения пропадут"
-                .to_owned()
+        GitKind::Clean => format!("Clean the working tree by deleting selected untracked paths{files}. Ignored paths are normally spared"),
+        GitKind::CleanIgnored => format!("Clean the working tree by deleting selected ignored paths{files}"),
+        GitKind::CleanWithIgnored => format!("Clean the working tree by deleting selected untracked paths{files}, which can include ignored paths"),
+        GitKind::ResetHard => "Reset the current branch or detached HEAD, the index, and the working tree to the chosen commit (HEAD by default). Discard staged and working-tree changes. Untracked paths in the way may be overwritten or removed".to_owned(),
+        GitKind::ResetUnknown => "Run git reset with options determined at runtime. Depending on those options, it can move HEAD, change the index, and discard working-tree changes".to_owned(),
+        GitKind::Checkout => format!("Check out selected paths from the Git index{files}, overwriting the working copies"),
+        GitKind::CheckoutTree => format!("Check out selected paths from the specified Git tree{files}, replacing their index entries and working copies"),
+        GitKind::CheckoutPaths => format!("Check out selected paths{files}. Depending on the source and options, this can replace working copies and index entries"),
+        GitKind::CheckoutUnknown => format!("Run git checkout with the requested options{files}. It may switch branches or replace paths in the index or working tree and discard local changes. A forced switch may remove untracked paths in the way"),
+        GitKind::SwitchDiscard => "Switch to the selected branch or commit and reset the index and working tree to match. Local changes are discarded, and untracked paths in the way may be removed".to_owned(),
+        GitKind::Restore => format!("Restore selected paths from the Git index (the last commit if those entries match HEAD), overwriting the working copies{files}. Paths absent from the source may be removed"),
+        GitKind::RestoreWithOptions { source, staged, worktree, patch, overlay } => {
+            let source = match source {
+                RestoreSource::Index => "the Git index",
+                RestoreSource::Head => "HEAD (the current commit)",
+                RestoreSource::SpecifiedTree => "the specified Git tree",
+            };
+            let target = match (staged, worktree) {
+                (true, true) => "the index and working tree",
+                (true, false) => "the index",
+                _ => "the working tree",
+            };
+            let selected = if patch { "selected changes to paths" } else { "selected paths" };
+            let effect = if overlay { "overwritten" } else { "overwritten or removed" };
+            format!("Restore {selected} from {source} in {target}{files}. The affected contents can be {effect}")
         }
-        GitKind::Checkout | GitKind::Restore => {
-            format!("вернуть файлы к сохранённой версии{files}; несохранённые изменения пропадут")
-        }
-        GitKind::Remove => format!("удалить файлы из папки и из git{files}"),
+        GitKind::RestoreUnknown => format!("Run git restore with the requested source and destination options{files}. It may overwrite or remove paths in the Git index or working tree"),
+        GitKind::Remove => format!("Remove selected paths from the Git index and working tree{files}"),
+        GitKind::RemovePreview => format!("Preview the paths git rm would remove from the index and working tree{files}"),
     }
 }
 
@@ -245,19 +288,9 @@ fn list(names: &[String], limit: usize) -> String {
         .collect();
     let mut text = shown.join(", ");
     if names.len() > limit {
-        text.push_str(&format!(" и ещё {}", names.len() - limit));
+        text.push_str(&format!(" and {} more", names.len() - limit));
     }
     text
-}
-
-/// Russian plural form for `n`: 1 файл, 2 файла, 5 файлов.
-fn plural(n: usize, one: &'static str, few: &'static str, many: &'static str) -> &'static str {
-    match (n % 100, n % 10) {
-        (11..=14, _) => many,
-        (_, 1) => one,
-        (_, 2..=4) => few,
-        _ => many,
-    }
 }
 
 /// The folder as the question names it: the whole path, the home folder written as `~`

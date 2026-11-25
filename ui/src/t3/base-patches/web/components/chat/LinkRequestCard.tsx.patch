@@ -1,0 +1,5 @@
+--- a/web/components/chat/LinkRequestCard.tsx
++++ b/web/components/chat/LinkRequestCard.tsx
+@@ -328 +328 @@
+-            "Agents here can then launch, message and wait on threads there. Revoke it in that machine's Sharing & access.",
++            "Agents here can then launch, message and wait on chats there. Revoke it in that machine's Sharing & access.",

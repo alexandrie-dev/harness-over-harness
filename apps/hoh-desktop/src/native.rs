@@ -20,7 +20,7 @@ use std::{
 };
 use tauri::{Emitter, Manager};
 #[cfg(target_os = "linux")]
-use webkit2gtk::WebViewExt;
+use webkit2gtk::{URIRequestExt, WebViewExt};
 
 /// Where the session's folder comes from and is remembered.
 #[derive(Clone)]
@@ -103,9 +103,48 @@ fn engine_launch(engine_home: &std::path::Path) -> Result<EngineLaunch, String> 
     select_engine_launch(std::env::var_os("HOH_TEST_ENGINE"), configured, engine_home)
 }
 
+/// The window icon in several sizes (`_NET_WM_ICON`): the task bar and the window switcher pick the one that fits.
+#[cfg(target_os = "linux")]
+fn set_window_icons(window: &tauri::WebviewWindow) {
+    use gtk::gdk_pixbuf::PixbufLoader;
+    use gtk::prelude::*;
+    const ICONS: [&[u8]; 6] = [
+        include_bytes!("../icons/32x32.png"),
+        include_bytes!("../icons/48x48.png"),
+        include_bytes!("../icons/64x64.png"),
+        include_bytes!("../icons/128x128.png"),
+        include_bytes!("../icons/256x256.png"),
+        include_bytes!("../icons/512x512.png"),
+    ];
+    let pixbufs: Vec<_> = ICONS
+        .iter()
+        .filter_map(|bytes| {
+            let loader = PixbufLoader::new();
+            loader.write(bytes).ok()?;
+            loader.close().ok()?;
+            loader.pixbuf()
+        })
+        .collect();
+    if let Ok(gtk_window) = window.gtk_window() {
+        gtk_window.set_icon_list(&pixbufs);
+    }
+}
+
 pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     #[cfg(feature = "probe")]
     crate::probe::trace("native:setup:start");
+    #[cfg(target_os = "linux")]
+    if let Some(window) = app.get_webview_window("main") {
+        set_window_icons(&window);
+    }
+    let legacy = legacy_shell_requested(std::env::var_os("HOH_WINDOW_SHELL").as_deref());
+    if legacy && let Some(window) = app.get_webview_window("main") {
+        let page = window.url()?.join("legacy.html")?;
+        window.navigate(page)?;
+    }
+    // The T3 client answers the engine's permission requests in its conversation; the previous
+    // shell keeps the separate approval window.
+    let in_chat = !legacy;
     let mut key = [0_u8; 32];
     use std::io::Read;
     std::fs::File::open("/dev/urandom")?.read_exact(&mut key)?;
@@ -167,6 +206,7 @@ pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
                 &event_approvals,
                 &event_questions,
                 &event_ready,
+                in_chat,
                 event,
             )
         }),
@@ -199,10 +239,16 @@ fn handle_event(
     approvals: &Arc<Broker>,
     questions: &Arc<QuestionBroker>,
     ready: &Arc<AtomicBool>,
+    in_chat: bool,
     event: HostEvent,
 ) {
     match event {
         HostEvent::Notification(frame) => {
+            if frame["method"] == "approval.resolved"
+                && let Some(id) = frame["params"]["approvalId"].as_str()
+            {
+                approvals.withdraw_chat(id);
+            }
             if frame["method"] == "user-question.cancelled"
                 && let Some(id) = frame["params"]["requestId"].as_str()
             {
@@ -223,13 +269,14 @@ fn handle_event(
             if !is_ready {
                 questions.clear();
             }
-            if let Some((label, resolution)) = cancel_for_status(approvals, is_ready) {
+            for (label, resolution) in cancel_for_status(approvals, is_ready) {
                 dispatch_resolution(handle, resolution);
                 destroy_window(handle, &label);
             }
             if let Some(window) = handle.get_webview_window("main") {
+                // The window's name is HoH (founder 22.11 19:16); while the engine is not ready the title says why.
                 let title = if is_ready {
-                    "HoH — Помощник".to_owned()
+                    "HoH".to_owned()
                 } else {
                     format!(
                         "HoH — {}",
@@ -259,8 +306,23 @@ fn handle_event(
             method,
             params,
         } => {
-            match approvals.begin_engine_or_grant(generation, id.clone(), &method, params, now_ms())
-            {
+            let now = now_ms();
+            let begun = if in_chat {
+                approvals.begin_engine_in_chat(
+                    generation,
+                    id.clone(),
+                    &method,
+                    params,
+                    now,
+                    Instant::now(),
+                )
+            } else {
+                approvals.begin_engine_or_grant(generation, id.clone(), &method, params, now)
+            };
+            match begun {
+                Ok(Begun::Window(open)) if in_chat => {
+                    schedule_expiry(handle, approvals, open.label, open.view.expires_at);
+                }
                 Ok(Begun::Window(open)) => schedule_window(handle, approvals, open),
                 // Confirmed by the person a moment ago in the settings window: no second window.
                 Ok(Begun::Signed(resolution)) => dispatch_resolution(handle, resolution),
@@ -314,7 +376,8 @@ fn open_window(
         &label,
         tauri::WebviewUrl::App("approval.html".into()),
     )
-    .title("HoH — Подтверждение")
+    .title("HoH — Confirmation")
+    .center()
     .inner_size(640.0, 620.0)
     .min_inner_size(520.0, 520.0)
     .resizable(true)
@@ -393,9 +456,19 @@ fn open_window(
         }
     });
 
+    schedule_expiry(handle, approvals, label, open.view.expires_at);
+    Ok(())
+}
+
+/// The request not answered in time is cancelled with a valid signature just before its deadline.
+fn schedule_expiry(
+    handle: &tauri::AppHandle,
+    approvals: &Arc<Broker>,
+    label: String,
+    expires_at: u64,
+) {
     let expiry_app = handle.clone();
     let expiry_broker = approvals.clone();
-    let expires_at = open.view.expires_at;
     thread::spawn(move || {
         thread::sleep(Duration::from_millis(
             expires_at
@@ -408,7 +481,6 @@ fn open_window(
             destroy_window(&expiry_app, &label);
         }
     });
-    Ok(())
 }
 
 fn trusted_app_origin(url: &tauri::Url) -> bool {
@@ -422,7 +494,14 @@ pub fn approval_navigation_allowed(url: &tauri::Url) -> bool {
     trusted_app_origin(url) && url.path() == "/approval.html"
 }
 
-pub fn main_navigation_allowed(url: &tauri::Url) -> bool {
+/// What the main window may load: the T3 client and nothing else of the app (review 222000, CEO
+/// 22.11 22:40). `legacy_shell`: the previous shell was asked for (HOH_WINDOW_SHELL=legacy), only
+/// then `/legacy.html`. `is_app_file`: the app has this file (`/approval.html`).
+pub fn main_navigation_allowed(
+    url: &tauri::Url,
+    legacy_shell: bool,
+    is_app_file: impl Fn(&str) -> bool,
+) -> bool {
     if !trusted_app_origin(url) {
         return false;
     }
@@ -430,21 +509,65 @@ pub fn main_navigation_allowed(url: &tauri::Url) -> bool {
         // Tauri canonicalizes `WebviewUrl::App("index.html")` to its bare
         // application origin before invoking navigation hooks.
         "" | "/" | "/index.html" => true,
+        "/legacy.html" => legacy_shell,
         #[cfg(feature = "probe")]
         "/probe.html" => true,
-        _ => false,
+        // A page of the T3 client's own router (/settings/general, /<env>/<thread>) when the window
+        // reloads there. Tauri (`manager::get_asset`) decodes `%XX`, then serves the first file of
+        // `{p}`, `{p}.html`, `{p}/index.html`, and only then index.html: the route is allowed only
+        // when none of the three is a file, so `/approval` never opens approval.html.
+        path => {
+            is_app_route(path)
+                && [
+                    path.to_owned(),
+                    format!("{path}.html"),
+                    format!("{path}/index.html"),
+                ]
+                .iter()
+                .all(|file| !is_app_file(file))
+        }
     }
 }
 
+/// A route path of the window's router, not a file of the app: `/a/b-c/$d`, no dots, no empty
+/// segments, no `%` (Tauri would decode it; no route of T3 needs it, so nothing is left to decode).
+fn is_app_route(path: &str) -> bool {
+    path.len() <= 512
+        && path.strip_prefix('/').is_some_and(|rest| {
+            !rest.is_empty()
+                && rest.split('/').all(|segment| {
+                    !segment.is_empty()
+                        && segment
+                            .bytes()
+                            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'$'))
+                })
+        })
+}
+
+/// The window opens the T3 client (dist/index.html); `HOH_WINDOW_SHELL=legacy` opens the previous shell
+/// (dist/legacy.html) instead, until that shell is removed.
+pub fn legacy_shell_requested(value: Option<&std::ffi::OsStr>) -> bool {
+    value.is_some_and(|value| value == "legacy")
+}
+
 pub fn main_security_plugin<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin<R> {
-    let builder = tauri::plugin::Builder::new("main-security").on_navigation(|webview, url| {
-        let allowed = webview.label() != "main" || main_navigation_allowed(url);
-        #[cfg(feature = "probe")]
-        if webview.label() == "main" {
-            trace_navigation("main", url, allowed);
-        }
-        allowed
-    });
+    let legacy = legacy_shell_requested(std::env::var_os("HOH_WINDOW_SHELL").as_deref());
+    let builder =
+        tauri::plugin::Builder::new("main-security").on_navigation(move |webview, url| {
+            let allowed = webview.label() != "main" || {
+                // The files built into the app, as Tauri looks them up (key `/approval.html`).
+                let assets = webview.app_handle().asset_resolver();
+                crate::html_preview::navigation_allowed(url)
+                    || main_navigation_allowed(url, legacy, |file| {
+                        assets.iter().any(|(key, _)| key == file)
+                    })
+            };
+            #[cfg(feature = "probe")]
+            if webview.label() == "main" {
+                trace_navigation("main", url, allowed);
+            }
+            allowed
+        });
     #[cfg(feature = "probe")]
     let builder = builder
         .on_page_load(|webview, payload| {
@@ -464,12 +587,96 @@ pub fn main_security_plugin<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin<R
     #[cfg(target_os = "linux")]
     let builder = builder.on_webview_ready(|webview| {
         if webview.label() == "main" {
-            let _ = webview.with_webview(|platform| {
-                platform.inner().connect_create(|_, _| None);
+            let dir = webview.app_handle().path().app_data_dir().ok();
+            let previews = webview
+                .state::<crate::html_preview::HtmlPreviews>()
+                .inner()
+                .clone();
+            let paste = webview
+                .state::<crate::clipboard_image::ImagePasteGesture>()
+                .inner()
+                .clone();
+            let _ = webview.with_webview(move |platform| {
+                paste.install(&platform.inner());
+                crate::html_preview::install(&platform.inner(), previews);
+                install_zoom(&platform.inner(), dir);
+                // No second page ever opens in the window; a link the person clicked goes to the system browser.
+                platform.inner().connect_create(|_, action| {
+                    let url = action.request().and_then(|request| request.uri());
+                    if let Some(link) = url
+                        .and_then(|url| crate::opener::clicked_link(&url, action.is_user_gesture()))
+                    {
+                        let _ = crate::opener::open(&link);
+                    }
+                    None
+                });
             });
         }
     });
     builder.build()
+}
+
+/// Ctrl+`+`/`=`, Ctrl+`-`, Ctrl+0 and Ctrl+wheel zoom the page as in desktop T3 (`zoom.rs`); the level is
+/// restored at start and saved on every change.
+#[cfg(target_os = "linux")]
+fn install_zoom(view: &webkit2gtk::WebView, dir: Option<PathBuf>) {
+    use gtk::gdk::{self, keys::constants as key};
+    use gtk::glib::Propagation;
+    use gtk::prelude::*;
+    use std::{cell::Cell, rc::Rc};
+    let level = Rc::new(Cell::new(dir.as_deref().map_or(0.0, crate::zoom::load)));
+    view.set_zoom_level(crate::zoom::factor(level.get()));
+    let apply = {
+        let (view, level) = (view.clone(), level.clone());
+        move |direction: crate::zoom::Zoom| {
+            level.set(crate::zoom::next_level(level.get(), direction));
+            view.set_zoom_level(crate::zoom::factor(level.get()));
+            if let Some(dir) = &dir {
+                crate::zoom::save(dir, level.get());
+            }
+        }
+    };
+    let on_key = apply.clone();
+    view.connect_key_press_event(move |_, event| {
+        if !event.state().contains(gdk::ModifierType::CONTROL_MASK) {
+            return Propagation::Proceed;
+        }
+        let pressed = event.keyval();
+        let direction = if pressed == key::plus || pressed == key::equal || pressed == key::KP_Add {
+            crate::zoom::Zoom::In
+        } else if pressed == key::minus || pressed == key::KP_Subtract || pressed == key::underscore
+        {
+            crate::zoom::Zoom::Out
+        } else if pressed == key::_0 || pressed == key::KP_0 {
+            crate::zoom::Zoom::Reset
+        } else {
+            return Propagation::Proceed;
+        };
+        on_key(direction);
+        Propagation::Stop
+    });
+    view.connect_scroll_event(move |_, event| {
+        if !event.state().contains(gdk::ModifierType::CONTROL_MASK) {
+            return Propagation::Proceed;
+        }
+        let direction = match event.direction() {
+            gdk::ScrollDirection::Up => crate::zoom::Zoom::In,
+            gdk::ScrollDirection::Down => crate::zoom::Zoom::Out,
+            gdk::ScrollDirection::Smooth => {
+                let dy = event.delta().1;
+                if dy < 0.0 {
+                    crate::zoom::Zoom::In
+                } else if dy > 0.0 {
+                    crate::zoom::Zoom::Out
+                } else {
+                    return Propagation::Stop;
+                }
+            }
+            _ => return Propagation::Proceed,
+        };
+        apply(direction);
+        Propagation::Stop
+    });
 }
 
 #[cfg(feature = "probe")]
@@ -503,8 +710,12 @@ fn approval_window_resolution(
     }
 }
 
-fn cancel_for_status(approvals: &Broker, is_ready: bool) -> Option<(String, Resolution)> {
-    if is_ready { None } else { approvals.cancel() }
+fn cancel_for_status(approvals: &Broker, is_ready: bool) -> Vec<(String, Resolution)> {
+    if is_ready {
+        Vec::new()
+    } else {
+        approvals.cancel_all()
+    }
 }
 
 fn expire_approval(approvals: &Broker, label: &str, now: u64) -> Option<Resolution> {
@@ -606,6 +817,22 @@ pub async fn engine_request(
                     #[cfg(feature = "probe")]
                     crate::probe::trace(format!("preflight:{method}:engine-not-ready"));
                     return Err(crate::errors::CONNECTING.into());
+                }
+                // `check_main` has passed: the person's own action in the main window confirms it.
+                let session_executor = (method == "session/working-directory/set")
+                    .then(|| session_executor(&engine, params))
+                    .flatten();
+                if crate::approval::main_window_confirms(
+                    &method,
+                    params,
+                    session_executor.as_deref(),
+                ) {
+                    return approvals.confirm_from_main_window(
+                        &method,
+                        params,
+                        session_executor.as_deref(),
+                        now_ms(),
+                    );
                 }
                 let (open, receiver) = approvals.begin_preflight(&method, params, now_ms())?;
                 let approval_label = open.label.clone();
@@ -720,6 +947,15 @@ pub fn approval_decide(
     outcome: ApprovalOutcome,
 ) -> Result<(), String> {
     let label = window.label().to_owned();
+    // The main window answers only the request shown in its conversation (`Broker::show_in_chat`).
+    if label == "main" {
+        let decision =
+            state
+                .approvals
+                .decide_in_chat(&approval_id, outcome, now_ms(), Instant::now())?;
+        dispatch_resolution(window.app_handle(), decision.resolution);
+        return decision.command_result;
+    }
     let decision =
         state
             .approvals
@@ -730,11 +966,24 @@ pub fn approval_decide(
 }
 
 pub fn shutdown(handle: &tauri::AppHandle, host: &Host) {
-    if let Some((label, resolution)) = host.approvals.cancel() {
+    for (label, resolution) in host.approvals.cancel_all() {
         dispatch_resolution(handle, resolution);
         destroy_window(handle, &label);
     }
     host.engine.stop();
+}
+
+/// The executor that runs a conversation, as the engine reports it (`hoh/executor/access/get`):
+/// `None` for the built-in agent loop, or when the engine cannot tell — then the window asks.
+fn session_executor(engine: &Engine, params: &Value) -> Option<String> {
+    let session_id = params["sessionId"].as_str()?;
+    let answer = engine
+        .request(
+            "hoh/executor/access/get",
+            json!({ "executor": crate::approval::MAIN_WINDOW_EXECUTOR, "sessionId": session_id }),
+        )
+        .ok()?;
+    answer["session"]["executor"].as_str().map(str::to_owned)
 }
 
 /// Open a link of an answer. Only the main window; the session's folder is asked from the engine,
@@ -766,6 +1015,171 @@ pub async fn open_link(
     })
     .await
     .map_err(|_| "Запрос прерван".to_owned())?
+}
+
+/// Subfolders for the T3 client's «Add project → Local folder» (lead 22.11 20:43): names of folders
+/// only, never files, and only to the main window (`folders::list_folders`).
+#[tauri::command]
+pub async fn browse_folders(
+    window: tauri::WebviewWindow,
+    partial_path: String,
+    cwd: Option<String>,
+) -> Result<crate::folders::FolderListing, String> {
+    browse_folders_for(window.label(), partial_path, cwd).await
+}
+
+/// The window check of `browse_folders`, apart from Tauri's window type so it is tested.
+pub async fn browse_folders_for(
+    label: &str,
+    partial_path: String,
+    cwd: Option<String>,
+) -> Result<crate::folders::FolderListing, String> {
+    if label != "main" {
+        return Err("Folder browsing is available to the main window only.".into());
+    }
+    let home = folder_browser_home(
+        std::env::var_os("HOH_WINDOW_HOME"),
+        std::env::var_os("HOME"),
+    )?;
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::folders::list_folders(&partial_path, cwd.as_deref(), &home)
+    })
+    .await
+    .map_err(|_| "Request interrupted.".to_owned())?
+}
+
+/// Resolve `~` for the folder browser. Isolated window launches can give Claude the person's real
+/// HOME while pinning browser discovery to the demo root. An explicit root is a security boundary:
+/// malformed or missing roots fail closed instead of silently falling back to ambient HOME.
+pub fn folder_browser_home(
+    explicit: Option<OsString>,
+    ambient: Option<OsString>,
+) -> Result<PathBuf, String> {
+    if let Some(value) = explicit {
+        if value.is_empty() {
+            return Err("The window home folder is empty.".into());
+        }
+        let root = PathBuf::from(value);
+        if !root.is_absolute() {
+            return Err("The window home folder must be an absolute path.".into());
+        }
+        let root = root
+            .canonicalize()
+            .map_err(|_| "The window home folder does not exist or cannot be read.".to_owned())?;
+        if !root.is_dir() {
+            return Err("The window home folder is not a directory.".into());
+        }
+        return Ok(root);
+    }
+    ambient
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .ok_or_else(|| "The home folder is unknown.".to_owned())
+}
+
+/// Read one raster referenced by a conversation. The page supplies only the session id and path;
+/// the engine supplies that session's authoritative project root, and `image_asset` owns every
+/// filesystem/type/size decision.
+#[tauri::command]
+pub async fn read_image_asset(
+    window: tauri::WebviewWindow,
+    state: tauri::State<'_, Host>,
+    session_id: String,
+    path: String,
+) -> Result<crate::image_asset::ImageAsset, String> {
+    if window.label() != "main" {
+        return Err("Image unavailable: images are available to the main window only.".into());
+    }
+    let engine = state.engine.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let (root, identity, home) = preview_root(&engine, session_id)?;
+        crate::image_asset::read_project_image(&root, identity, &path, &home)
+    })
+    .await
+    .map_err(|_| "Image unavailable: the read was interrupted.".to_owned())?
+}
+
+fn preview_root(
+    engine: &Engine,
+    session_id: String,
+) -> Result<(PathBuf, crate::image_asset::ProjectRootIdentity, PathBuf), String> {
+    let answer = engine.request(
+        "session/working-directory/get",
+        json!({ "sessionId": session_id }),
+    )?;
+    let root = answer["cwd"]
+        .as_str()
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| {
+            "Image unavailable: the conversation project folder is unknown.".to_owned()
+        })?;
+    let identity = answer
+        .get("rootIdentity")
+        .and_then(serde_json::Value::as_object)
+        .ok_or_else(|| {
+            "Image unavailable: the conversation project folder identity is unknown.".to_owned()
+        })?;
+    let parse_identity = |field: &str| -> Result<u64, String> {
+        let value = identity
+            .get(field)
+            .and_then(serde_json::Value::as_str)
+            .filter(|value| {
+                !value.is_empty()
+                    && value.len() <= 20
+                    && value.bytes().all(|byte| byte.is_ascii_digit())
+            })
+            .ok_or_else(|| {
+                "Image unavailable: the conversation project folder identity is invalid.".to_owned()
+            })?;
+        let parsed = value.parse::<u64>().map_err(|_| {
+            "Image unavailable: the conversation project folder identity is invalid.".to_owned()
+        })?;
+        if parsed.to_string() != value {
+            return Err(
+                "Image unavailable: the conversation project folder identity is invalid."
+                    .to_owned(),
+            );
+        }
+        Ok(parsed)
+    };
+    let expected_root = crate::image_asset::ProjectRootIdentity {
+        device: parse_identity("device")?,
+        inode: parse_identity("inode")?,
+    };
+    let home = std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .ok_or_else(|| "Image unavailable: the home folder is unknown.".to_owned())?;
+    Ok((PathBuf::from(root), expected_root, home))
+}
+
+#[tauri::command]
+pub async fn preview_html(
+    window: tauri::WebviewWindow,
+    state: tauri::State<'_, Host>,
+    previews: tauri::State<'_, crate::html_preview::HtmlPreviews>,
+    session_id: String,
+    path: String,
+) -> Result<String, String> {
+    if window.label() != "main" {
+        return Err("HTML preview is available to the main window only.".into());
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = (state, previews, session_id, path);
+        Err("HTML preview is unavailable on this platform.".into())
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let engine = state.engine.clone();
+        let document = tauri::async_runtime::spawn_blocking(move || {
+            let (root, identity, home) = preview_root(&engine, session_id)?;
+            crate::image_asset::read_project_html(&root, identity, &path, &home)
+        })
+        .await
+        .map_err(|_| "The HTML read was interrupted.".to_owned())?
+        .map_err(|error| error.replacen("Image unavailable", "HTML preview unavailable", 1))?;
+        previews.store(document)
+    }
 }
 
 #[tauri::command]
@@ -882,7 +1296,7 @@ mod tests {
     fn non_ready_status_cancels_waiter_and_frees_slot() {
         let broker = Broker::new([0x42; 32]).unwrap();
         let (_open, receiver) = begin(&broker, 10_000);
-        let (_label, resolution) = cancel_for_status(&broker, false).unwrap();
+        let (_label, resolution) = cancel_for_status(&broker, false).pop().unwrap();
         deliver_preflight(resolution);
         assert!(!receiver.recv_timeout(Duration::from_millis(50)).unwrap());
         let _next = begin(&broker, 10_000);

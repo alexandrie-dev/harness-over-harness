@@ -22,17 +22,44 @@ pub enum Source {
     Find,
     /// `xargs rm`: the names arrive on standard input.
     Xargs,
-    /// `rsync --delete`: what the destination has and the source lacks.
+    /// `rsync --delete` and related destination deletion options.
     Sync,
+    /// rsync removes successfully transferred files from the sender.
+    SyncSender,
+    /// Both sender and destination deletion options are present.
+    SyncBoth,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum GitKind {
     Clean,
+    CleanIgnored,
+    CleanWithIgnored,
     ResetHard,
+    ResetUnknown,
     Checkout,
+    CheckoutTree,
+    CheckoutPaths,
+    CheckoutUnknown,
+    SwitchDiscard,
     Restore,
+    RestoreWithOptions {
+        source: RestoreSource,
+        staged: bool,
+        worktree: bool,
+        patch: bool,
+        overlay: bool,
+    },
+    RestoreUnknown,
     Remove,
+    RemovePreview,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RestoreSource {
+    Index,
+    Head,
+    SpecifiedTree,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -48,6 +75,12 @@ pub enum Risk {
     /// An existing file is replaced (`>`, `cp`, `mv`, `dd of=`, `tee`). `checked` is false when
     /// the target could not be inspected, so it may exist.
     Overwrite { names: Vec<String>, checked: bool },
+    /// Moving a path can also replace a destination.
+    MoveOverwrite {
+        sources: Vec<String>,
+        names: Vec<String>,
+        checked: bool,
+    },
     /// `git clean`, `git reset --hard`, `git checkout -- paths`, `git restore`, `git rm`.
     Git { kind: GitKind, names: Vec<String> },
     /// `tar x`: unpacking replaces files that already have the same names. `archive` is `None`
@@ -237,6 +270,107 @@ fn unknown_value() -> Word {
     }
 }
 
+fn restore_effect(args: &[Word]) -> (GitKind, Vec<String>) {
+    let mut source = None;
+    let mut staged = false;
+    let mut worktree = false;
+    let mut patch = false;
+    let mut overlay = false;
+    let mut unknown = false;
+    let mut paths = Vec::new();
+    let mut rest = args.iter();
+    while let Some(word) = rest.next() {
+        if is_dashes(word) {
+            paths.extend(rest.map(shown));
+            break;
+        }
+        if is_operand(word) {
+            unknown |= word.lead_dynamic;
+            paths.push(shown(word));
+            continue;
+        }
+        let (flag, inline) = word
+            .text
+            .split_once('=')
+            .map_or((word.text.as_str(), false), |(flag, _)| (flag, true));
+        match flag {
+            "--source" => {
+                source = Some(RestoreSource::SpecifiedTree);
+                if !inline && !word.dynamic {
+                    rest.next();
+                }
+            }
+            "--pathspec-from-file" | "--inter-hunk-context" => {
+                if !inline && !word.dynamic {
+                    rest.next();
+                }
+            }
+            "--staged" => staged = true,
+            "--worktree" => worktree = true,
+            "--no-staged" => staged = false,
+            "--no-worktree" => worktree = false,
+            "--patch" | "--unified" => patch = true,
+            "--overlay" => overlay = true,
+            "--no-overlay" => overlay = false,
+            "--quiet"
+            | "--progress"
+            | "--no-progress"
+            | "--ours"
+            | "--theirs"
+            | "--merge"
+            | "--conflict"
+            | "--ignore-unmerged"
+            | "--ignore-skip-worktree-bits"
+            | "--recurse-submodules"
+            | "--no-recurse-submodules"
+            | "--pathspec-file-nul" => {}
+            _ if !flag_chars(flag).is_empty() => {
+                let mut chars = word.text[1..].chars().peekable();
+                while let Some(ch) = chars.next() {
+                    match ch {
+                        's' => {
+                            source = Some(RestoreSource::SpecifiedTree);
+                            if chars.peek().is_none() && !word.dynamic {
+                                rest.next();
+                            }
+                            break;
+                        }
+                        'S' => staged = true,
+                        'W' => worktree = true,
+                        'p' => patch = true,
+                        'U' => {
+                            patch = true;
+                            break;
+                        }
+                        'q' | 'm' => {}
+                        _ => unknown = true,
+                    }
+                }
+                unknown |= word.dynamic;
+            }
+            _ => unknown = true,
+        }
+    }
+    let kind = if unknown {
+        GitKind::RestoreUnknown
+    } else if source.is_none() && !staged && !patch && !overlay {
+        GitKind::Restore
+    } else {
+        GitKind::RestoreWithOptions {
+            source: source.unwrap_or(if staged {
+                RestoreSource::Head
+            } else {
+                RestoreSource::Index
+            }),
+            staged,
+            worktree: worktree || !staged,
+            patch,
+            overlay,
+        }
+    };
+    (kind, paths)
+}
+
 fn operands(args: &[Word]) -> Vec<&Word> {
     let mut found = Vec::new();
     let mut options_done = false;
@@ -252,7 +386,7 @@ fn operands(args: &[Word]) -> Vec<&Word> {
 
 fn shown(word: &Word) -> String {
     if word.dynamic && !word.glob {
-        "(имя станет известно при запуске)".to_owned()
+        "(name determined at runtime)".to_owned()
     } else {
         word.text.clone()
     }
@@ -357,7 +491,8 @@ impl Run<'_> {
                             || word.text.starts_with("--split-string=")
                             || flag_chars(&word.text).starts_with('S'))
                     {
-                        self.out.push(Risk::Opaque("команда в строке для env -S"));
+                        self.out
+                            .push(Risk::Opaque("command supplied through env -S"));
                         return;
                     }
                     // `env -C DIR`, `env --chdir=DIR`, `sudo -D DIR`: the wrapped command runs there.
@@ -413,7 +548,7 @@ impl Run<'_> {
         let Some(head) = rest.first() else { return };
         if head.dynamic {
             self.out
-                .push(Risk::Opaque("имя команды задаётся подстановкой"));
+                .push(Risk::Opaque("command name determined by expansion"));
             return;
         }
         let name = base_name(&head.text);
@@ -647,21 +782,33 @@ impl Run<'_> {
                 i += 1;
             }
         }
+        let move_sources: Vec<_> = if kind != Kind::Mv || listed || hidden_options {
+            Vec::new()
+        } else {
+            let sources = if target_dir.is_some() {
+                ops.as_slice()
+            } else {
+                ops.split_last().map_or(&[][..], |(_, sources)| sources)
+            };
+            sources.iter().map(|source| shown(source)).collect()
+        };
+        let overwrite = |names, checked| match kind {
+            Kind::Mv => Risk::MoveOverwrite {
+                sources: move_sources.clone(),
+                names,
+                checked,
+            },
+            _ => Risk::Overwrite { names, checked },
+        };
         if listed || (hidden_options && target_dir.is_none()) {
             // The files come from another command, or an option we cannot read may name the
             // target folder.
-            self.out.push(Risk::Overwrite {
-                names: Vec::new(),
-                checked: false,
-            });
+            self.out.push(overwrite(Vec::new(), false));
             return;
         }
         let cwd = self.cwd.as_deref();
         let unchecked = |names: Vec<String>, out: &mut Vec<Risk>| {
-            out.push(Risk::Overwrite {
-                names,
-                checked: false,
-            });
+            out.push(overwrite(names, false));
         };
         let (dest_text, dest_dynamic, sources): (String, bool, Vec<&Word>) = match &target_dir {
             Some(word) => (word.text.clone(), word.dynamic, ops),
@@ -690,10 +837,7 @@ impl Run<'_> {
         };
         if target_dir.is_none() && !self.fs.is_dir(&dest) {
             if self.fs.exists(&dest) {
-                self.out.push(Risk::Overwrite {
-                    names: vec![dest_text],
-                    checked: true,
-                });
+                self.out.push(overwrite(vec![dest_text], true));
             }
             return;
         }
@@ -723,10 +867,7 @@ impl Run<'_> {
             }
         }
         if !hit.is_empty() {
-            self.out.push(Risk::Overwrite {
-                names: hit,
-                checked: true,
-            });
+            self.out.push(overwrite(hit, true));
         }
     }
 
@@ -857,30 +998,36 @@ impl Run<'_> {
     }
 
     fn rsync(&mut self, args: &[Word]) {
-        let mut deleting = false;
+        let mut destination = false;
+        let mut sender = false;
         let mut hidden = false;
         for word in args.iter().take_while(|w| !is_dashes(w)) {
             let text = word.text.as_str();
-            if text.starts_with("--delete")
-                || text == "--del"
-                || text == "--remove-source-files"
-                || text == "--remove-sent-files"
-            {
-                deleting = true;
+            if text.starts_with("--delete") || text == "--del" {
+                destination = true;
+            } else if matches!(text, "--remove-source-files" | "--remove-sent-files") {
+                sender = true;
             } else if is_dynamic_option(word) && matches!(text, "-" | "--") {
                 hidden = true;
             }
         }
-        if deleting {
-            self.out.push(Risk::Delete {
-                names: Vec::new(),
-                folders: true,
-                source: Source::Sync,
-            });
-        } else if hidden {
-            self.out
-                .push(Risk::Opaque("параметры rsync задаются при запуске"));
-        }
+        let source = match (sender, destination) {
+            (true, true) => Source::SyncBoth,
+            (true, false) => Source::SyncSender,
+            (false, true) => Source::Sync,
+            (false, false) => {
+                if hidden {
+                    self.out
+                        .push(Risk::Opaque("rsync options determined at runtime"));
+                }
+                return;
+            }
+        };
+        self.out.push(Risk::Delete {
+            names: Vec::new(),
+            folders: destination,
+            source,
+        });
     }
 
     /// `tar`: only listing and creating a new archive are left alone.
@@ -1078,8 +1225,7 @@ impl Run<'_> {
             }
         }
         if opaque {
-            self.out
-                .push(Risk::Opaque("встроенный код в строке запуска"));
+            self.out.push(Risk::Opaque("inline interpreter code"));
         } else if !runs_something
             && (whole.after_pipe
                 || whole
@@ -1087,9 +1233,8 @@ impl Run<'_> {
                     .iter()
                     .any(|(kind, _)| matches!(kind, RedirKind::Heredoc | RedirKind::Input)))
         {
-            self.out.push(Risk::Opaque(
-                "код передан интерпретатору через стандартный ввод",
-            ));
+            self.out
+                .push(Risk::Opaque("interpreter code supplied on standard input"));
         }
     }
 
@@ -1447,39 +1592,110 @@ impl Run<'_> {
         if sub.dynamic {
             // The subcommand itself is filled in by the shell.
             self.out
-                .push(Risk::Opaque("подкоманда git задаётся подстановкой"));
+                .push(Risk::Opaque("Git subcommand determined by expansion"));
             return;
         }
         let rest = &args[i + 1..];
-        let flag = |text: &str| rest.iter().any(|w| !w.dynamic && w.text == text);
+        let options = rest
+            .split(|word| is_dashes(word))
+            .next()
+            .unwrap_or_default();
+        let flag = |text: &str| options.iter().any(|w| !w.dynamic && w.text == text);
         // An option the shell fills in may be `--hard`, `--force`, `--`.
-        let hidden = rest.iter().any(is_dynamic_option);
-        let after_dashes = || -> Vec<String> {
-            match rest.iter().position(|w| w.text == "--") {
-                Some(at) => rest[at + 1..].iter().map(shown).collect(),
-                None => Vec::new(),
-            }
-        };
-        let paths = || -> Vec<String> { operands(rest).iter().map(|w| shown(w)).collect() };
+        let hidden = options.iter().any(is_dynamic_option);
         let kind = match sub.text.as_str() {
             "clean" if !(flag("--dry-run") || has_short(rest, 'n')) => {
-                Some((GitKind::Clean, Vec::new()))
+                let kind = if hidden {
+                    GitKind::CleanWithIgnored
+                } else if has_short(rest, 'X') {
+                    GitKind::CleanIgnored
+                } else if has_short(rest, 'x') {
+                    GitKind::CleanWithIgnored
+                } else {
+                    GitKind::Clean
+                };
+                Some((kind, Vec::new()))
             }
-            "reset" if flag("--hard") || hidden => Some((GitKind::ResetHard, Vec::new())),
-            "checkout" if flag("--") || flag(".") || flag("-f") || flag("--force") || hidden => {
-                let mut names = after_dashes();
-                if names.is_empty() && flag(".") {
-                    names.push(".".into());
-                }
-                Some((GitKind::Checkout, names))
+            "reset" if flag("--hard") || hidden => Some((
+                if hidden {
+                    GitKind::ResetUnknown
+                } else {
+                    GitKind::ResetHard
+                },
+                Vec::new(),
+            )),
+            "checkout"
+                if options.len() < rest.len()
+                    || flag(".")
+                    || flag("-f")
+                    || flag("--force")
+                    || hidden =>
+            {
+                let after_separator = rest.get(options.len() + 1..).unwrap_or_default();
+                let names: Vec<_> = after_separator.iter().map(shown).collect();
+                let kind = if !names.is_empty() && options.is_empty()
+                    || !hidden && rest.len() == 1 && flag(".")
+                {
+                    GitKind::Checkout
+                } else if !names.is_empty()
+                    && options.len() == 1
+                    && !options[0].dynamic
+                    && is_operand(&options[0])
+                {
+                    GitKind::CheckoutTree
+                } else if !names.is_empty() {
+                    GitKind::CheckoutPaths
+                } else {
+                    GitKind::CheckoutUnknown
+                };
+                Some((
+                    kind,
+                    if rest.len() == 1 && flag(".") {
+                        vec![".".into()]
+                    } else {
+                        names
+                    },
+                ))
             }
             "switch" if flag("-f") || flag("--force") || flag("--discard-changes") || hidden => {
-                Some((GitKind::Checkout, Vec::new()))
+                Some((
+                    if hidden {
+                        GitKind::CheckoutUnknown
+                    } else {
+                        GitKind::SwitchDiscard
+                    },
+                    Vec::new(),
+                ))
             }
-            "restore" if !(flag("--staged") && !flag("--worktree") && !has_short(rest, 'W')) => {
-                Some((GitKind::Restore, paths()))
+            "restore" => {
+                let (kind, paths) = restore_effect(rest);
+                // Preserve the existing exception for a long-form, staged-only restore.
+                if flag("--staged")
+                    && matches!(
+                        kind,
+                        GitKind::RestoreWithOptions {
+                            worktree: false,
+                            ..
+                        }
+                    )
+                {
+                    None
+                } else {
+                    Some((kind, paths))
+                }
             }
-            "rm" if !flag("--cached") => Some((GitKind::Remove, paths())),
+            "rm" if !flag("--cached") => Some((
+                if flag("--dry-run") || has_short(rest, 'n') {
+                    GitKind::RemovePreview
+                } else {
+                    GitKind::Remove
+                },
+                if has_long(options, "--pathspec-from-file") {
+                    Vec::new()
+                } else {
+                    operands(rest).iter().map(|w| shown(w)).collect()
+                },
+            )),
             "apply"
                 if !(flag("--check")
                     || flag("--stat")
@@ -1502,12 +1718,13 @@ impl Run<'_> {
             .iter()
             .any(|w| is_dynamic_option(w) || (!w.dynamic && flag_chars(&w.text).contains('c')))
         {
-            self.out.push(Risk::Opaque("команда в строке для оболочки"));
+            self.out
+                .push(Risk::Opaque("command string passed to a shell"));
         } else if !operands(args).is_empty() {
-            self.out.push(Risk::Opaque("запуск скрипта"));
+            self.out.push(Risk::Opaque("execution of a shell script"));
         } else if whole.after_pipe {
             self.out
-                .push(Risk::Opaque("текст команды передан в оболочку"));
+                .push(Risk::Opaque("shell commands supplied on standard input"));
         }
     }
 

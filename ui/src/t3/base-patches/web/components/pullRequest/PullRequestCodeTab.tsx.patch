@@ -1,0 +1,5 @@
+--- a/web/components/pullRequest/PullRequestCodeTab.tsx
++++ b/web/components/pullRequest/PullRequestCodeTab.tsx
+@@ -454 +454 @@
+-  const fixFindingLabel = requestedFixFindingLabel ?? gt("Fix in a thread");
++  const fixFindingLabel = requestedFixFindingLabel ?? gt("Fix in a chat");

@@ -8,9 +8,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 export const SOURCE = '/mnt/toshiba/alexandrie/hoh/refs/deepseek-harness/snapshots/sdk';
-// The replay stub is built from crates/hoh-window-stub; the first existing build is used (HOH_WINDOW_STUB wins).
-const STUB_CANDIDATES = ['/mnt/toshiba/alexandrie/hoh/target-accept-b/debug/hoh-window-stub', '/mnt/toshiba/alexandrie/hoh/build-lead/debug/hoh-window-stub', '/mnt/toshiba/alexandrie/hoh/headtest-target/debug/hoh-window-stub'];
-export const STUB = process.env.HOH_WINDOW_STUB ?? STUB_CANDIDATES.find(path => existsSync(path)) ?? STUB_CANDIDATES[0];
+// The shared Claude-line build is the single default; HOH_WINDOW_STUB may point at an explicit build.
+export const DEFAULT_STUB = '/home/save/.cache/hoh-build/line-claude/debug/hoh-window-stub';
+export const STUB = process.env.HOH_WINDOW_STUB?.trim() || DEFAULT_STUB;
+export function requireStub(path = STUB) {
+  if (existsSync(path)) return path;
+  throw new Error(`hoh-window-stub was not found at ${path}. Set HOH_WINDOW_STUB to an existing executable or build crates/hoh-window-stub in the shared Claude-line target.`);
+}
 export const WORKSPACE = '/workspace/chat';
 export async function recording(name) {
   return (await readFile(join(SOURCE, name, 'session.v4.jsonl'), 'utf8')).trim().split('\n').map(line => JSON.parse(line));
@@ -22,8 +26,9 @@ export async function recordedPrompt(name) {
 }
 export class StubClient {
   static async open(scenario = 'text-turn', extra = [], options = {}) {
+    const stub = requireStub();
     const home = await mkdtemp(join(tmpdir(), 'hoh-chat-stub-'));
-    const child = spawn(STUB, ['--scenario', scenario, ...extra], {
+    const child = spawn(stub, ['--scenario', scenario, ...extra], {
       env: { PATH: '/usr/bin:/bin', HOME: home, LANG: 'C.UTF-8', LC_ALL: 'C.UTF-8' },
       stdio: ['pipe', 'pipe', 'pipe'],
     });
@@ -38,6 +43,10 @@ export class StubClient {
     this.requests = []; this.notifications = []; this.nextId = 0; this.stderr = '';
     this.closed = false;
     child.stderr.on('data', data => { this.stderr += data.toString(); });
+    // A deliberately killed replay process can close its pipe before the
+    // write callback runs. The callback rejects the request; consume the
+    // stream's matching error event so it does not escape the test process.
+    child.stdin.on('error', () => {});
     const fail = error => {
       for (const pending of this.pending.values()) { clearTimeout(pending.timer); pending.reject(error); }
       this.pending.clear();

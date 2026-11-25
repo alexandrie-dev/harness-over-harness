@@ -86,8 +86,9 @@ Anthropic публично не закрепляет, поэтому диапа�
   выводится числом. Ход получает это сообщение через ядро слота. Тест: сценарий `kill-self`.
 - `reason`/промпт запроса очищаются от управляющих последовательностей терминала и обрезаются
   (T3 `:4367`, `stripVTControlCharacters`).
-- Шаги подагента (`tool_use` с `parent_tool_use_id`) отфильтрованы, как и их текст: T3 вкладывает их
-  в родительский поток, у слота такого уровня нет. Запрос на право подагента приходит без `item_id`.
+- Шаги и текст подагента (`parent_tool_use_id`) проходят как обычные события с необязательным
+  `parentItemId`; общий слот пишет его как `parentCallId` в существующие `assistant/message`,
+  `tool/call`, `tool/result`. Запрос права сохраняет id дочернего шага и тот же id запроса.
 - Стат файловой системы (`Write`: Add/Update, проверка рабочей папки) не блокирует рантайм:
   `tokio::fs`.
 - Открытые запросы снимаются (`RequestResolved`) при `terminate`, конце потока и нарушении
@@ -525,6 +526,8 @@ SettingSources::Personal` (`harness.rs`). Значение берётся из �
 
 ## «Как в T3» = только `user` (решение CEO 21.11 ~02:00)
 
+*Отменено 22.11 (HOH-40, основатель: «так же, как в T3»): см. раздел «HOH-40» ниже.*
+
 **Решение:** `personal` передаёт `--setting-sources user`. Настройки рабочей папки (`project`:
 `.claude/settings.json`, `local`: `.claude/settings.local.json`) не действуют.
 
@@ -568,3 +571,65 @@ SettingSources::Personal` (`harness.rs`). Значение берётся из �
   - Такой `result` ничего не меняет в состоянии хода.
 - Отличие от T3: кадры чужого хода (текст, шаги) не откладываются, а идут в текущий ход; T3 буферизует их (`heldRootFrames`, «wake»).
 - Тесты: `tests/claude.rs` `a_result_of_another_turn_does_not_end_the_prompts_turn` (заглушка: `wake-first` — пустой результат уведомления до ответа; `wake-turn-first` — `command_lifecycle`, ход CLI с `origin`, результат с чужим `uuid`, затем ответ с нашим). Сквозной — `apps/hoh/tests/window_executor.rs` `t16_…`: «Стоп» посреди хода; claude, возобновлённый с `--resume`, сначала отдаёт результат уведомления; «Стоп» во время команды следующего хода закрывает ход как `aborted`, убивает claude и команду (по PID), третий ход — новый запуск с `--resume`. До правки оба падали (`completed` сразу).
+
+## HOH-40 (решение CEO 22.11 21:50): источники настроек и уровень усилия, как в T3
+
+- **Источники.** `PERSONAL_SETTING_SOURCES = "user,project,local"`: `personal` (умолчание) передаёт
+  `--setting-sources user,project,local`. Это вариант Б из раздела «"Как в T3" = только `user`»:
+  решение CEO 21.11 отменено словами основателя «так же, как в T3». T3 своему SDK источники не
+  передаёт (`buildClaudeQueryOptions`, `ClaudeAdapterV2.ts:2283-2367`, поля `settingSources` нет),
+  а сам, когда ему надо знать, чему подчиняется сессия, читает `["user","project","local"]`
+  (`ClaudeAdapterV2.ts:5595`, `:5628`, `ClaudeDriver.ts:164`; с собственным домом
+  `CLAUDE_CONFIG_DIR` — только `project`, `local`; своего дома у нас нет). Без флага CLI грузит все
+  три (SDK `types.py:2728`, «matches CLI defaults»). Флаг по-прежнему передаётся явно: окно видит
+  источники в `effective.flags`, и подпись «Настройки Claude из папки проекта не применяются»
+  (`ui/src/lib/executor.mjs`, `projectSettingsIgnored`) пропадает сама.
+- Что ещё могло бы гасить проектное (`claude --help` 2.1.x): `--strict-mcp-config`, `--mcp-config`,
+  `--bare`, `--safe-mode`, `--restricted`, `--disable-slash-commands`. В запуске сессии `personal`
+  ни одного из них нет. `-p` (stream-json, как у SDK T3) пропускает диалог доверия к папке, как и у
+  T3. Защита окна не изменилась: режим по-прежнему только из окна (`--permission-mode`,
+  `--permission-prompt-tool stdio`, `--tools`/`--disallowedTools`). Но теперь `allow`-правила и хуки
+  папки (`.claude/settings*.json`) отвечают раньше вопроса окна, как в терминале человека и в T3.
+  Это и было причиной решения 21.11.
+- Проба `discover` не менялась (`--setting-sources "" --strict-mcp-config --mcp-config {}`, во
+  временной папке). T3 у пробы читает все три источника с `disableAllHooks`, но проба у нас нужна
+  только для входа и списка моделей, проект в ней не участвует.
+- **Уровень усилия.** `EFFORT_LEVELS = low, medium, high, xhigh, max` (`claude --help`: «--effort
+  <level> Effort level for the current session (low, medium, high, xhigh, max)»; T3
+  `CLAUDE_EFFORT_LEVELS`, `ClaudeModelCatalog.ts:366`). `ClaudeHarness::effort_levels` отдаёт их
+  слоту, `StartParams.effort` идёт в argv как `--effort <level>` после `--model` (T3 отдаёт SDK
+  опцию `effort`, `ClaudeAdapterV2.ts:2296`). Уровень не из списка отклоняется до запуска
+  (`code::PROTOCOL`): слот такой не передаёт. `--effort` не входит в `launch_flags`: от него не
+  зависит, что сессия делает без вопроса.
+- Отличие от T3. T3 сужает уровень по каталогу модели (`normalizeClaudeCatalogEffort`, у модели может
+  не быть `xhigh`/`max`). Живую смену уровня у T3 делает `applyFlagSettings` (`effortLevel`), а
+  новый процесс он запускает только когда уровень снимают или меняется thinking
+  (`canApplyClaudeSelectionLive`, `:2067`). У нас любая смена уровня — новый процесс с
+  `--resume` (решение CEO), каталога уровней по моделям нет.
+- Тесты: `the_effort_follows_its_switch`, `a_level_claude_does_not_have_starts_nothing`;
+  `launch_flags` = срез argv (с `--effort high`); `user,project,local` в `tests/claude.rs`,
+  `tests/slot.rs`; сквозной `apps/hoh/tests/window_executor.rs` `t18_…` (PORT_NOTES
+  `hoh-external-harness`, HOH-40).
+
+## HOH-47 U4: канальные плагины не запускаются вторым экземпляром в окне
+
+- Перед запуском обычной (`personal`) сессии отдельный `channel_plugins.rs` объединяет
+  `enabledPlugins` из user/project/local settings, сопоставляет включённые id с
+  `plugins/installed_plugins.json` и статически ищет `claude/channel` в исходниках и сборке
+  установленного плагина; маркер учитывается только при непустом объявлении MCP-сервера, поэтому
+  строка в постороннем примере/тесте не отключает плагин. Дополнительные признаки — keyword
+  `channel` в `plugin.json` и имена
+  `telegram`, `discord`, `imessage`, `fakechat`; при повреждённом реестре проверяется обычный
+  `plugins/cache/<marketplace>/<plugin>`.
+- В argv добавляется только `--settings {"enabledPlugins":{"<channel-id>":false}}`.
+  `--setting-sources user,project,local` остаётся: прочие плагины, хуки, правила и настройки
+  человека не выключаются. Файлы Claude только читаются, ошибки не прерывают запуск; если
+  settings не разобрались, кандидаты берутся консервативно из installed registry/cache, чтобы
+  распознанный канал не запустился из-за несовпадения парсеров. Cache fallback принимает только
+  безопасные компоненты plugin/marketplace; обход ограничен 20 000 directory entries, и
+  MCP-declared plugin при исчерпании лимита считается канальным.
+- `isolated` не получает overlay: он уже не читает настройки и запускается с
+  `--strict-mcp-config`. Пробы discovery/commands не менялись.
+- Тесты: подложные channel/non-channel плагины, keyword/known-name fallback, повреждённые данные и
+  точный selective override в `ClaudeConfig::argv_in`; живой изолированный прогон —
+  `scripts/channel-plugin-check.sh`.

@@ -192,7 +192,7 @@ impl HostApprovalMode {
 const ESCALATION_PREFIX: &str = "escalate sandbox to ";
 const MAX_JUSTIFICATION_CHARS: usize = 3600;
 
-/// What the window shows for an escalation ask: built here in Russian, so that not a word of the
+/// What the window shows for an escalation ask: built here in English, so that not a word of the
 /// model's justification is in `humanText` or `reason`; the justification goes to `details`.
 struct EscalationText {
     human_text: String,
@@ -207,29 +207,27 @@ fn escalation_text(approval: &ApprovalRequest) -> Option<EscalationText> {
         .strip_prefix(ESCALATION_PREFIX)?;
     let (mode, justification) = rest.split_once(": ")?;
     let what = if approval.tool_name == "bash" {
-        "команду"
+        "the command"
     } else {
-        "действие"
+        "the action"
     };
     // Words for people who never wrote code (HOH-35): no jargon, as the destructive guard
     // words the same escalation.
     let human_text = match mode {
-        "danger-full-access" => format!(
-            "Помощник просит разрешения работать за пределами своей папки: выполнить {what}"
-        ),
+        "danger-full-access" => format!("The assistant asks to run {what} outside its folder"),
         "workspace-write" => {
-            format!("Помощник просит выполнить {what} с правом записи в рабочую папку")
+            format!("The assistant asks to run {what} with write access to its working folder")
         }
-        _ => format!("Помощник просит выполнить {what} с дополнительными правами"),
+        _ => format!("The assistant asks to run {what} with additional permissions"),
     };
     let justification: String = justification
         .chars()
         .take(MAX_JUSTIFICATION_CHARS)
         .collect();
     Some(EscalationText {
-        reason: format!("{human_text}. Обоснование Помощника — в подробностях"),
+        reason: format!("{human_text}. See details for the assistant’s justification"),
         human_text,
-        details: format!("Обоснование Помощника: {justification}"),
+        details: format!("Assistant justification: {justification}"),
     })
 }
 

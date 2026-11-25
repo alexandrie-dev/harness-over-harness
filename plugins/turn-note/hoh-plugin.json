@@ -1,0 +1,9 @@
+{
+  "id": "turn-note",
+  "name": "Последний ход",
+  "version": "0.1.0",
+  "entry": "AuthorPlugin",
+  "description": "Краткий итог последнего завершённого хода",
+  "permissions": {"observe": ["turn/finished"], "tools": ["last_turn"], "journal": ["turn-ended"]},
+  "panel": {"title": "Последний ход", "record": "turn-ended", "fields": [{"key": "turn", "label": "Ход"}, {"key": "engine", "label": "Исполнитель"}, {"key": "outcome", "label": "Результат"}]}
+}

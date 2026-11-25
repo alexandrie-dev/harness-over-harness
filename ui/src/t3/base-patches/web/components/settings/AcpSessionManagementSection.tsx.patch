@@ -1,0 +1,5 @@
+--- a/web/components/settings/AcpSessionManagementSection.tsx
++++ b/web/components/settings/AcpSessionManagementSection.tsx
+@@ -408 +408 @@
+-        description={gt("Resume agent-owned conversations as T3 threads.")}
++        description={gt("Resume agent-owned conversations as T3 chats.")}

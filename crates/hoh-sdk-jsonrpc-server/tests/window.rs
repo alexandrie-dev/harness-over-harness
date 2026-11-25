@@ -6,6 +6,7 @@ use hoh_protocol::InitializeParams;
 use hoh_sdk_jsonrpc_server::{
     HohPrivilegedApprover, HohRpcMethodRegistry, HohRpcMethods, PrivilegedApprover,
 };
+use hoh_session_persistence::SessionPersistenceService;
 use hoh_user_approval::{Approval, ApprovalService};
 use serde_json::{Value, json};
 use std::sync::{Arc, Mutex};
@@ -338,6 +339,62 @@ async fn session_list_covers_live_and_stored_sessions_with_titles_and_filter() {
 }
 
 #[tokio::test]
+async fn session_list_and_events_read_the_saved_log_while_another_process_holds_its_write_lease() {
+    let root = tempfile::tempdir().unwrap();
+    let holder = Env::persistent(root.path()).await;
+    holder.initialize().await;
+    chat(&holder, "stopped", "Count from 1 to 500").await;
+    holder
+        .ctx
+        .get::<SessionPersistenceService>()
+        .unwrap()
+        .flush()
+        .await
+        .unwrap();
+
+    let observer = Env::persistent(root.path()).await;
+    observer.initialize().await;
+    let resume = observer
+        .server
+        .handle_request("session/resume", json!({"sessionId": "stopped"}))
+        .await
+        .unwrap_err();
+    assert!(resume.to_string().contains("already owned"), "{resume}");
+
+    let list = observer
+        .server
+        .handle_request("session/list", json!({}))
+        .await
+        .unwrap();
+    assert_eq!(list["sessions"].as_array().unwrap().len(), 1);
+    assert_eq!(list["sessions"][0]["id"], "stopped");
+    assert_eq!(list["sessions"][0]["title"], "Count from 1 to 500");
+    let page = observer
+        .server
+        .handle_request(
+            "session/events",
+            json!({"sessionId": "stopped", "limit": 1000}),
+        )
+        .await
+        .unwrap();
+    assert!(
+        page["events"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|event| event["type"] == "user/message")
+    );
+
+    holder.close().await;
+    observer
+        .server
+        .handle_request("session/resume", json!({"sessionId": "stopped"}))
+        .await
+        .unwrap();
+    observer.close().await;
+}
+
+#[tokio::test]
 async fn session_cancel_ends_the_running_turn_and_reports_unknown_sessions() {
     let env = Env::new().await;
     env.initialize().await;
@@ -440,6 +497,101 @@ async fn registry_refuses_undeclared_and_duplicate_methods_and_unregisters_on_di
             .await
             .is_err()
     );
+    env.close().await;
+}
+
+/// HOH-40: the one `session/prompt` listener hears each prompt's session, the id of the message
+/// it queued and the whole params (the window's `effort`, which the server itself does not read),
+/// until it is disposed; text queries also notify it before the prompt is queued.
+#[tokio::test]
+async fn a_prompt_listener_hears_the_params_of_every_prompt() {
+    let env = Env::new().await;
+    let registry = registry(&env).await;
+    let heard = Arc::new(Mutex::new(Vec::new()));
+    let log = heard.clone();
+    let guard = registry
+        .on_prompt(&env.ctx, move |session, message, params| {
+            log.lock().unwrap().push((
+                session.to_owned(),
+                message.to_owned(),
+                params["effort"].clone(),
+            ));
+        })
+        .unwrap();
+    assert!(registry.on_prompt(&env.ctx, |_, _, _| {}).is_err());
+    env.initialize().await;
+    let prompt = |effort: &str| {
+        json!({
+            "sessionId": "s1",
+            "contentBlocks": [{"type": "text", "text": "hi"}],
+            "effort": effort,
+        })
+    };
+    let receipt = env
+        .server
+        .handle_request("session/prompt", prompt("high"))
+        .await
+        .unwrap();
+    env.wait("s1").await;
+    let message = receipt["messageId"].as_str().unwrap().to_owned();
+    assert_eq!(
+        *heard.lock().unwrap(),
+        vec![("s1".to_owned(), message, json!("high"))]
+    );
+    env.server
+        .handle_request(
+            "session/query",
+            json!({"sessionId": "s1", "contentBlocks": [{"type": "text", "text": "hi"}]}),
+        )
+        .await
+        .unwrap();
+    env.wait("s1").await;
+    assert_eq!(heard.lock().unwrap().len(), 2);
+    guard.dispose().await;
+    env.server
+        .handle_request("session/prompt", prompt("max"))
+        .await
+        .unwrap();
+    env.wait("s1").await;
+    assert_eq!(heard.lock().unwrap().len(), 2);
+    env.close().await;
+}
+
+#[tokio::test]
+async fn invalid_interaction_mode_is_rejected_before_session_message_and_listener() {
+    let env = Env::new().await;
+    let registry = registry(&env).await;
+    let heard = Arc::new(Mutex::new(Vec::new()));
+    let log = heard.clone();
+    let _guard = registry
+        .on_prompt(&env.ctx, move |session, message, _| {
+            log.lock()
+                .unwrap()
+                .push((session.to_owned(), message.to_owned()));
+        })
+        .unwrap();
+    env.initialize().await;
+    for interaction_mode in [json!("future-mode"), Value::Null] {
+        let result = env
+            .server
+            .handle_request(
+                "session/prompt",
+                json!({
+                    "sessionId":"invalid-mode-session",
+                    "contentBlocks":[{"type":"text","text":"must not be stored"}],
+                    "interactionMode":interaction_mode,
+                }),
+            )
+            .await;
+        assert!(result.is_err());
+    }
+    assert!(heard.lock().unwrap().is_empty());
+    let listed = env
+        .server
+        .handle_request("session/list", json!({}))
+        .await
+        .unwrap();
+    assert_eq!(listed["sessions"], json!([]));
     env.close().await;
 }
 
@@ -606,5 +758,232 @@ async fn the_prompt_after_a_cancel_makes_its_own_model_request() {
         })
         .collect();
     assert_eq!(texts, ["fresh text"]);
+    env.close().await;
+}
+
+#[tokio::test]
+async fn session_delete_moves_history_to_trash_and_is_idempotent() {
+    let root = tempfile::tempdir().unwrap();
+    let env = Env::persistent(root.path()).await;
+    env.initialize().await;
+    chat(&env, "delete-me", "keep the whole history").await;
+    let store = env.ctx.get::<SessionPersistenceService>().unwrap();
+    store.flush().await.unwrap();
+    let snap = store
+        .stat(&"delete-me".into(), None)
+        .await
+        .unwrap()
+        .unwrap();
+    let log = std::path::PathBuf::from(&snap.location.unwrap().path);
+    let dir = log.parent().unwrap();
+    tokio::fs::write(dir.join("attachment.dat"), b"keep")
+        .await
+        .unwrap();
+    env.server
+        .handle_request("session/delete", json!({"sessionId":"delete-me"}))
+        .await
+        .unwrap();
+    assert!(
+        env.server
+            .handle_request("session/list", json!({}))
+            .await
+            .unwrap()["sessions"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    let mut trash = tokio::fs::read_dir(root.path().join("trash"))
+        .await
+        .unwrap();
+    let entry = trash.next_entry().await.unwrap().unwrap();
+    assert_eq!(
+        tokio::fs::read(entry.path().join("attachment.dat"))
+            .await
+            .unwrap(),
+        b"keep"
+    );
+    assert!(entry.path().join(log.file_name().unwrap()).is_file());
+    env.server
+        .handle_request("session/delete", json!({"sessionId":"delete-me"}))
+        .await
+        .unwrap();
+    assert!(trash.next_entry().await.unwrap().is_none());
+    env.close().await;
+    let reopened = Env::persistent(root.path()).await;
+    reopened.initialize().await;
+    assert!(
+        reopened
+            .server
+            .handle_request("session/list", json!({}))
+            .await
+            .unwrap()["sessions"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    reopened
+        .server
+        .handle_request("session/delete", json!({"sessionId":"delete-me"}))
+        .await
+        .unwrap();
+    reopened.close().await;
+}
+
+#[tokio::test]
+async fn session_delete_rejects_running_turn() {
+    let root = tempfile::tempdir().unwrap();
+    let env = Env::persistent(root.path()).await;
+    env.initialize().await;
+    let gate = Arc::new(tokio::sync::Semaphore::new(0));
+    *lock(&env.model.gate) = Some(gate.clone());
+    env.prompt("busy-delete", "working").await;
+    env.model.entered.notified().await;
+    let error = env
+        .server
+        .handle_request("session/delete", json!({"sessionId":"busy-delete"}))
+        .await
+        .unwrap_err();
+    assert!(
+        error.to_string().starts_with("CHAT_DELETE_BUSY: "),
+        "{error}"
+    );
+    gate.add_permits(1);
+    env.wait("busy-delete").await;
+    env.close().await;
+}
+
+#[tokio::test]
+async fn session_delete_rejects_an_undecided_approval() {
+    let root = tempfile::tempdir().unwrap();
+    let env = Env::persistent(root.path()).await;
+    env.initialize().await;
+    let agent = env.open("approval-delete").await;
+    agent
+        .session()
+        .append("turn/start", json!({"turn":1}), None)
+        .unwrap();
+    agent
+        .session()
+        .append(
+            "approval/asked",
+            json!({"id":"approval-1", "toolName":"Bash"}),
+            None,
+        )
+        .unwrap();
+    let failure = env
+        .server
+        .handle_request("session/delete", json!({"sessionId":"approval-delete"}))
+        .await
+        .unwrap_err();
+    assert!(failure.to_string().contains("waiting"), "{failure}");
+    assert_eq!(
+        env.server
+            .handle_request("session/list", json!({}))
+            .await
+            .unwrap()["sessions"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    agent
+        .session()
+        .append(
+            "approval/decided",
+            json!({"id":"approval-1", "outcome":"rejected"}),
+            None,
+        )
+        .unwrap();
+    agent
+        .session()
+        .append(
+            "turn/end",
+            json!({"turn":1,"reason":{"kind":"completed"}}),
+            None,
+        )
+        .unwrap();
+    env.close().await;
+}
+
+#[tokio::test]
+async fn del2_deleted_id_cannot_be_recreated_by_a_late_prompt() {
+    let root = tempfile::tempdir().unwrap();
+    let env = Env::persistent(root.path()).await;
+    env.initialize().await;
+    chat(&env, "gone-del2", "the original conversation").await;
+    env.server
+        .handle_request("session/delete", json!({"sessionId":"gone-del2"}))
+        .await
+        .unwrap();
+    let result = env
+        .server
+        .handle_request(
+            "session/prompt",
+            json!({"sessionId":"gone-del2", "contentBlocks":[{"type":"text","text":"late"}]}),
+        )
+        .await;
+    assert!(result.is_err(), "late prompt recreated the deleted chat");
+    env.close().await;
+    let reopened = Env::persistent(root.path()).await;
+    reopened.initialize().await;
+    let after_restart = reopened.server.handle_request("session/prompt", json!({"sessionId":"gone-del2", "contentBlocks":[{"type":"text","text":"late after restart"}]})).await;
+    assert!(
+        after_restart.is_err(),
+        "deleted ID must remain reserved after restart"
+    );
+    reopened.close().await;
+}
+
+#[tokio::test]
+async fn del2_failed_trash_keeps_the_session_usable() {
+    let root = tempfile::tempdir().unwrap();
+    let env = Env::persistent(root.path()).await;
+    env.initialize().await;
+    chat(&env, "rollback-del2", "first").await;
+    tokio::fs::write(root.path().join("trash"), b"not a directory")
+        .await
+        .unwrap();
+    assert!(
+        env.server
+            .handle_request("session/delete", json!({"sessionId":"rollback-del2"}))
+            .await
+            .is_err()
+    );
+    let result = env
+        .server
+        .handle_request(
+            "session/prompt",
+            json!({"sessionId":"rollback-del2", "contentBlocks":[{"type":"text","text":"second"}]}),
+        )
+        .await;
+    assert!(
+        result.is_ok(),
+        "chat must remain usable after the failed move: {result:?}"
+    );
+    env.wait("rollback-del2").await;
+    env.close().await;
+}
+
+#[tokio::test]
+async fn del2_deletion_reservation_blocks_direct_followup_and_releases_on_rollback() {
+    let env = Env::new().await;
+    env.initialize().await;
+    let agent = env.open("reservation-del2").await;
+    agent
+        .reserve_deletion()
+        .expect("idle session can be reserved");
+    let message = || {
+        hoh_llm::create_user_message(hoh_llm::NewUserMessage {
+            content: vec![hoh_llm::ContentBlock::text("scheduler message")],
+            source: hoh_llm::MessageSource::new("user"),
+        })
+    };
+    assert!(
+        agent.followup(message()).is_err(),
+        "direct scheduler delivery must be refused while deleting"
+    );
+    agent.release_deletion();
+    agent.followup(message()).unwrap();
+    env.wait("reservation-del2").await;
     env.close().await;
 }

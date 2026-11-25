@@ -1,0 +1,12 @@
+--- a/web/components/chat/ThreadDetailsPrRow.tsx
++++ b/web/components/chat/ThreadDetailsPrRow.tsx
+@@ -403,2 +403,2 @@
+-              ? gt("Check the branch out and resolve the conflicts in a new thread")
+-              : gt("Resolve the conflicts in this thread"),
++              ? gt("Check the branch out and resolve the conflicts in a new chat")
++              : gt("Resolve the conflicts in this chat"),
+@@ -434,2 +434,2 @@
+-                  ? gt("Fix the failing checks in a new thread")
+-                  : gt("Fix the failing checks in this thread"),
++                  ? gt("Fix the failing checks in a new chat")
++                  : gt("Fix the failing checks in this chat"),

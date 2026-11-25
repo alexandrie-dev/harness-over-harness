@@ -1,0 +1,5 @@
+--- a/contracts/preview.ts
++++ b/contracts/preview.ts
+@@ -366 +366 @@
+-    return `Unknown preview session: thread=${this.threadId}, tab=${this.tabId}`;
++    return `Unknown preview session: chat=${this.threadId}, tab=${this.tabId}`;

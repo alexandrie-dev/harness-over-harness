@@ -1,0 +1,14 @@
+--- a/web/components/chat/ComposerFeedback.tsx
++++ b/web/components/chat/ComposerFeedback.tsx
+@@ -34 +34 @@
+-              target: "Codex feedback thread ID",
++              target: "Codex feedback chat ID",
+@@ -36 +36 @@
+-                "Clipboard API is unavailable while copying Codex feedback thread ID.",
++                "Clipboard API is unavailable while copying Codex feedback chat ID.",
+@@ -38 +38 @@
+-              failureMessage: msg("Failed to copy Codex feedback thread ID to the clipboard."),
++              failureMessage: msg("Failed to copy Codex feedback chat ID to the clipboard."),
+@@ -42 +42 @@
+-                title: m(msg("Could not copy thread ID")),
++                title: m(msg("Could not copy chat ID")),

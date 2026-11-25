@@ -1,7 +1,7 @@
 //! One confirmation by the person per settings action (CEO 19.11): the engine's own approval
 //! request for exactly that action is signed by the core without a second window; everything
 //! else still gets a window.
-use hoh_desktop::approval::{Begun, Broker, GRANT_TTL_MS, Resolution};
+use hoh_desktop::approval::{AuditEntry, Begun, Broker, GRANT_TTL_MS, Resolution};
 use hoh_protocol::{ApprovalOutcome, HostApprovalRequest};
 use serde_json::{Value, json};
 use std::time::{Duration, Instant};
@@ -437,10 +437,17 @@ fn the_journal_names_who_confirmed_what_and_when_without_the_key() {
         (human.who, human.via, human.outcome.as_str()),
         ("human", "settings-window", "allowed-once")
     );
-    assert_eq!(human.note, "подтверждено человеком в окне настройки");
+    assert_eq!(human.note, "confirmed by the person in the settings window");
     assert_eq!((human.at, human.method.as_str()), (NOW, KEY_SET));
     let core = &log[1];
-    assert_eq!((core.who, core.at), ("core", NOW + 5));
+    assert_eq!(
+        (core.who, core.via, core.at),
+        ("core", "settings-window", NOW + 5)
+    );
+    assert_eq!(
+        core.note,
+        "signed by the core without a second window: the same action was confirmed by the person in the settings window"
+    );
     assert_eq!(core.action_hash.len(), 64);
     assert!(
         !serde_json::to_string(&log)
@@ -462,7 +469,9 @@ fn the_journal_file_is_owner_only() {
         NOW,
     );
     let text = std::fs::read_to_string(&path).unwrap();
-    assert!(text.contains("подтверждено человеком в окне настройки") && !text.contains("sk-x"));
+    assert!(
+        text.contains("confirmed by the person in the settings window") && !text.contains("sk-x")
+    );
     assert_eq!(
         std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
         0o600
@@ -685,7 +694,10 @@ fn a_late_timer_tells_the_truth_in_the_journal() {
     assert!(decision.is_err());
     let entry = broker.audit_log().pop().unwrap();
     assert_eq!(entry.outcome, "expired");
-    assert_eq!(entry.note, "истёк без ответа, подпись невозможна");
+    assert_eq!(
+        entry.note,
+        "expired without an answer; signing is impossible"
+    );
 }
 
 #[test]
@@ -747,7 +759,7 @@ fn a_hidden_nested_command_in_the_settings_text_blocks_allow_once() {
     let (open, _receiver) = broker.begin_preflight(KEY_SET, &params, NOW).unwrap();
     let text = &open.view.human_text;
     assert!(
-        text.contains("Часть команды скрыта, в ней есть вложенная команда"),
+        text.contains("Part of the command is hidden and contains a nested command"),
         "{text}"
     );
     assert!(!text.contains("touch"), "{text}");
@@ -760,7 +772,7 @@ fn a_hidden_nested_command_in_the_settings_text_blocks_allow_once() {
         NOW,
         Instant::now(),
     );
-    assert!(denied.is_err_and(|e| e.contains("разрешить один раз нельзя")));
+    assert!(denied.is_err_and(|e| e.contains("Allow once is unavailable")));
     // rejecting is still possible
     broker
         .decide(
@@ -777,4 +789,423 @@ fn a_hidden_nested_command_in_the_settings_text_blocks_allow_once() {
         "{journal}"
     );
     let _ = std::fs::remove_file(&path);
+}
+
+const ACCESS_SET: &str = "hoh/executor/access/set";
+
+/// The core's line for a request the person confirmed in the main window names that channel, not
+/// the settings window there was none of (review 222000); its note starts as every core signature
+/// does, so the history leaves it out.
+fn assert_main_window_signature(core: &AuditEntry) {
+    assert_eq!(
+        (core.who, core.via, core.outcome.as_str()),
+        ("core", "main-window", "allowed-once")
+    );
+    assert_eq!(
+        core.note,
+        "signed by the core without a second window: the same action was confirmed by the person in the main window"
+    );
+}
+
+/// Founder 22.11 19:16: the access mode of the executor changes from the main window itself, as in
+/// T3. The person's action there is the confirmation: no window, one `human` line in the journal
+/// (channel `main-window`), and the engine's own request for exactly that action is signed once.
+#[test]
+fn the_access_mode_from_the_main_window_needs_no_window_and_is_journaled_as_the_person() {
+    let broker = broker();
+    let cases = [
+        (
+            json!({"executor":"claude","mode":"full","runtimeMode":"full"}),
+            "Full access",
+        ),
+        (
+            json!({"executor":"claude","mode":"confirm","runtimeMode":"auto-accept-edits"}),
+            "Accept edits",
+        ),
+        (
+            json!({"executor":"claude","mode":"confirm","runtimeMode":"auto"}),
+            "Auto",
+        ),
+        (
+            json!({"executor":"claude","mode":"confirm","runtimeMode":"confirm"}),
+            "Supervised",
+        ),
+    ];
+    for (n, (params, _)) in cases.iter().enumerate() {
+        broker
+            .confirm_from_main_window(ACCESS_SET, params, None, NOW)
+            .unwrap();
+        arm(&broker, ACCESS_SET, params, NOW);
+        let begun = begin(
+            &broker,
+            engine_request(ACCESS_SET, params, &format!("acc-{n}"), NOW + 5),
+            NOW + 5,
+        );
+        assert!(is_signed(&begun), "{params}: signed without a window");
+    }
+    let log = broker.audit_log();
+    assert_eq!(log.len(), 8);
+    for (index, (human, core)) in log
+        .chunks_exact(2)
+        .map(|pair| (&pair[0], &pair[1]))
+        .enumerate()
+    {
+        assert_eq!(
+            (human.who, human.via, human.outcome.as_str()),
+            ("human", "main-window", "allowed-once")
+        );
+        assert_eq!(human.method, ACCESS_SET);
+        assert_eq!(human.note, "confirmed by the person in the main window");
+        assert_main_window_signature(core);
+        assert!(
+            human.human_text.contains(cases[index].1),
+            "{}",
+            human.human_text
+        );
+    }
+    for (n, start) in [
+        "Enable Full access for Claude?",
+        "Enable Accept edits for Claude?",
+        "Enable Auto for Claude?",
+        "Return Claude to Supervised mode?",
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        assert!(
+            log[2 * n].human_text.starts_with(start),
+            "{}",
+            log[2 * n].human_text
+        );
+    }
+    // The person reads it in the history as their own decision.
+    let history = broker.history(10);
+    assert_eq!(history.len(), 4);
+    assert!(history.iter().all(|entry| entry["asker"] == "you"));
+}
+
+/// The grant is the main window's only: without that action (the executor, the model or the SDK
+/// server asking the engine), or for another mode or executor, the engine's request gets a window.
+#[test]
+fn an_access_change_not_made_in_the_main_window_still_gets_a_window() {
+    let broker = broker();
+    let full = json!({"executor":"claude","mode":"full"});
+    close_window(
+        &broker,
+        begin(&broker, engine_request(ACCESS_SET, &full, "x1", NOW), NOW),
+        NOW,
+    );
+    let confirm = json!({"executor":"claude","mode":"confirm"});
+    broker
+        .confirm_from_main_window(ACCESS_SET, &confirm, None, NOW)
+        .unwrap();
+    arm(&broker, ACCESS_SET, &confirm, NOW);
+    close_window(
+        &broker,
+        begin(
+            &broker,
+            engine_request(ACCESS_SET, &full, "x2", NOW + 1),
+            NOW + 1,
+        ),
+        NOW + 1,
+    );
+    // Confirmed but never sent from the window: nothing is in flight, nothing is signed.
+    let other = Broker::new(KEY).unwrap();
+    other
+        .confirm_from_main_window(ACCESS_SET, &full, None, NOW)
+        .unwrap();
+    close_window(
+        &other,
+        begin(
+            &other,
+            engine_request(ACCESS_SET, &full, "x3", NOW + 1),
+            NOW + 1,
+        ),
+        NOW + 1,
+    );
+}
+
+/// Every other privileged request keeps its confirmation window: the built-in agent loop's model and
+/// folder, the key, the rules and the settings.
+#[test]
+fn only_the_exact_claude_and_codex_choices_are_confirmed_by_the_main_window_itself() {
+    let broker = broker();
+    for (method, params, session_executor) in [
+        (
+            KEY_SET,
+            key_params("sk-x", "http://127.0.0.1:8080/v1"),
+            None,
+        ),
+        (SELECT, json!({"executor":null,"model":"local"}), None),
+        (
+            SELECT,
+            json!({"executor":"future-agent","model":"gpt"}),
+            None,
+        ),
+        (
+            FOLDER_SET,
+            json!({"sessionId":"s-loop","path":"/home/u/work"}),
+            None,
+        ),
+        (
+            FOLDER_SET,
+            json!({"sessionId":"s-other","path":"/home/u/work"}),
+            Some("future-agent"),
+        ),
+        (
+            "hoh/settings/rules/set",
+            json!({"internet":"ask","folder":"/home/u/Documents/HoH"}),
+            None,
+        ),
+        (
+            "hoh/settings/set",
+            json!({"model":{"baseUrl":"http://127.0.0.1:8080/v1","model":"local"}}),
+            Some("claude"),
+        ),
+    ] {
+        assert!(
+            broker
+                .confirm_from_main_window(method, &params, session_executor, NOW)
+                .is_err(),
+            "{method} {params}"
+        );
+    }
+    assert!(
+        broker
+            .confirm_from_main_window(
+                ACCESS_SET,
+                &json!({"executor":"claude","mode":"root"}),
+                None,
+                NOW
+            )
+            .is_err()
+    );
+    assert!(broker.audit_log().is_empty());
+}
+
+#[test]
+fn codex_select_and_folder_are_main_window_actions_but_unknown_executors_are_not() {
+    let broker = broker();
+    for (method, params, executor) in [
+        (SELECT, json!({"executor":"codex","model":"gpt"}), None),
+        (
+            FOLDER_SET,
+            json!({"sessionId":"s-codex","path":"/home/u/work"}),
+            Some("codex"),
+        ),
+    ] {
+        broker
+            .confirm_from_main_window(method, &params, executor, NOW)
+            .unwrap();
+    }
+    for (method, params, executor) in [
+        (
+            ACCESS_SET,
+            json!({"executor":"codex-extra","mode":"confirm"}),
+            None,
+        ),
+        (
+            SELECT,
+            json!({"executor":"codex-extra","model":"gpt"}),
+            None,
+        ),
+        (
+            FOLDER_SET,
+            json!({"sessionId":"s-other","path":"/home/u/work"}),
+            Some("codex-extra"),
+        ),
+    ] {
+        assert!(
+            broker
+                .confirm_from_main_window(method, &params, executor, NOW)
+                .is_err(),
+            "{method} {params}"
+        );
+    }
+}
+
+const SELECT: &str = "hoh/executor/select";
+const FOLDER_SET: &str = "session/working-directory/set";
+
+/// Lead 22.11 20:43: choosing Claude to answer (the T3 model picker, before the first message) and
+/// the folder of a conversation Claude runs (a T3 project) are confirmed by the person's action in
+/// the main window: no window, one `human` line via `main-window`, the engine's request signed once.
+#[test]
+fn choosing_claude_and_its_folder_in_the_main_window_needs_no_window() {
+    let broker = broker();
+    let select = json!({"executor":"claude","model":"default"});
+    let folder = json!({"sessionId":"s-claude","path":"/home/u/work"});
+    for (n, (method, params, session_executor)) in [
+        (SELECT, &select, None),
+        (FOLDER_SET, &folder, Some("claude")),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        broker
+            .confirm_from_main_window(method, params, session_executor, NOW)
+            .unwrap();
+        arm(&broker, method, params, NOW);
+        let begun = begin(
+            &broker,
+            engine_request(method, params, &format!("main-{n}"), NOW + 5),
+            NOW + 5,
+        );
+        assert!(is_signed(&begun), "{method}: signed without a window");
+    }
+    let log = broker.audit_log();
+    assert_eq!(log.len(), 4);
+    for (human, core) in [(&log[0], &log[1]), (&log[2], &log[3])] {
+        assert_eq!(
+            (human.who, human.via, human.outcome.as_str()),
+            ("human", "main-window", "allowed-once")
+        );
+        assert_main_window_signature(core);
+    }
+    assert_eq!(
+        (log[0].method.as_str(), log[2].method.as_str()),
+        (SELECT, FOLDER_SET)
+    );
+    assert_eq!(log[0].human_text, "Use Claude (model default) to respond?");
+    assert_eq!(log[2].human_text, "Allow work in folder «/home/u/work»?");
+    // Not confirmed in the main window: the engine's own request for Claude still gets a window.
+    close_window(
+        &broker,
+        begin(
+            &broker,
+            engine_request(
+                SELECT,
+                &json!({"executor":"claude","model":"opus"}),
+                "x-sel",
+                NOW + 6,
+            ),
+            NOW + 6,
+        ),
+        NOW + 6,
+    );
+}
+
+/// A permission request of the engine as the T3 client shows it in its conversation.
+fn tool_request(id: &str, now: u64) -> Value {
+    let action = json!({"method":"bash","params":{"command":"rm -rf ./build"}});
+    json!({"sessionId":"s-claude","toolName":"bash","approvalId":id,"risk":"high",
+        "humanText":"Run rm -rf ./build?","expiresAt":now+300_000,
+        "actionHash":hoh_protocol::approval::action_hash(&action),"action":action})
+}
+
+/// Founder 22.11 19:16: in the T3 client the permission request is answered in the conversation,
+/// with no window of its own; the same checks and signature, journaled as the person's via `chat`.
+#[test]
+fn a_permission_request_shown_in_the_conversation_is_answered_from_the_main_window() {
+    let broker = broker();
+    let Begun::Window(open) = begin(&broker, tool_request("p1", NOW), NOW) else {
+        panic!("an engine request needs the person")
+    };
+    let shown = Instant::now();
+    assert!(broker.show_in_chat(&open.label, shown));
+    // Not before it could be read.
+    assert!(
+        broker
+            .decide_in_chat("p1", ApprovalOutcome::AllowedOnce, NOW, shown)
+            .is_err()
+    );
+    // Only the request shown there, by its id.
+    assert!(
+        broker
+            .decide_in_chat(
+                "other",
+                ApprovalOutcome::AllowedOnce,
+                NOW,
+                shown + Duration::from_secs(2)
+            )
+            .is_err()
+    );
+    let decided = broker
+        .decide_in_chat(
+            "p1",
+            ApprovalOutcome::AllowedOnce,
+            NOW + 2_000,
+            shown + Duration::from_secs(2),
+        )
+        .unwrap();
+    assert!(decided.command_result.is_ok());
+    let Resolution::Engine {
+        decision: Ok(decision),
+        ..
+    } = decided.resolution
+    else {
+        panic!("the engine gets the decision")
+    };
+    let request: HostApprovalRequest = serde_json::from_value(tool_request("p1", NOW)).unwrap();
+    hoh_protocol::approval::verify_decision(&KEY, &request, &decision, NOW + 2_000).unwrap();
+    let log = broker.audit_log();
+    assert_eq!(
+        (log[0].who, log[0].via, log[0].outcome.as_str()),
+        ("human", "chat", "allowed-once")
+    );
+    assert_eq!(
+        log[0].note,
+        "confirmed by the person in the main window conversation"
+    );
+    assert_eq!(broker.history(5)[0]["asker"], "assistant");
+    // Answered once.
+    assert!(
+        broker
+            .decide_in_chat(
+                "p1",
+                ApprovalOutcome::Rejected,
+                NOW + 3_000,
+                shown + Duration::from_secs(3)
+            )
+            .is_err()
+    );
+}
+
+/// The previous shell keeps its approval window: a request not shown in the conversation, and the
+/// shell's own settings question, cannot be answered from the main window.
+#[test]
+fn only_a_request_shown_in_the_conversation_is_answered_there() {
+    let broker = broker();
+    let Begun::Window(open) = begin(&broker, tool_request("p2", NOW), NOW) else {
+        panic!("an engine request needs the person")
+    };
+    let later = Instant::now() + Duration::from_secs(5);
+    assert!(
+        broker
+            .decide_in_chat("p2", ApprovalOutcome::AllowedOnce, NOW, later)
+            .is_err()
+    );
+    drop(broker.reject(&open.label, NOW));
+    let (settings, _receiver) = broker
+        .begin_preflight(
+            KEY_SET,
+            &key_params("sk-z", "http://127.0.0.1:8080/v1"),
+            NOW,
+        )
+        .unwrap();
+    assert!(!broker.show_in_chat(&settings.label, Instant::now()));
+    assert!(
+        broker
+            .decide_in_chat(
+                &settings.view.approval_id,
+                ApprovalOutcome::AllowedOnce,
+                NOW,
+                later
+            )
+            .is_err()
+    );
+    // A rejection in the conversation is journaled as the person's too.
+    drop(broker.reject(&settings.label, NOW));
+    let Begun::Window(open) = begin(&broker, tool_request("p3", NOW), NOW) else {
+        panic!("an engine request needs the person")
+    };
+    assert!(broker.show_in_chat(&open.label, Instant::now()));
+    broker
+        .decide_in_chat("p3", ApprovalOutcome::Rejected, NOW, Instant::now())
+        .unwrap();
+    let last = broker.audit_log().pop().unwrap();
+    assert_eq!(
+        (last.who, last.via, last.outcome.as_str()),
+        ("human", "chat", "rejected")
+    );
 }

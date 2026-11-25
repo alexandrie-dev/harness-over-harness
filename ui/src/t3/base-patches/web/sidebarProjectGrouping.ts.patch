@@ -1,0 +1,5 @@
+--- a/web/sidebarProjectGrouping.ts
++++ b/web/sidebarProjectGrouping.ts
+@@ -204 +204 @@
+-      displayName: group.label,
++      displayName: members.some((member) => member.id === "hoh-project") ? "Chats" : group.label,

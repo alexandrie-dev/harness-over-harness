@@ -1,0 +1,11 @@
+--- a/web/components/chat/turnDetailAnnouncement.ts
++++ b/web/components/chat/turnDetailAnnouncement.ts
+@@ -5,0 +6 @@
++import { APP_BASE_NAME } from "../../branding";
+@@ -189 +190,2 @@
+-const MESSAGE_AUTHOR = "T3 Code";
++// HoH (ui/T3-MAP.md): подпись автора для экранного чтеца — имя продукта окна.
++const MESSAGE_AUTHOR = APP_BASE_NAME;
+@@ -226 +228 @@
+-          : m(msg("{text} More in the thread.", { text: markdownPlainText(cut) }));
++          : m(msg("{text} More in the chat.", { text: markdownPlainText(cut) }));

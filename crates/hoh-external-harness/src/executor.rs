@@ -12,7 +12,7 @@ use hoh_agent::{
     bound_executor as bound_harness, stored_executor_binding,
 };
 use hoh_destructive_classifier::DestructiveClassifier;
-use hoh_error::BoxError;
+use hoh_error::{BoxError, SharedError};
 use hoh_kernel::{Context, Disposer, Service, Undo};
 use hoh_scope::{CreateScopeOptions, Scope, ScopeKey, create_scope};
 use hoh_session::{
@@ -57,7 +57,7 @@ pub(crate) struct Shared {
     pub questions: Service<UserQuestions>,
     pub classifier: Service<DestructiveClassifier>,
     pub config: Arc<Config>,
-    /// The user's choices in the window (the access mode).
+    /// The user's choices in the window (the access mode, the effort of each conversation).
     pub choices: Arc<Choices>,
     /// How each conversation's native session was started, while it runs; the one started last
     /// is the last entry. One entry per conversation: another chat's start does not replace it.
@@ -67,14 +67,30 @@ pub(crate) struct Shared {
 /// The access mode and command-line switches a native session was started with.
 pub(crate) struct Launched {
     pub access: AccessMode,
+    pub interaction_mode: crate::InteractionMode,
     pub flags: Vec<String>,
     pub session: Weak<dyn HarnessSession>,
+}
+
+impl Launched {
+    fn visible_access(&self) -> AccessMode {
+        if self.interaction_mode == crate::InteractionMode::Plan {
+            AccessMode::Confirm
+        } else {
+            self.access
+        }
+    }
 }
 
 impl Shared {
     /// The access mode the user chose for this harness.
     pub(crate) fn access(&self) -> AccessMode {
         self.choices.access(&self.name)
+    }
+
+    /// The access selected for one conversation, or this harness's legacy default.
+    pub(crate) fn access_for(&self, session: &str) -> AccessMode {
+        self.choices.access_for(&self.name, session)
     }
 
     /// The mode and switches of the running native session started last, if it still runs.
@@ -84,7 +100,7 @@ impl Shared {
             .rev()
             .map(|(_, launched)| launched)
             .find(|launched| launched.session.strong_count() > 0)
-            .map(|launched| (launched.access, launched.flags.clone()))
+            .map(|launched| (launched.visible_access(), launched.flags.clone()))
     }
 
     /// The mode and switches of the native session of conversation `session`, if it still runs.
@@ -92,7 +108,19 @@ impl Shared {
         lock(&self.launched)
             .iter()
             .find(|(id, launched)| id == session && launched.session.strong_count() > 0)
-            .map(|(_, launched)| (launched.access, launched.flags.clone()))
+            .map(|(_, launched)| (launched.visible_access(), launched.flags.clone()))
+    }
+
+    pub(crate) fn running_mode_of(&self, session: &str) -> Option<(AccessMode, bool)> {
+        lock(&self.launched)
+            .iter()
+            .find(|(id, launched)| id == session && launched.session.strong_count() > 0)
+            .map(|(_, launched)| {
+                (
+                    launched.visible_access(),
+                    launched.interaction_mode == crate::InteractionMode::Plan,
+                )
+            })
     }
 
     /// Conversation `session` has worked in its folder: its native session is recorded, or its
@@ -130,12 +158,58 @@ impl Shared {
         ended
     }
 
+    /// Retire only `session` when its live process was started in another mode and it is idle.
+    pub(crate) fn retire_idle_session(
+        &self,
+        session_id: &str,
+        mode: AccessMode,
+        idle: bool,
+    ) -> Vec<Arc<dyn HarnessSession>> {
+        let mut all = lock(&self.launched);
+        let mut ended = Vec::new();
+        all.retain(|(id, launched)| {
+            let Some(session) = launched.session.upgrade() else {
+                return false;
+            };
+            if id != session_id || launched.access == mode || !idle {
+                return true;
+            }
+            ended.push(session);
+            false
+        });
+        ended
+    }
+
+    /// Forget and return the live processes belonging to these conversations.
+    pub(crate) fn retire_sessions(&self, ids: &[String]) -> Vec<Arc<dyn HarnessSession>> {
+        let mut all = lock(&self.launched);
+        let mut ended = Vec::new();
+        all.retain(|(id, launched)| {
+            let Some(session) = launched.session.upgrade() else {
+                return false;
+            };
+            if !ids.contains(id) {
+                return true;
+            }
+            ended.push(session);
+            false
+        });
+        ended
+    }
+
     /// A native session of conversation `session` started: it replaces that conversation's
     /// earlier entry (and any entry whose process is gone), and is the one started last.
     pub(crate) fn record_launch(&self, session: &str, launched: Launched) {
         let mut all = lock(&self.launched);
         all.retain(|(id, old)| id != session && old.session.strong_count() > 0);
         all.push((session.to_owned(), launched));
+    }
+
+    /// Forget only this particular process, even if another launch replaced it.
+    pub(crate) fn forget_launch(&self, session: &str, control: &Arc<dyn HarnessSession>) {
+        let weak = Arc::downgrade(control);
+        lock(&self.launched)
+            .retain(|(id, entry)| id != session || !Weak::ptr_eq(&entry.session, &weak));
     }
 }
 
@@ -512,9 +586,9 @@ async fn initialize(
                 format!("externalHarness.lifecycle({})", dyn_agent.id()),
                 move |undos| -> Result<(), BoxError> {
                     undos.push(Undo::future(move || async move {
-                        follow.teardown().await;
+                        let result = follow.teardown().await;
                         follow.leave().await;
-                        Ok(())
+                        result.map_err(|e| Box::new(e) as BoxError)
                     }))?;
                     Ok(())
                 },
@@ -529,14 +603,11 @@ async fn initialize(
             let handle_lifecycle = lifecycle.clone();
             Ok(AgentHandle::new(dyn_agent, move || {
                 let lifecycle = handle_lifecycle.clone();
-                Box::pin(async move {
-                    lifecycle.dispose().await;
-                    Ok(())
-                })
+                Box::pin(async move { lifecycle.dispose().await })
             }))
         }
         Err(error) => {
-            lifecycle.dispose().await;
+            let _ = lifecycle.dispose().await;
             Err(error)
         }
     }
@@ -551,18 +622,18 @@ struct Lifecycle {
     detach_agent: Mutex<Option<AgentDetach>>,
     driver: Mutex<Option<Disposer>>,
     follows: Mutex<Vec<Disposer>>,
-    done: OnceCell<()>,
+    done: OnceCell<Result<(), SharedError>>,
 }
 
 impl Lifecycle {
     /// Stop the turn, the driver and the harness process, unwind the scope, close the write
     /// handle, leave the registries. Memoized: every owner awaits the same teardown.
-    async fn teardown(self: &Arc<Self>) {
+    async fn teardown(self: &Arc<Self>) -> Result<(), SharedError> {
         let this = self.clone();
-        self.done.get_or_init(|| this.run_teardown()).await;
+        self.done.get_or_init(|| this.run_teardown()).await.clone()
     }
 
-    async fn run_teardown(self: Arc<Self>) {
+    async fn run_teardown(self: Arc<Self>) -> Result<(), SharedError> {
         // No turn starts from here on, even from input queued before.
         self.agent.close();
         let driver = lock(&self.driver).take();
@@ -575,15 +646,11 @@ impl Lifecycle {
             control.terminate(grace).await;
         }
         self.scope.dispose().await;
-        if let Some(stored) = &self.stored
-            && let Err(error) = stored.handle.close().await
-        {
-            self.agent
-                .shared
-                .ctx
-                .logger()
-                .warn(format_args!("closing the session log failed: {error}"));
-        }
+        let close = if let Some(stored) = &self.stored {
+            stored.handle.close().await.map_err(SharedError::new)
+        } else {
+            Ok(())
+        };
         let detach = lock(&self.detach_agent).take();
         if let Some(detach) = detach {
             detach.detach();
@@ -592,12 +659,14 @@ impl Lifecycle {
         if let Some(detach) = detach {
             detach.detach();
         }
+        close
     }
 
     /// Teardown, then leave the owners' effects.
-    async fn dispose(self: &Arc<Self>) {
-        self.teardown().await;
+    async fn dispose(self: &Arc<Self>) -> Result<(), BoxError> {
+        let result = self.teardown().await;
         self.leave().await;
+        result.map_err(|error| Box::new(error) as BoxError)
     }
 
     /// Leave the owners' effects. The one being undone right now returns at once (a repeat

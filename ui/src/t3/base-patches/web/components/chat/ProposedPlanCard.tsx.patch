@@ -1,0 +1,5 @@
+--- a/web/components/chat/ProposedPlanCard.tsx
++++ b/web/components/chat/ProposedPlanCard.tsx
+@@ -113 +113 @@
+-          description: gt("This thread does not have a workspace path to save into."),
++          description: gt("This chat does not have a workspace path to save into."),

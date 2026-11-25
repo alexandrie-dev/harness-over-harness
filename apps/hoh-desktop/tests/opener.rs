@@ -1,4 +1,4 @@
-use hoh_desktop::opener::{Kind, check_file, check_url, resolve};
+use hoh_desktop::opener::{Kind, check_file, check_url, clicked_link, resolve};
 use std::fs;
 use std::os::unix::fs::symlink;
 use std::path::PathBuf;
@@ -112,4 +112,31 @@ fn a_bare_name_is_found_below_the_folder_only_when_it_is_unique() {
     assert!(check_file(&folder, "secret.txt").is_err());
     assert!(check_file(&folder, "nothing.txt").is_err());
     fs::remove_dir_all(base).unwrap();
+}
+
+#[test]
+fn a_link_opens_in_the_system_browser_only_after_a_click_and_only_http() {
+    let clicked = |url: &str| clicked_link(url, true);
+    assert_eq!(
+        clicked("https://example.com/docs"),
+        Some("https://example.com/docs".into())
+    );
+    assert_eq!(
+        clicked("http://example.com"),
+        Some("http://example.com".into())
+    );
+    // a script on its own (no click, no key press) opens nothing, even a valid address
+    assert_eq!(clicked_link("https://example.com/docs", false), None);
+    for bad in [
+        "file:///etc/passwd",
+        "javascript:alert(1)",
+        "data:text/html,x",
+        "tauri://localhost/index.html",
+        "about:blank",
+        "https://user:secret@example.com/",
+        "https://example.com/a b",
+        "",
+    ] {
+        assert_eq!(clicked(bad), None, "{bad}");
+    }
 }

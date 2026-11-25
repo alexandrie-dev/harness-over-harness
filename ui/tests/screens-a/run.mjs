@@ -1,5 +1,6 @@
 // Проверки первого запуска и окна подтверждения (вариант A) в headless Chromium.
-// Страницы — из ui/dist (firstrun.html, approval.html) или из HOH_FIRSTRUN_PAGE / HOH_APPROVAL_PAGE.
+// Страницы — из ui/dist (firstrun.html, approval.html) или из HOH_FIRSTRUN_PAGE / HOH_APPROVAL_PAGE. firstrun.html окну не
+// нужна и собирается только для проверок: `vite build --mode probe` (ревью 222000).
 // Движок: если задан HOH_WINDOW_STUB — настоящая заглушка hoh-window-stub по stdio, иначе подмена в этом файле.
 // Снимки 1440×900 — в ui/test-results/screens-a/ (design/ окно не меняет). Ничего не ходит в сеть: всё кроме file:// блокируется.
 import { chromium } from 'playwright-core';
@@ -503,19 +504,19 @@ if (askingStub) {
   // правка 1: собственное действие человека (идентификатор native-preflight-…) и просьба Помощника — разные окна
   const own = request({ approvalId: 'native-preflight-1', humanText: 'Разрешить проверку модели «local» у сервиса «http://localhost:8000/v1»?', reason: undefined, risk: 'high' });
   const { page, context } = await openApproval(own);
-  await page.getByText('Подтвердите своё действие').waitFor();
+  await page.getByText('Confirm your action').waitFor();
   const text = await page.locator('body').innerText();
-  for (const word of ['Высокий риск', 'опасно', 'Помощник просит', 'Помощник не объяснил', 'Объяснение Помощника', 'провайдер']) assert(!text.includes(word), `в окне собственного действия есть «${word}»`);
-  await page.getByText('Это вы меняете настройки. Окно нужно, чтобы никто не поменял их за вас.').waitFor();
+  for (const word of ['High risk', 'опасно', 'Помощник просит', 'Помощник не объяснил', 'Assistant explanation', 'провайдер']) assert(!text.includes(word), `в окне собственного действия есть «${word}»`);
+  await page.getByText('You are changing these settings. This window prevents someone else from changing them for you.').waitFor();
   await page.screenshot({ path: join(t3shots, 'ux-approval-own-1440.png'), animations: 'disabled' });
   await page.waitForTimeout(1200);
-  await page.getByRole('button', { name: 'Отклонить' }).click();
-  await page.getByText('Отклонено').waitFor();
+  await page.getByRole('button', { name: 'Decline' }).click();
+  await page.getByText('Declined').waitFor();
   assert.doesNotMatch(await page.locator('body').innerText(), /Помощник получил отказ/, 'отказ в собственном действии не приписан Помощнику');
   await context.close();
   const asked = await openApproval(request());
-  await asked.page.getByText('Помощник просит разрешение').waitFor();
-  await asked.page.getByText('Высокий риск').waitFor();
+  await asked.page.getByText('The assistant is requesting permission').waitFor();
+  await asked.page.getByText('High risk').waitFor();
   await asked.context.close();
   ok('окно защиты на собственное действие: без «Высокий риск», «опасно», «Помощник просит»; просьба Помощника осталась как была');
 }
@@ -544,21 +545,21 @@ async function openApproval(view, viewport, options = {}) {
 {
   const { page, context, decisions, errors } = await openApproval(request());
   await page.getByRole('alertdialog').waitFor();
-  const reject = page.getByRole('button', { name: 'Отклонить' });
-  const allow = page.getByRole('button', { name: 'Разрешить один раз' });
-  assert.equal(await page.evaluate(() => document.activeElement?.textContent), 'Отклонить', '«Отклонить» в фокусе');
+  const reject = page.getByRole('button', { name: 'Decline' });
+  const allow = page.getByRole('button', { name: 'Allow once' });
+  assert.equal(await page.evaluate(() => document.activeElement?.textContent), 'Decline', '«Отклонить» в фокусе');
   assert(await allow.isDisabled(), '«Разрешить» закрыта в первую секунду');
-  await page.getByText('Защита HoH').waitFor();
-  await page.getByText('Почему это опасно').waitFor();
-  await page.getByText('Файлы не попадут в корзину. Восстановить их будет нельзя.').waitFor();
-  await page.getByText('Объяснение Помощника').waitFor();
+  await page.getByText('HoH confirmation').waitFor();
+  await page.getByText('Why this could be risky').waitFor();
+  await page.getByText('The files will not go to the trash and cannot be restored.').waitFor();
+  await page.getByText('Assistant explanation').waitFor();
   await page.getByText(/Эти файлы старше года/).waitFor();
   await page.getByText('Выполнить команду в папке Документы/HoH: удалить 3 старых файла').waitFor();
   await page.getByText('черновик.docx').waitFor();
-  await page.getByText(/Чат не может его открыть/).waitFor();
+  await page.getByText(/The conversation cannot open or control it/).waitFor();
   // правка 16: до последней минуты окно не торопит
   assert.equal(await page.getByTestId('timer').count(), 0, 'счёта времени до последней минуты нет');
-  assert.equal(await page.locator('[data-calm]').innerText(), 'Можно не спешить. Если не ответить, действие отклонится само.');
+  assert.equal(await page.locator('[data-calm]').innerText(), 'Take your time. The action will be declined if you do not answer.');
   assert(!(await page.locator('body').innerText()).includes('Ответьте за'));
   await page.waitForTimeout(1200);
   assert(await allow.isEnabled(), 'через секунду «Разрешить» доступна');
@@ -577,7 +578,7 @@ async function openApproval(view, viewport, options = {}) {
   }
 
   await page.keyboard.press('Enter');
-  await page.getByText('Отклонено').waitFor();
+  await page.getByText('Declined').waitFor();
   assert.deepEqual(decisions, [{ id: 'approval-1', outcome: 'rejected' }]);
   await page.keyboard.press('Escape');
   await reject.count();
@@ -590,10 +591,10 @@ async function openApproval(view, viewport, options = {}) {
 {
   const { page, context, decisions } = await openApproval(request({ risk: 'medium', reason: undefined }));
   await page.getByRole('alertdialog').waitFor();
-  await page.getByText('Помощник не объяснил, зачем ему это нужно.').waitFor();
+  await page.getByText('The assistant did not explain why this is needed.').waitFor();
   await page.waitForTimeout(1200);
-  await page.getByRole('button', { name: 'Разрешить один раз' }).click();
-  await page.getByText('Разрешено один раз').waitFor();
+  await page.getByRole('button', { name: 'Allow once' }).click();
+  await page.getByText('Allowed once').waitFor();
   assert.deepEqual(decisions, [{ id: 'approval-1', outcome: 'allowed-once' }]);
   await context.close();
   ok('«Разрешить один раз» отправляет allowed-once ровно один раз; пустое объяснение показано честно');
@@ -603,7 +604,7 @@ async function openApproval(view, viewport, options = {}) {
   const { page, context, decisions } = await openApproval(request());
   await page.getByRole('alertdialog').waitFor();
   await page.keyboard.press('Escape');
-  await page.getByText('Отклонено').waitFor();
+  await page.getByText('Declined').waitFor();
   assert.deepEqual(decisions, [{ id: 'approval-1', outcome: 'rejected' }]);
   await context.close();
   ok('Esc = отказ');
@@ -621,9 +622,9 @@ async function openApproval(view, viewport, options = {}) {
 
 {
   const { page, context, decisions } = await openApproval(request({ expiresAt: Date.now() + 2000 }));
-  await page.getByText('Время вышло, действие отклонено').waitFor({ timeout: 6000 });
+  await page.getByText('Confirmation expired; the action was declined').waitFor({ timeout: 6000 });
   assert.deepEqual(decisions, [], 'срок вышел: ответ за пользователя окно не шлёт, это делает движок');
-  assert.equal(await page.getByRole('button', { name: 'Разрешить один раз' }).count(), 0, 'после срока разрешить нельзя');
+  assert.equal(await page.getByRole('button', { name: 'Allow once' }).count(), 0, 'после срока разрешить нельзя');
   await context.close();
   ok('срок вышел: кнопок нет, окно не отвечает за пользователя');
 }
@@ -644,7 +645,7 @@ async function openApproval(view, viewport, options = {}) {
   const main = await page.locator('.ap-body').innerText();
   assert(main.includes('Нужно убрать старые файлы.'), 'объяснение на виду');
   assert(!main.includes('rm -f'), 'сырая команда не в основном тексте');
-  await page.getByText('Подробности').click();
+  await page.getByText('Details').click();
   await page.getByText('Команда: rm -f old-1.txt old-2.txt').waitFor();
   await context.close();
   ok('сырая команда только под «Подробностями», основной текст — объяснение');
@@ -658,9 +659,9 @@ async function openApproval(view, viewport, options = {}) {
   const body = await page.locator('body').innerText();
   assert.equal(await page.locator('.ap-what').innerText(), 'Claude просит выполнить команду', 'вместо «Исполнитель «claude»» — Claude');
   assert(!/исполнител/i.test(body), 'слова «исполнитель» в окне защиты нет');
-  assert.equal(await page.locator('.ap-risk').innerText(), 'Риск не оценён');
+  assert.equal(await page.locator('.ap-risk').innerText(), 'Risk not assessed');
   assert.equal(await page.locator('.ap-risk').getAttribute('data-risk'), 'unassessed');
-  assert(!body.includes('Высокий риск'), 'не красный «Высокий риск»');
+  assert(!body.includes('High risk'), 'не красный «Высокий риск»');
   assert.equal(await page.locator('.ap-why').getAttribute('data-risk'), 'unassessed');
   assert.equal(await page.locator('.ap-said').count(), 0, 'объяснение равно заголовку: блока нет');
   assert.equal(await page.locator('.ap-details').getAttribute('open'), '', '«Подробности» раскрыты');
@@ -684,12 +685,12 @@ async function openApproval(view, viewport, options = {}) {
   await next.context.close();
   const old = await openApproval(request({ humanText: 'Изменить файл отчёт.docx', reason: 'Поправить цифры.' }));
   await old.page.getByRole('alertdialog').waitFor();
-  await old.page.getByText('Содержимое файла изменится. Прежний вариант может быть потерян.').waitFor();
+  await old.page.getByText('The file content will change. The previous version may be lost.').waitFor();
   assert.equal(await old.page.locator('.ap-details').count(), 0);
   await old.context.close();
   const fresh = await openApproval(request({ humanText: 'Записать файл новый.docx', reason: 'Нужен новый файл.' }));
   await fresh.page.getByRole('alertdialog').waitFor();
-  assert(!(await fresh.page.locator('.ap-why').innerText()).includes('Прежний вариант может быть потерян'));
+  assert(!(await fresh.page.locator('.ap-why').innerText()).includes('The previous version may be lost'));
   await fresh.context.close();
   ok('пустое объяснение Claude скрыто, «Прежний вариант» — только у существующего файла');
 }
@@ -740,7 +741,7 @@ async function openApproval(view, viewport, options = {}) {
 
 {
   const { page, context, decisions } = await openApproval(request({ expiresAt: Date.now() - 1 }));
-  await page.getByText('Время вышло, действие отклонено').waitFor();
+  await page.getByText('Confirmation expired; the action was declined').waitFor();
   assert.equal(await page.locator('.ap-actions button').count(), 0);
   assert.equal(await page.evaluate(() => window.__approvalActionSeen), false, 'просроченные кнопки не появлялись ни на миг');
   await page.keyboard.press('Escape'); assert.deepEqual(decisions, []);
@@ -754,19 +755,19 @@ async function openApproval(view, viewport, options = {}) {
     window.__approvalClock.value = deadline;
     document.querySelector('.ap-risky').click();
   }, now + 2000);
-  await page.getByText('Время вышло, действие отклонено').waitFor(); assert.deepEqual(decisions, []);
+  await page.getByText('Confirmation expired; the action was declined').waitFor(); assert.deepEqual(decisions, []);
   await context.close(); ok('decide сверяет время непосредственно перед отправкой, между тиками');
 }
 for (const event of ['Escape', 'pagehide']) {
   let fail = true;
   const { page, context, decisions } = await openApproval(request(), undefined, { decide: async () => {
-    if (fail) throw new Error('Передача не удалась');
+    if (fail) throw new Error('Could not send your answer.');
   } });
-  await page.waitForTimeout(1200); await page.getByRole('button', { name: 'Разрешить один раз' }).click();
-  await page.getByRole('alert').getByText('Передача не удалась', { exact: false }).waitFor(); fail = false;
+  await page.waitForTimeout(1200); await page.getByRole('button', { name: 'Allow once' }).click();
+  await page.getByRole('alert').getByText('Could not send your answer.', { exact: false }).waitFor(); fail = false;
   if (event === 'Escape') await page.keyboard.press('Escape');
   else await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent('pagehide')));
-  await page.getByRole('status').getByText('Отклонено').waitFor();
+  await page.getByRole('status').getByText('Declined').waitFor();
   assert.deepEqual(decisions.map(value => value.outcome), ['allowed-once', 'rejected']);
   await context.close(); ok('после ошибки отправки ' + event + ' повторяет отказ');
 }

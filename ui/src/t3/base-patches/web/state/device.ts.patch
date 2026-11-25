@@ -1,0 +1,23 @@
+--- a/web/state/device.ts
++++ b/web/state/device.ts
+@@ -18 +17,0 @@
+-import { useMessages } from "gt-react";
+@@ -25 +24 @@
+-import { formatEnvironmentQueryError, useEnvironmentQuery } from "./query";
++import { formatEnvironmentQueryError } from "./query";
+@@ -47,11 +46,4 @@
+-  const resolve = useMessages();
+-  const query = useEnvironmentQuery(
+-    environmentId === null ? null : deviceEnvironment.state({ environmentId, input: {} }),
+-    resolve,
+-  );
+-  return {
+-    state: query.data ?? EMPTY_DEVICE_STATE,
+-    loaded: query.data !== null,
+-    error: query.error,
+-    refresh: query.refresh,
+-  };
++  // HoH has no device service. Report the disabled state immediately instead of
++  // waiting forever for subscribeDeviceState, which the host does not implement.
++  void environmentId;
++  return { state: EMPTY_DEVICE_STATE, loaded: true, error: null, refresh: () => {} };

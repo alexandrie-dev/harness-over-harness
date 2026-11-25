@@ -1,0 +1,17 @@
+--- a/web/components/settings/LabsSettingsPanel.tsx
++++ b/web/components/settings/LabsSettingsPanel.tsx
+@@ -44 +44 @@
+-        "Group sidebar threads into project folders. Pinned threads stay on top, and Snoozed and Settled stay below the folders.",
++        "Group sidebar chats into project folders. Pinned chats stay on top, and Snoozed and Settled stay below the folders.",
+@@ -73 +73 @@
+-        "Show folder threads on two lines: the title, then the branch, pull request, and agent.",
++        "Show folder chats on two lines: the title, then the branch, pull request, and agent.",
+@@ -100 +100 @@
+-        "Share a thread with a guest who watches it live in a browser and sends messages you approve. Sign in to T3 Connect to use guest links.",
++        "Share a chat with a guest who watches it live in a browser and sends messages you approve. Sign in to T3 Connect to use guest links.",
+@@ -135 +135 @@
+-          Share a thread with a guest who watches it live in a browser and sends messages you
++          Share a chat with a guest who watches it live in a browser and sends messages you
+@@ -200 +200 @@
+-        "Show a predicted next message in the empty composer after a Claude or Codex turn. Tab uses it. Each is an extra cached request on your plan. Needs Codex 0.165+. Claude threads update on restart.",
++        "Show a predicted next message in the empty composer after a Claude or Codex turn. Tab uses it. Each is an extra cached request on your plan. Needs Codex 0.165+. Claude chats update on restart.",

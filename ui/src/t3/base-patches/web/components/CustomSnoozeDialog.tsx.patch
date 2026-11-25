@@ -1,0 +1,5 @@
+--- a/web/components/CustomSnoozeDialog.tsx
++++ b/web/components/CustomSnoozeDialog.tsx
+@@ -112 +112 @@
+-              <T>Choose when snoozed threads return to your inbox.</T>
++              <T>Choose when snoozed chats return to your inbox.</T>

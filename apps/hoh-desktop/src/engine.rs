@@ -110,7 +110,12 @@ impl Connector for ProcessConfig {
         let mut command = Command::new(&self.path);
         command
             .args(&self.args)
-            .envs(self.env.iter().map(|(k, v)| (k, v)))
+            .envs(
+                self.env
+                    .iter()
+                    .filter(|(k, _)| !k.starts_with("TELEGRAM_"))
+                    .map(|(k, v)| (k, v)),
+            )
             .current_dir(&self.cwd)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -123,6 +128,11 @@ impl Connector for ProcessConfig {
                     .map_err(|_| "Не удалось открыть журнал ошибок Помощника".to_owned())?,
                 None => Stdio::null(),
             });
+        for (name, _) in std::env::vars_os() {
+            if name.to_string_lossy().starts_with("TELEGRAM_") {
+                command.env_remove(name);
+            }
+        }
         #[cfg(unix)]
         {
             use std::os::unix::process::CommandExt;
@@ -393,8 +403,7 @@ fn supervise(
                     on_send,
                 }) => {
                     if !ready {
-                        let _ =
-                            reply.send(Err("Помощник ещё подключается. Повторите запрос".into()));
+                        let _ = reply.send(Err(crate::errors::CONNECTING.into()));
                         continue;
                     }
                     if pending.len() >= 64 {
@@ -451,6 +460,14 @@ fn supervise(
                                 // pick its fallback; error text and data can hold secrets.
                                 Err(if error.code == Some(-32601) {
                                     METHOD_UNAVAILABLE.into()
+                                } else if error.code == Some(-32021) {
+                                    crate::errors::FOLDER_CHANGED.into()
+                                } else if error_code(&error) == Some("TRUST_REVOKE_BUSY") {
+                                    crate::errors::TRUST_REVOKE_BUSY.into()
+                                } else if p.method == "session/delete"
+                                    && error_code(&error) == Some("CHAT_DELETE_BUSY")
+                                {
+                                    crate::errors::CHAT_DELETE_BUSY.into()
                                 } else if error_code(&error) == Some("EXECUTOR_FOLDER_FIXED") {
                                     // A closed list of codes may pass on (no text): the window explains this one.
                                     crate::errors::FOLDER_FIXED.into()
@@ -515,7 +532,7 @@ fn supervise(
         for (_, p) in pending.drain() {
             let _ = p
                 .reply
-                .send(Err("Связь с Помощником прервана. Запрос не повторён".into()));
+                .send(Err(crate::errors::CONNECTION_INTERRUPTED.into()));
         }
         transport.close();
         sink(HostEvent::Status(
@@ -532,10 +549,54 @@ fn drain_backoff(rx: &mpsc::Receiver<Message>) -> bool {
         match rx.recv_timeout(wait) {
             Ok(Message::Stop) | Err(mpsc::RecvTimeoutError::Disconnected) => return true,
             Ok(Message::Request { reply, .. }) => {
-                let _ = reply.send(Err("Помощник переподключается".into()));
+                let _ = reply.send(Err(crate::errors::RECONNECTING.into()));
             }
             _ => {}
         }
     }
     false
+}
+
+#[cfg(test)]
+mod telegram_environment_tests {
+    use super::*;
+
+    #[test]
+    fn engine_process_does_not_receive_telegram_environment() {
+        let directory = std::env::temp_dir().join(format!("hoh-engine-env-{}", std::process::id()));
+        std::fs::create_dir_all(&directory).unwrap();
+        let output = directory.join("env");
+        let config = ProcessConfig {
+            path: "/bin/sh".into(),
+            args: vec![
+                "-c".into(),
+                "env > \"$1\"".into(),
+                "sh".into(),
+                output.display().to_string(),
+            ],
+            env: vec![
+                ("TELEGRAM_U4_EXPLICIT".into(), "fixture".into()),
+                ("HOH_U4_ALLOWED".into(), "yes".into()),
+            ],
+            stderr_file: None,
+            cwd: directory.clone(),
+            provider: "mock".into(),
+            model: "mock".into(),
+        };
+        let (sender, _receiver) = mpsc::channel();
+        let mut process = config.connect(0, sender).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !process.exited() && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(10));
+        }
+        process.close();
+        let environment = std::fs::read_to_string(output).unwrap();
+        assert!(environment.lines().any(|line| line == "HOH_U4_ALLOWED=yes"));
+        assert!(
+            !environment
+                .lines()
+                .any(|line| line.starts_with("TELEGRAM_"))
+        );
+        std::fs::remove_dir_all(directory).unwrap();
+    }
 }

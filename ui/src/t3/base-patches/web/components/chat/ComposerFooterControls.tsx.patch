@@ -1,0 +1,45 @@
+--- a/web/components/chat/ComposerFooterControls.tsx
++++ b/web/components/chat/ComposerFooterControls.tsx
+@@ -22,0 +23,5 @@
++  currentRuntimeMode?: RuntimeMode | undefined;
++  planAvailable?: boolean;
++  planActive?: boolean;
++  currentPlanActive?: boolean;
++  onPlanToggle?: () => void;
+@@ -38,0 +44,2 @@
++  if (props.runtimeMode === "unknown") return <span data-composer-access-unknown>Unknown</span>;
++  if (props.runtimeModeOptions.length === 0) return null;
+@@ -41,2 +48,10 @@
+-    resolveRuntimeModeOption("approval-required", messages);
+-  const RuntimeModeIcon = runtimeModeOption.icon;
++    resolveRuntimeModeOption(props.runtimeMode, messages);
++  const currentModeOption = props.currentRuntimeMode
++    ? resolveRuntimeModeOption(props.currentRuntimeMode, messages)
++    : runtimeModeOption;
++  const currentLabel = props.currentPlanActive ? "Plan" : currentModeOption.label;
++  const nextLabel = props.planActive ? "Plan" : runtimeModeOption.label;
++  const chipLabel = props.currentRuntimeMode && currentLabel !== nextLabel
++    ? `Current: ${currentLabel} · Next: ${nextLabel}`
++    : nextLabel;
++  const RuntimeModeIcon = currentModeOption.icon;
+@@ -45,2 +60,2 @@
+-    mode: runtimeModeOption.label,
+-    description: runtimeModeOption.description,
++    mode: chipLabel,
++    description: currentModeOption.description,
+@@ -67 +82 @@
+-                  aria-label={gt("Permissions: {mode}", { mode: runtimeModeOption.label })}
++                  aria-label={gt("Permissions: {mode}", { mode: chipLabel })}
+@@ -83 +98 @@
+-            {runtimeModeOption.label}
++            {chipLabel}
+@@ -88,0 +104 @@
++        {props.planAvailable ? <MenuPrimitive.Item onClick={props.onPlanToggle}>Plan {props.planActive ? "✓" : ""}</MenuPrimitive.Item> : null}
+@@ -92,0 +109 @@
++          onReselect={props.planActive ? props.onPlanToggle : undefined}
+@@ -110,0 +128 @@
++  onReselect?: (() => void) | undefined;
+@@ -120,0 +139 @@
++  if (props.runtimeModeOptions.length === 0) return null;
+@@ -157,0 +177 @@
++              onClick={option.mode === props.runtimeMode ? props.onReselect : undefined}

@@ -13,10 +13,15 @@ pub const REJECTED: &str = "Действие отклонено";
 pub const NOT_RECEIVED: &str = "Подтверждение не получено";
 /// The engine is still starting.
 pub const CONNECTING: &str = "Помощник ещё подключается";
+pub const RECONNECTING: &str = "Помощник переподключается";
+pub const CONNECTION_INTERRUPTED: &str = "Связь с Помощником прервана. Запрос не повторён";
 /// The engine refused the request (its own text is never passed on).
 pub const REFUSED: &str = "Помощник отклонил запрос";
 /// The engine refused to change the folder of a chat that runs through an executor (`EXECUTOR_FOLDER_FIXED`).
 pub const FOLDER_FIXED: &str = "executor-folder-fixed";
+pub const FOLDER_CHANGED: &str = "conversation-folder-changed";
+pub const TRUST_REVOKE_BUSY: &str = "trust-revoke-busy";
+pub const CHAT_DELETE_BUSY: &str = "chat-delete-busy";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct HostError {
@@ -30,9 +35,12 @@ pub fn host_error(message: String) -> HostError {
     let code = match message.as_str() {
         REJECTED => "rejected",
         NOT_RECEIVED => "expired",
-        CONNECTING => "connecting",
+        CONNECTING | RECONNECTING | CONNECTION_INTERRUPTED => "connecting",
         crate::engine::METHOD_UNAVAILABLE => "unavailable",
         FOLDER_FIXED => "folder-fixed",
+        FOLDER_CHANGED => "folder-changed",
+        TRUST_REVOKE_BUSY => "trust-revoke-busy",
+        CHAT_DELETE_BUSY => "chat-delete-busy",
         REFUSED => "refused",
         _ => "failed",
     };

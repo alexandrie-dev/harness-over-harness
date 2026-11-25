@@ -1,0 +1,8 @@
+--- a/contracts/mcpApps.ts
++++ b/contracts/mcpApps.ts
+@@ -83 +83 @@
+-        return "This thread's provider cannot run MCP app requests.";
++        return "This chat's provider cannot run MCP app requests.";
+@@ -85 +85 @@
+-        return "The app's thread is not running. Send a message in the thread that created it to use the app again.";
++        return "The app's chat is not running. Send a message in the chat that created it to use the app again.";

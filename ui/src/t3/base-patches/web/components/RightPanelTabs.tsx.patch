@@ -1,0 +1,20 @@
+--- a/web/components/RightPanelTabs.tsx
++++ b/web/components/RightPanelTabs.tsx
+@@ -184 +184 @@
+-  terminal: msg("Terminal surfaces are only available from a project thread."),
++  terminal: msg("Terminal surfaces are only available from a project chat."),
+@@ -186,4 +186,4 @@
+-  diff: msg("Diff is only available for server threads in Git repositories."),
+-  pullRequest: msg("This thread's branch has no pull request yet."),
+-  pullRequests: msg("This thread has no linked items."),
+-  device: msg("Devices are only available from a thread."),
++  diff: msg("Diff is only available for server chats in Git repositories."),
++  pullRequest: msg("This chat's branch has no pull request yet."),
++  pullRequests: msg("This chat has no linked items."),
++  device: msg("Devices are only available from a chat."),
+@@ -214 +214 @@
+-  device: msg("Available from a thread."),
++  device: msg("Available from a chat."),
+@@ -414 +414 @@
+-            description: msg("Ask a side question while this thread keeps working."),
++            description: msg("Ask a side question while this chat keeps working."),

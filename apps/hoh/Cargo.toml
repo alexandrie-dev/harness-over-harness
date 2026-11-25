@@ -14,6 +14,8 @@ workspace = true
 conformance-fixtures = ["dep:hoh-conformance"]
 
 [dependencies]
+hoh-plugin-creator = { path = "../../crates/hoh-plugin-creator" }
+hoh-authored-plugins = { path = "../../crates/hoh-authored-plugins" }
 hoh-loader = { path = "../../crates/hoh-loader" }
 hoh-kernel = { path = "../../crates/hoh-kernel" }
 hoh-commander = { path = "../../crates/hoh-commander" }
@@ -68,6 +70,7 @@ hoh-window-destructive-guard = { path = "../../crates/hoh-window-destructive-gua
 hoh-destructive-classifier = { path = "../../crates/hoh-destructive-classifier" }
 hoh-external-harness = { path = "../../crates/hoh-external-harness" }
 hoh-harness-claude = { path = "../../crates/hoh-harness-claude" }
+hoh-harness-codex = { path = "../../crates/hoh-harness-codex" }
 hoh-working-directory = { path = "../../crates/hoh-working-directory" }
 hoh-agent-default-model = { path = "../../crates/hoh-agent-default-model" }
 hoh-agent-instructions = { path = "../../crates/hoh-agent-instructions" }

@@ -1,0 +1,5 @@
+--- a/web/components/chat/useForceStopThread.ts
++++ b/web/components/chat/useForceStopThread.ts
+@@ -59 +59 @@
+-            "{others, plural, =0 {It is shared with other working threads. Stop those to free it.} one {It is shared with {others} working thread. Stop those to free it.} other {It is shared with {others} working threads. Stop those to free it.}}",
++            "{others, plural, =0 {It is shared with other working chats. Stop those to free it.} one {It is shared with {others} working chat. Stop those to free it.} other {It is shared with {others} working chats. Stop those to free it.}}",

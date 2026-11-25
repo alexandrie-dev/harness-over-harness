@@ -1,0 +1,5 @@
+--- a/web/state/use-orchestration-command.ts
++++ b/web/state/use-orchestration-command.ts
+@@ -21 +21 @@
+-  "This connection cannot change threads or projects.",
++  "This connection cannot change chats or projects.",

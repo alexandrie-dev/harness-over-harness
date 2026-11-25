@@ -1,0 +1,5 @@
+--- a/web/session-logic.ts
++++ b/web/session-logic.ts
+@@ -388 +388 @@
+-        label: resolve(msg("Created thread")),
++        label: resolve(msg("Created chat")),

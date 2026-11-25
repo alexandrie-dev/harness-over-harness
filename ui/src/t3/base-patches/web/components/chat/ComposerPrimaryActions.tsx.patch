@@ -1,0 +1,5 @@
+--- a/web/components/chat/ComposerPrimaryActions.tsx
++++ b/web/components/chat/ComposerPrimaryActions.tsx
+@@ -390 +390 @@
+-    ? gt("Resume thread")
++    ? gt("Resume chat")

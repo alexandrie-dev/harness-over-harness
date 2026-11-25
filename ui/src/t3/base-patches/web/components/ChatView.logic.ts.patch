@@ -1,0 +1,18 @@
+--- a/web/components/ChatView.logic.ts
++++ b/web/components/ChatView.logic.ts
+@@ -462 +462,2 @@
+-    title: resolve(msg("New thread")),
++    // HoH (ui/T3-MAP.md): видимый заголовок нового черновика совпадает с «New chat» в нашей боковой панели.
++    title: resolve(msg("New chat")),
+@@ -927 +928 @@
+-      msg("This thread does not support switching providers after it has started."),
++      msg("This chat does not support switching providers after it has started."),
+@@ -960 +961 @@
+-    throw new Error(m(msg("The thread has changed. Select a message to rewind again.")));
++    throw new Error(m(msg("The chat has changed. Select a message to rewind again.")));
+@@ -1002 +1003 @@
+-      finish(new Error(m(msg("Timed out waiting for the thread to rewind."))));
++      finish(new Error(m(msg("Timed out waiting for the chat to rewind."))));
+@@ -1314 +1315 @@
+-          msg("{reason} Start a new thread to use this model.", { reason: reason.description }),
++          msg("{reason} Start a new chat to use this model.", { reason: reason.description }),

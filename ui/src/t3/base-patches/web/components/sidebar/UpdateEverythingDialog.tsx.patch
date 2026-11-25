@@ -1,0 +1,11 @@
+--- a/web/components/sidebar/UpdateEverythingDialog.tsx
++++ b/web/components/sidebar/UpdateEverythingDialog.tsx
+@@ -257 +257 @@
+-                  "{count, plural, one {{count} running thread will be interrupted and can resume after the restart.} other {{count} running threads will be interrupted and can resume after the restart.}}",
++                  "{count, plural, one {{count} running chat will be interrupted and can resume after the restart.} other {{count} running chats will be interrupted and can resume after the restart.}}",
+@@ -262 +262 @@
+-                    "{count, plural, one {{count} running thread will be interrupted.} other {{count} running threads will be interrupted.}}",
++                    "{count, plural, one {{count} running chat will be interrupted.} other {{count} running chats will be interrupted.}}",
+@@ -266 +266 @@
+-                    "{count, plural, one {{count} running thread will be interrupted.} other {{count} running threads will be interrupted.}}",
++                    "{count, plural, one {{count} running chat will be interrupted.} other {{count} running chats will be interrupted.}}",

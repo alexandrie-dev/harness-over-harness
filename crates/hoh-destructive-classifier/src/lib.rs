@@ -1,5 +1,5 @@
 //! The shared classifier of dangerous actions: which shell commands and file changes can delete or
-//! overwrite an existing file, and the Russian question the window shows before such an action.
+//! overwrite an existing file, and the approval question the window shows before such an action.
 //! There is no dsh counterpart (see `PORT_NOTES.md`).
 //!
 //! The logic was moved here unchanged from `hoh-window-destructive-guard`, which keeps asking
@@ -19,7 +19,7 @@ use std::sync::Arc;
 use hoh_error::BoxError;
 use hoh_kernel::{Cfg, Context, NoConfig, Plugin};
 
-pub use classify::{GitKind, Risk, Source, assess, assess_blocking, assess_with};
+pub use classify::{GitKind, RestoreSource, Risk, Source, assess, assess_blocking, assess_with};
 pub use fs::{Fs, RealFs};
 pub use reach::{CommandReach, command_reach};
 pub use text::{Question, escalation_question, question};
@@ -107,7 +107,7 @@ impl DestructiveClassifierService {
 /// `details` of a file-change question: the paths, one per line, as the harness wrote them.
 fn file_list(paths: &[String]) -> String {
     const MAX_DETAILS_CHARS: usize = 2000;
-    let text = format!("Файлы:\n{}", paths.join("\n"));
+    let text = format!("Files:\n{}", paths.join("\n"));
     match text.char_indices().nth(MAX_DETAILS_CHARS) {
         Some((end, _)) => format!("{}…", &text[..end]),
         None => text,

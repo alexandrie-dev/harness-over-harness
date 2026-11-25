@@ -195,6 +195,9 @@ impl QueryActivity {
     pub fn id(&self) -> u64 {
         self.id
     }
+    pub(crate) fn session_id(&self) -> &hoh_session::SessionId {
+        self.agent.id()
+    }
     pub fn accept(self: &Arc<Self>, execution: CommandExecution) -> Result<(), BoxError> {
         let input = {
             let mut s = lock(&self.state);

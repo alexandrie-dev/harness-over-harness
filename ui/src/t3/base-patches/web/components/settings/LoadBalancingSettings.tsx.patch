@@ -1,0 +1,5 @@
+--- a/web/components/settings/LoadBalancingSettings.tsx
++++ b/web/components/settings/LoadBalancingSettings.tsx
+@@ -90 +90 @@
+-          New threads in shared projects start on the machine with the most free CPU and memory,
++          New chats in shared projects start on the machine with the most free CPU and memory,

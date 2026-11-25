@@ -1,0 +1,5 @@
+--- a/web/components/chat/ChildThreadApprovals.tsx
++++ b/web/components/chat/ChildThreadApprovals.tsx
+@@ -40 +40 @@
+-          <T>Provider process is gone. Interrupt or restart the child thread to respond.</T>
++          <T>Provider process is gone. Interrupt or restart the child chat to respond.</T>

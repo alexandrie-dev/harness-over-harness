@@ -1,0 +1,5 @@
+--- a/web/components/chat/ThreadDetailsCard.tsx
++++ b/web/components/chat/ThreadDetailsCard.tsx
+@@ -40 +40 @@
+-  const detailsArea = workspaceAreaProps("details", 3, gt("Thread details"));
++  const detailsArea = workspaceAreaProps("details", 3, gt("Chat details"));

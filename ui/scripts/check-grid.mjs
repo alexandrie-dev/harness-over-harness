@@ -1,0 +1,351 @@
+// Проверка внутренней сетки HoH (HOH-41, Golden Canon Grid). Внешнюю геометрию задаёт T3 и проверяет check-align.mjs.
+// Запускается в сборке после check-dist (scripts/build.sh). Две части.
+// 1) Исходники: grid/tokens.css — 20 дорожек ровно в сумме 64, линии g1..g21 и числа --gc-x/--gc-y совпадают с blocks.ts; в CSS окна
+//    положение блока (grid-column/-row/-area) задано только линиями g1..g21 (как check_design.py эталона); все линии карты блоков в 1..21.
+// 2) Собранное окно (dist/index.html, headless Chrome, подделка движка): window.hohGridCheck() проверяет containment
+//    HoH-карточек/папок внутри ближайшей T3/HoH lane; отдельные assertions проверяют внутренний ритм и поведение.
+import { chromium } from 'playwright-core';
+import { readdir, readFile, mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { dirname, extname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import assert from 'node:assert/strict';
+import { FakeEngine } from '../tests/chat/fake-engine.mjs';
+
+const UI = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+const ENTRY = join(UI, 'src/t3-entry');
+const DIST = join(UI, 'dist');
+const errors = [];
+const fail = (message) => errors.push(message);
+const fixtureDate = new Date();
+fixtureDate.setHours(12, 0, 0, 0);
+const FIXTURE_NOW = fixtureDate.getTime();
+
+// ---- 1. Исходники ----
+const tokens = await readFile(join(ENTRY, 'grid/tokens.css'), 'utf8');
+const blocksSource = await readFile(join(ENTRY, 'grid/blocks.ts'), 'utf8');
+const half = /const HALF = \[([^\]]+)\]/.exec(blocksSource)?.[1].split(',').map((item) => { const [a, b = '1'] = item.split('/').map(Number); return a / b; });
+if (!half || half.length !== 10) fail('blocks.ts: нет HALF из 10 дорожек');
+else {
+  const tracks = [...half, ...half.slice().reverse()];
+  const total = tracks.reduce((sum, track) => sum + track, 0);
+  if (Math.abs(total - 64) > 1e-9) fail(`дорожки в сумме ${total}, нужно 64`);
+  const declared = [...(/--gc-tracks:([^;]+);/.exec(tokens)?.[1] ?? '').matchAll(/\[g(\d+)\]\s*(?:minmax\(0,([\d.]+)fr\))?/g)];
+  if (declared.length !== 21) fail(`--gc-tracks: ${declared.length} линий вместо 21`);
+  declared.slice(0, 20).forEach((match, index) => {
+    if (Number(match[1]) !== index + 1) fail(`--gc-tracks: линия ${match[1]} стоит на месте g${index + 1}`);
+    if (Math.abs(Number(match[2]) - tracks[index]) > 1e-4) fail(`--gc-tracks: дорожка ${index + 1} = ${match[2]}fr, в blocks.ts ${tracks[index].toFixed(5)}`);
+  });
+  let sum = 0;
+  for (let n = 1; n <= 21; n++) {
+    const x = /--gc-x(\d+):\s*([\d.]+)vw/g; const y = new RegExp(`--gc-y${n}:\\s*calc\\(var\\(--gc-vh\\) \\* ([\\d.]+)\\)`);
+    const share = sum / 64;
+    const xv = [...tokens.matchAll(x)].find((m) => Number(m[1]) === n);
+    if (!xv || Math.abs(Number(xv[2]) - share * 100) > 1e-3) fail(`--gc-x${n}: ${xv?.[2]}vw, нужно ${(share * 100).toFixed(5)}vw`);
+    const yv = y.exec(tokens);
+    if (!yv || Math.abs(Number(yv[1]) - share) > 1e-4) fail(`--gc-y${n}: ${yv?.[1]}, нужно ${share.toFixed(5)}`);
+    if (n <= 20) sum += tracks[n - 1];
+  }
+}
+for (const [, a, b] of blocksSource.matchAll(/\[(\d+|null), (\d+|null)\]/g)) for (const n of [a, b]) if (n !== 'null' && (Number(n) < 1 || Number(n) > 21)) fail(`blocks.ts: линия g${n} вне g1..g21`);
+
+async function cssFiles(dir) {
+  return (await Promise.all((await readdir(dir, { withFileTypes: true })).map((entry) =>
+    entry.isDirectory() ? cssFiles(join(dir, entry.name)) : extname(entry.name) === '.css' ? [join(dir, entry.name)] : []))).flat();
+}
+for (const file of await cssFiles(ENTRY)) {
+  const text = (await readFile(file, 'utf8')).replace(/\/\*[\s\S]*?\*\//g, ' ');
+  for (const [, prop, value] of text.matchAll(/(grid-column|grid-row|grid-area)\s*:\s*([^;}]+)/g)) {
+    if (/gc-exception/.test(value)) continue;
+    const bare = value.replace(/var\(--gc-[^)]*\)/g, ' ').replace(/\s*!important\s*$/i, '');
+    for (const token of bare.split(/[\s/,]+/).filter(Boolean)) {
+      const line = /^g(\d+)$/i.exec(token);
+      if (line ? Number(line[1]) < 1 || Number(line[1]) > 21 : !/^(auto|span|subgrid|\d+)$/.test(token) || (/^\d+$/.test(token) && !/span\s*$/.test(bare.slice(0, bare.indexOf(token)))))
+        fail(`${file.slice(UI.length + 1)}: ${prop}: ${value.trim()} — только линии g1..g21`);
+    }
+  }
+}
+
+// ---- 2. Собранное окно ----
+const TYPES = { '.js': 'text/javascript', '.css': 'text/css', '.html': 'text/html', '.png': 'image/png', '.svg': 'image/svg+xml', '.woff2': 'font/woff2', '.json': 'application/json', '.wasm': 'application/wasm' };
+const ORIGIN = 'http://hoh-window.test';
+const pluginManifest = JSON.parse(await readFile(join(UI, '../plugins/turn-note/hoh-plugin.json'), 'utf8'));
+const SIZES = [[2560, 1440], [2000, 1137], [1920, 1080], [1440, 900], [1280, 720], [1100, 700], [1000, 625], [800, 550]]
+  .filter(([width, height]) => !process.env.HOH_GRID_SIZE || process.env.HOH_GRID_SIZE === `${width}x${height}`);
+function engineWith(busy) {
+  const engine = new FakeEngine();
+  const request = engine.request.bind(engine);
+  engine.request = (method, params) => method === 'hoh/plugins/list'
+    ? Promise.resolve([{ id: pluginManifest.id, manifest: pluginManifest, status: 'mounted', diagnostic: null, data: null }])
+    : request(method, params);
+  // Keep every synthetic event and the page's "now" on one local calendar day,
+  // even when the real check starts or finishes across midnight.
+  engine.clock = FIXTURE_NOW - 60 * 60_000;
+  engine.access = 'confirm';
+  engine.claude = { installed: true, version: '2.1.0', auth: 'authenticated', models: [{ id: 'opus', displayName: 'Claude Opus', isDefault: true }] };
+  if (!busy) return engine;
+  for (const [id, title] of [['w1', 'Prepare the weekly report'], ['w2', 'Fix the build'], ['w3', 'Review the release notes']]) {
+    const session = engine.open(id, title);
+    engine.append(session, 'turn/start', { turn: 1 });
+    engine.append(session, 'user/message', { id: `${id}-u`, source: { kind: 'user' }, content: [{ type: 'text', text: title }] });
+    engine.append(session, 'tool/call', { callId: `${id}-c`, turn: 1, name: 'Bash', arguments: { command: id === 'w2' ? 'printf "prepare report, verify every source, and save the complete result to the requested destination"' : 'ls' } });
+  }
+  for (const [id, title] of [['d1', 'Summarize the invoices'], ['d2', 'Check the final totals']]) {
+    const done = engine.open(id, title);
+    engine.append(done, 'turn/start', { turn: 1 });
+    engine.append(done, 'user/message', { id: `${id}-u`, source: { kind: 'user' }, content: [{ type: 'text', text: title }] });
+    engine.append(done, 'tool/call', { callId: `${id}-c`, turn: 1, name: 'Bash', arguments: { command: 'ls' } });
+    engine.append(done, 'tool/result', { turn: 1, message: { toolCallId: `${id}-c`, content: [{ type: 'text', text: 'ok' }] } });
+    engine.append(done, 'assistant/message', { message: { id: `${id}-a`, content: [{ type: 'text', text: 'ok' }] } });
+    engine.append(done, 'turn/end', { turn: 1, reason: { kind: 'completed' } });
+  }
+  return engine;
+}
+async function open(browser, engine, size) {
+  const context = await browser.newContext({ viewport: size, deviceScaleFactor: 1, locale: 'en-US', reducedMotion: 'reduce', colorScheme: 'dark' });
+  const page = await context.newPage();
+  page.setDefaultTimeout(20000);
+  await page.route('**/*', async (route) => {
+    const url = new URL(route.request().url());
+    if (url.origin !== ORIGIN) return route.abort();
+    const file = extname(url.pathname) ? url.pathname : '/index.html';
+    try { return await route.fulfill({ body: await readFile(join(DIST, file)), contentType: TYPES[extname(file)] ?? 'application/octet-stream' }); }
+    catch { return route.fulfill({ status: 404, body: '' }); }
+  });
+  await page.exposeBinding('__hohT3Request', (_, method, params) => engine.request(method, params).catch((error) => ({ __hohError: String(error?.message ?? error) })));
+  await page.addInitScript(({ fixtureNow }) => {
+    Date.now = () => fixtureNow;
+    const listeners = new Set();
+    let clipboardText = '';
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: {
+      writeText: async (value) => { clipboardText = String(value); },
+      readText: async () => clipboardText,
+    } });
+    window.__hohT3Notify = (notification) => { for (const listener of listeners) listener(notification); };
+    window.__HOH_T3_TEST_ENGINE__ = {
+      request: async (method, params) => { const result = await window.__hohT3Request(method, params); if (result && result.__hohError) throw new Error(result.__hohError); return result; },
+      subscribe: async (listener) => { listeners.add(listener); return () => listeners.delete(listener); },
+      subscribeStatus: async (listener) => { setTimeout(() => listener({ state: 'ready' }), 0); return () => {}; },
+      subscribeQuestions: async () => () => {}, answerQuestion: async () => {}, decideApproval: async () => {},
+    };
+  }, { fixtureNow: FIXTURE_NOW });
+  const off = engine.subscribe((notification) => { page.evaluate((value) => window.__hohT3Notify?.(value), notification).catch(() => {}); });
+  await page.goto(ORIGIN + '/');
+  return { context, page, off };
+}
+
+assert(await readFile(join(DIST, 'index.html')).then(() => true, () => false), 'нет dist/index.html: сначала vite build --mode t3');
+const home = await mkdtemp(join(tmpdir(), 'hoh-grid-'));
+let browser;
+try {
+  browser = await chromium.launch({
+    executablePath: process.env.HOH_CHROMIUM ?? '/usr/bin/google-chrome', headless: true,
+    env: { ...process.env, HOME: home, XDG_CONFIG_HOME: join(home, 'config'), XDG_CACHE_HOME: join(home, 'cache') },
+    args: ['--no-sandbox', '--disable-gpu', '--disable-background-networking', '--disable-component-update', '--no-first-run'],
+  });
+  for (const [width, height] of SIZES) {
+    for (const busy of [false, true]) {
+      const label = `${width}×${height} ${busy ? 'с агентами' : 'пустая главная'}`;
+      const engine = engineWith(busy);
+      const { context, page, off } = await open(browser, engine, { width, height });
+      let step = 'open Home';
+      try {
+        if (!busy) {
+          await page.getByRole('button', { name: 'Start', exact: true }).click();
+          await page.getByRole('button', { name: 'Start without a project', exact: true }).click();
+        }
+        await page.getByText(/Good (night|morning|afternoon|evening)/).first().waitFor({ state: 'attached' });
+        if (busy) {
+          step = 'attach busy Home cards';
+          for (const sessionId of ['w1', 'w2', 'w3']) engine.emit('session.status', { sessionId, status: 'running' });
+          const waitingSession = engine.sessions.get('w2');
+          engine.emit('session.event', { sessionId: 'w2', event: engine.append(waitingSession, 'turn/start', { turn: 2 }) });
+          engine.emit('session.event', { sessionId: 'w2', event: engine.append(waitingSession, 'tool/call', { callId: 'w2-live-c', turn: 2, name: 'Bash', arguments: { command: 'printf "prepare the weekly report, verify every source twice, compare the totals with the previous period, explain every discrepancy, and save the complete reviewed result to the requested destination"' } }) });
+          engine.emit('approval.pending', { approvalId: 'appr-1', sessionId: 'w2', risk: 'unassessed', humanText: 'Claude asks to run a deliberately long command that wraps over several lines: printf "prepare report, verify every source, and save the complete result"', expiresAt: Date.now() + 600_000 });
+          await page.locator('.hoh-card').first().waitFor({ state: 'attached' });
+          step = 'attach approval card';
+          await page.locator('.hoh-ask').first().waitFor({ state: 'attached' });
+          step = 'check completed card has no progress';
+          const review = page.locator('.hoh-card').filter({ hasText: 'Summarize the invoices' });
+          await review.getByText('Ready for review').waitFor({ state: 'attached' });
+          if (await review.locator('.hoh-steps').count()) fail(`${label}: completed card still has progress`);
+          step = 'mark a completed card Done';
+          await page.evaluate(() => window.__HOH_HOME__.complete('d1'));
+          await page.locator('.hoh-card[data-state="done"]').waitFor({ state: 'attached' });
+        }
+        await page.evaluate(() => document.fonts.ready);
+        await page.waitForTimeout(800);
+        if (process.env.VITE_HOH_GRID_OVERLAY !== '1' && await page.locator('#hoh-grid-overlay').count() > 0) fail(`${label}: в окне наложение сетки — оно только для снимков (VITE_HOH_GRID_OVERLAY=1)`);
+        const overlap = await page.evaluate(() => {
+          const body = document.querySelector('[data-hoh-home-body]')?.getBoundingClientRect();
+          const stack = document.querySelector('[data-chat-composer-stack]')?.getBoundingClientRect();
+          return body && stack && body.bottom > stack.top + 0.5 ? Math.round((body.bottom - stack.top) * 10) / 10 : 0;
+        });
+        if (overlap > 0) fail(`${label}: тело главной заходит на поле ввода на ${overlap} px`);
+        if (!busy) {
+          const emptyGap = await page.evaluate(() => {
+            const greeting = document.querySelector('.hoh-home__head')?.getBoundingClientRect();
+            const prompt = document.querySelector('[data-chat-composer-stack] h1')?.getBoundingClientRect();
+            return greeting && prompt ? Math.round((prompt.top - greeting.bottom) * 10) / 10 : null;
+          });
+          if (emptyGap === null) fail(`${label}: не найдены приветствие и заголовок пустой главной`);
+          else if (emptyGap < 24) fail(`${label}: приветствие не отделено сверху от вопроса пустой главной (${emptyGap} px)`);
+        }
+        if (busy && width === 800 && height === 550) {
+          const detail = page.locator('.hoh-ask__detail').first();
+          const collapsed = await detail.evaluate((button) => {
+            const text = button.querySelector('.hoh-ask__text');
+            const style = getComputedStyle(text);
+            return { expanded: button.getAttribute('aria-expanded'), height: text.getBoundingClientRect().height, line: parseFloat(style.lineHeight), scroll: text.scrollHeight, text: text.textContent };
+          });
+          if (collapsed.expanded !== 'false') fail(`${label}: запрос изначально раскрыт`);
+          if (collapsed.height > collapsed.line * 2 + 1) fail(`${label}: запрос занимает больше двух строк (${collapsed.height}px)`);
+          await detail.click();
+          const expanded = await detail.evaluate((button) => ({ expanded: button.getAttribute('aria-expanded'), height: button.querySelector('.hoh-ask__text').getBoundingClientRect().height }));
+          if (expanded.expanded !== 'true' || expanded.height <= collapsed.height) fail(`${label}: запрос не раскрывается по нажатию (${JSON.stringify({ collapsed, expanded })})`);
+          await detail.press('Space');
+          if (await detail.getAttribute('aria-expanded') !== 'false') fail(`${label}: запрос не сворачивается клавиатурой`);
+          const nowVisible = await page.evaluate(() => {
+            const heading = [...document.querySelectorAll('.hoh-home__label')].find((node) => node.textContent?.trim().startsWith('Now'))?.getBoundingClientRect();
+            const composer = document.querySelector('[data-chat-composer-stack]')?.getBoundingClientRect();
+            return Boolean(heading && composer && heading.top >= 0 && heading.bottom <= composer.top);
+          });
+          if (!nowVisible) fail(`${label}: шапка карточек «Now» не видна над полем ввода`);
+        }
+        const found = await page.evaluate(() => (window.hohGridCheck ? window.hohGridCheck() : null));
+        if (found === null) fail(`${label}: в окне нет window.hohGridCheck`);
+        else for (const miss of found) fail(`${label}: ${miss.block}.${miss.side} ${miss.px} px от ${miss.expected} (ближайшая ${miss.nearest || '—'})`);
+        if (busy) {
+          const cards = await page.locator('.hoh-card').evaluateAll((nodes) => nodes.map((node) => {
+            const box = node.getBoundingClientRect();
+            return { x: box.x, y: box.y, right: box.right, width: box.width, state: node.getAttribute('data-state') };
+          }));
+          const count = state => cards.filter(card => card.state === state).length;
+          if (cards.length !== 5 || count('working') !== 2 || count('waiting') !== 2 || count('done') !== 1)
+            fail(`${label}: нужны 5 карточек (2 working, 2 waiting, 1 done), получено ${JSON.stringify(cards.map(card => card.state))}`);
+          if (cards.some(card => card.x < -0.5 || card.right > width + 0.5)) fail(`${label}: карточка вышла за окно`);
+          if (width >= 1100) {
+            if (cards.some(card => card.width > 360.5)) fail(`${label}: карточка шире 360 px: ${cards.map(card => card.width.toFixed(1)).join(', ')}`);
+            const firstY = Math.min(...cards.map(card => card.y));
+            const firstRow = cards.filter(card => Math.abs(card.y - firstY) < 1).length;
+            const expected = 2;
+            if (firstRow !== expected) fail(`${label}: в первом ряду ${firstRow} карточек, нужно ${expected}`);
+          }
+        }
+        if (busy) { // Learning и живая страница Plugins; «New chat» закрывает обе.
+          step = 'team coming soon';
+          await page.getByRole('button', { name: 'Add to team' }).click();
+          if (await page.locator('[data-hoh-sidebar-top]').getByRole('status').filter({ hasText: 'Coming Soon' }).count() !== 1) fail(`${label}: Team не показывает Coming Soon`);
+          if (process.env.QA_DIR && width === 2000 && height === 1137) await page.screenshot({ path: join(process.env.QA_DIR, 'team-coming-soon-2000x1137.png'), animations: 'disabled' });
+          await page.getByRole('button', { name: 'Add to team' }).click();
+          step = 'open Learning';
+          await page.locator('[data-hoh-page-item="learning"]').click();
+          await page.locator('.hoh-page').waitFor({ state: 'visible' });
+          if (process.env.QA_DIR && width === 2000 && height === 1137) await page.screenshot({ path: join(process.env.QA_DIR, 'learning-2000x1137.png'), animations: 'disabled' });
+          const learningText = await page.locator('.hoh-page').innerText();
+          if (learningText.replace(/\s+/g, ' ').trim() !== 'Learning Coming Soon') fail(`${label}: страница Learning: «${learningText.trim()}»`);
+          if (await page.locator('[data-hoh-page-item="learning"][aria-current="page"]').count() !== 1) fail(`${label}: пункт Learning не подсвечен`);
+          const pageMiss = await page.evaluate(() => window.hohGridCheck());
+          for (const miss of pageMiss) fail(`${label}: страница Learning: ${miss.block}.${miss.side} ${miss.px} px от ${miss.expected}`);
+
+          step = 'open Plugins';
+          await page.locator('[data-hoh-page-item="plugins"]').click();
+          await page.locator('.hoh-plugins').waitFor({ state: 'visible' });
+          await page.locator('[data-plugin-id="turn-note"]').waitFor({ state: 'visible' });
+          if (await page.locator('[data-hoh-page-item="plugins"][aria-current="page"]').count() !== 1) fail(`${label}: пункт Plugins не подсвечен`);
+          if (await page.locator('[data-plugin-list] [data-plugin-id]').count() !== 1) fail(`${label}: неверное число установленных плагинов`);
+          if (await page.locator('[data-plugin-id="turn-note"]').getByText('mounted', { exact: true }).count() !== 1) fail(`${label}: нет состояния плагина`);
+          if (await page.locator('[data-plugin-id="turn-note"]').getByText('Select a conversation to see its data.', { exact: true }).count() !== 1) fail(`${label}: нет состояния панели без выбранного разговора`);
+          const pluginText = (await page.locator('.hoh-plugins').innerText()).replace(/\s+/g, ' ');
+          if (/Sample data|Variant [ABC]/.test(pluginText)) fail(`${label}: на Plugins остались заглушка или переключатель варианта`);
+          const overflow = await page.locator('.hoh-plugins').evaluate((node) => node.scrollWidth > node.clientWidth + 1);
+          if (overflow) fail(`${label}: страница Plugins имеет горизонтальное переполнение`);
+
+          if (await page.getByRole('button', { name: /Add from folder|Choose folder|How to install/ }).count() !== 0) fail(`${label}: осталась кнопка установки Plugins`);
+          step = 'return to New chat';
+          await page.locator('[data-hoh-sidebar-top] .hoh-side__new').first().click();
+          if (await page.locator('.hoh-page').count() !== 0) fail(`${label}: «New chat» не закрыл страницу`);
+          if (width === 1440 && height === 900) {
+            await page.keyboard.press('Control+K');
+            const palette = page.locator('[aria-label="Command palette"]').last();
+            await palette.waitFor({ state: 'visible' });
+            const paletteText = (await palette.innerText()).replace(/\s+/g, ' ');
+            if (!paletteText.includes('New chat')) fail(`${label}: в палитре нет видимого «New chat»`);
+            if (paletteText.includes('New thread')) fail(`${label}: в палитре ещё видно «New thread»`);
+            await page.keyboard.press('Escape');
+          }
+        }
+      } catch (error) {
+        fail(`${label}: ${step}: ${String(error.message).split('\n')[0]}`);
+        if (process.env.HOH_GRID_DEBUG) { await page.screenshot({ path: join(process.env.HOH_GRID_DEBUG, `${width}x${height}-${busy}.png`) }); console.error((await page.evaluate(() => document.body.innerText)).slice(0, 400)); }
+      }
+      off(); await context.close();
+    }
+  }
+  // Replay a stopped turn with no assistant or tool entries: the durable stop is its only timeline event.
+  {
+    const engine = engineWith(false);
+    const session = engine.open('stopped-replay', 'Stopped replay');
+    engine.append(session, 'turn/start', { turn: 1 });
+    engine.append(session, 'user/message', { id: 'stopped-u', source: { kind: 'user' }, content: [{ type: 'text', text: 'Stop before the first step' }] });
+    engine.append(session, 'turn/end', { turn: 1, reason: { kind: 'aborted', reason: { kind: 'user' } } });
+    const { context, page, off } = await open(browser, engine, { width: 2000, height: 1137 });
+    try {
+      await page.goto(ORIGIN + '/hoh-local/stopped-replay');
+      await page.getByText(/You stopped after/).waitFor({ timeout: 10000 });
+      if (await page.getByText(/Run interrupted.*Stopped by user/).count()) fail('stopped replay: raw interruption remains visible');
+    } catch (error) { fail(`stopped replay: ${String(error.message).split('\n')[0]}`); }
+    finally { off(); await context.close(); }
+  }
+  for (const kind of ['stream', 'approval', 'subagent']) {
+    const engine = engineWith(false);
+    const id = `journal-stop-${kind}`;
+    const session = engine.open(id, `Journal stop ${kind}`);
+    const start = FIXTURE_NOW - 60000;
+    const append = (type, data, ms) => { const event = engine.append(session, type, data); event.time = start + ms; return event; };
+    append('turn/start', { turn: 1 }, 1000);
+    append('user/message', { id: `${id}-u`, source: { kind: 'user' }, content: [{ type: 'text', text: 'Stop this work' }] }, 2000);
+    append('assistant/message', { turn: 1, step: 1, message: { id: `${id}-a`, role: 'assistant', content: [{ type: 'text', text: 'I will start.' }] } }, 3000);
+    if (kind !== 'stream') {
+      append('tool/call', { turn: 1, step: 1, callId: 'call', name: kind === 'subagent' ? 'Agent' : 'Bash', arguments: { command: 'sleep 120', description: 'Investigate' } }, 4000);
+      if (kind === 'subagent') append('tool/call', { turn: 1, step: 1, callId: 'child', parentCallId: 'call', name: 'WebFetch', arguments: { url: 'https://example.test/' } }, 5000);
+      append('approval/asked', { id: 'approval', callId: kind === 'subagent' ? 'child' : 'call' }, 6000);
+      append('tool/result', { turn: 1, step: 1, message: { id: 'result', toolCallId: 'call', isError: true, content: [{ type: 'text', text: 'Stopped' }] } }, 35000);
+    }
+    append('turn/end', { turn: 1, reason: { kind: 'aborted', reason: { kind: 'user' } } }, 35000);
+    // A later completed turn must not erase the earlier stopped turn's label or duration.
+    append('turn/start', { turn: 2 }, 40000);
+    append('user/message', { id: `${id}-u2`, source: { kind: 'user' }, content: [{ type: 'text', text: 'Continue afterward' }] }, 41000);
+    append('assistant/message', { turn: 2, step: 1, message: { id: `${id}-a2`, role: 'assistant', content: [{ type: 'text', text: 'Done afterward.' }] } }, 42000);
+    append('turn/end', { turn: 2, reason: { kind: 'completed' } }, 43000);
+    const { context, page, off } = await open(browser, engine, { width: 2000, height: 1137 });
+    try {
+      await page.goto(ORIGIN + `/hoh-local/${id}`);
+      for (let restart = 0; restart < 2; restart++) {
+        await page.getByText('You stopped after 33s', { exact: true }).waitFor({ timeout: 10000 });
+        if (await page.getByText(/Run interrupted.*Stopped by user/).count()) fail(`${kind}: raw interruption remains visible`);
+        if (restart === 0) await page.reload();
+      }
+    } catch (error) { fail(`${kind} journal stop: ${String(error.message).split('\n')[0]}`); }
+    finally { off(); await context.close(); }
+  }
+  if (process.env.C6_REPLAY_EVENTS) {
+    const engine = engineWith(false);
+    const session = engine.open('c5-journal', 'C5 journal');
+    session.events = JSON.parse(await readFile(process.env.C6_REPLAY_EVENTS, 'utf8'));
+    session.updatedAt = session.events.at(-1)?.time ?? FIXTURE_NOW;
+    const { context, page, off } = await open(browser, engine, { width: 2000, height: 1137 });
+    try {
+      await page.goto(ORIGIN + '/hoh-local/c5-journal');
+      for (let restart = 0; restart < 2; restart++) {
+        await page.getByText('You stopped after 34s', { exact: true }).waitFor({ timeout: 15000 });
+        if (await page.getByText(/Run interrupted.*Stopped by user/).count()) fail('C5 journal: raw interruption remains visible');
+        if (restart === 0) await page.reload();
+      }
+    } catch (error) { fail(`C5 journal: ${String(error.message).split('\n')[0]}`); }
+    finally { off(); await context.close(); }
+  }
+} finally { await browser?.close(); await rm(home, { recursive: true, force: true }); }
+
+if (errors.length) { for (const message of errors) console.error('grid: ' + message); process.exit(1); }
+console.log('grid: внутренний ритм HoH остаётся на g1..g21; карточки не шире 360 px и по 2 в ряд в полной T3-колонке (также 2000×1137, 1920×1080, 1440×900, 800×550; допуск 2 px)');

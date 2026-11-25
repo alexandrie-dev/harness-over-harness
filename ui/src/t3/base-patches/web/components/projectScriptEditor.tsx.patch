@@ -1,0 +1,8 @@
+--- a/web/components/projectScriptEditor.tsx
++++ b/web/components/projectScriptEditor.tsx
+@@ -552 +552 @@
+-                <T>Run in the thread's worktree when the thread settles</T>
++                <T>Run in the chat's worktree when the chat settles</T>
+@@ -561 +561 @@
+-                <T>Stop this action when the thread settles</T>
++                <T>Stop this action when the chat settles</T>

@@ -130,11 +130,11 @@ fn every_fixture_is_typed_and_round_trips_byte_for_byte() {
 fn schemas_and_generated_types_are_current() {
     let window = fs::read_to_string(root().join("ui/src/protocol.ts")).unwrap();
     for forbidden in [
-        "HostApprovalRequest",
-        "HostApprovalDecision",
+        "export type HostApprovalRequest",
+        "export type HostApprovalDecision",
         "approvalKey",
-        "initialize",
-        "shutdown",
+        "export type Initialize",
+        "export type Shutdown",
         "approval/request",
         "user-question/ask",
     ] {

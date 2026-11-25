@@ -5,7 +5,7 @@
 //! Prompts: `hello`, `double final`, `run: <command>`, `delete: <path>`, `race`, `question`,
 //! `run in <folder>: <command>`, `long command`, `stubborn command`, `break stream`, `crash`, `garbage`, `flood`,
 //! `slow start`, `mute`, `huge frame`, `no final`, `only reasoning`, `fail secret`, `leak`,
-//! `bad event`, `split key`, `update: <path>`, `changes: <JSON list of changes>`,
+//! `bad event`, `split key`, `nested events`, `telemetry`, `telemetry unsafe`, `update: <path>`, `changes: <JSON list of changes>`,
 //! `permission: <description>`, `tool: <name> <JSON input>`, `repeat request`, `late request`, `late request after prompt`, `late leak`, `swap`, `bypass: <command>` (runs it without asking),
 //! and any prompt containing `echo`.
 //!
@@ -348,6 +348,83 @@ impl Stub {
         self.event(json!({"type": "turn-started", "turnId": turn_id}));
         let native = self.native.clone().unwrap_or_default();
         match text {
+            "telemetry unsafe" => {
+                let provenance = |source: Value| {
+                    json!({
+                        "launchId": format!("stub-{}", std::process::id()),
+                        "nativeSessionId": native.clone(),
+                        "turnId": turn_id,
+                        "sourceId": source,
+                    })
+                };
+                self.event(json!({"type": "telemetry", "record": {
+                    "provenance": provenance(json!("unsafe-mcp")),
+                    "payload": {"kind": "mcp-servers", "servers": [{
+                        "name": "server TOKEN=top-secret", "status": "Authorization: Bearer abcdefgh12345678"
+                    }]}
+                }}));
+                self.event(json!({"type": "telemetry", "record": {
+                    "provenance": provenance(json!("unsafe-task")),
+                    "payload": {"kind": "background-task", "update": {
+                        "subtype": "task_progress TOKEN=subtype-secret",
+                        "task": {"taskId": "task-id-kept", "runId": "run-id-kept",
+                            "taskType": "type TOKEN=type-secret",
+                            "description": format!("TOKEN=description-secret {}", "x".repeat(5000))},
+                        "status": "TOKEN=status-secret", "summary": "TOKEN=summary-secret",
+                        "workflowProgress": [{
+                            "kind": "kind TOKEN=kind-secret", "agentId": "agent-id-kept",
+                            "title": "TOKEN=title-secret", "label": "TOKEN=label-secret",
+                            "state": "TOKEN=state-secret", "phaseTitle": "TOKEN=phase-secret",
+                            "model": "TOKEN=model-secret", "promptPreview": "TOKEN=prompt-secret",
+                            "resultPreview": "TOKEN=result-secret"
+                        }]
+                    }}
+                }}));
+                let oversized_tasks: Vec<_> = (0..257)
+                    .map(|index| json!({"taskId": format!("task-{index}")}))
+                    .collect();
+                self.event(json!({"type": "telemetry", "record": {
+                    "provenance": provenance(json!("oversized-roster")),
+                    "payload": {"kind": "background-tasks-snapshot", "tasks": oversized_tasks}
+                }}));
+                self.event(json!({"type": "telemetry", "record": {
+                    "provenance": provenance(json!("p".repeat(70_000))),
+                    "payload": {"kind": "assistant-usage", "usage": {"inputTokens": 1}}
+                }}));
+                self.text("m1", "unsafe telemetry filtered");
+                self.event(json!({"type": "turn-completed", "turnId": turn_id}));
+            }
+            "telemetry" => {
+                let provenance = |source: &str| {
+                    json!({
+                        "launchId": format!("stub-{}", std::process::id()),
+                        "nativeSessionId": native.clone(),
+                        "turnId": turn_id,
+                        "sourceId": source,
+                    })
+                };
+                self.event(json!({"type": "telemetry", "record": {
+                    "provenance": provenance("assistant-usage-1"),
+                    "payload": {"kind": "assistant-usage", "usage": {
+                        "inputTokens": 9, "outputTokens": 2
+                    }}
+                }}));
+                self.event(json!({"type": "telemetry", "record": {
+                    "provenance": provenance("empty-roster-1"),
+                    "payload": {"kind": "background-tasks-snapshot", "tasks": []}
+                }}));
+                self.text("m1", "telemetry stored");
+                self.event(json!({"type": "turn-completed", "turnId": turn_id}));
+            }
+            "usage" => {
+                self.event(json!({"type": "usage", "inputTokens": 100,
+                    "cacheCreationInputTokens": 20, "cacheReadInputTokens": 30,
+                    "outputTokens": 1}));
+                self.event(json!({"type": "usage", "inputTokens": 200,
+                    "cacheCreationInputTokens": 40, "cacheReadInputTokens": 60,
+                    "outputTokens": 9, "maxTokens": 200000}));
+                self.event(json!({"type": "turn-completed", "turnId": turn_id}));
+            }
             "double final" => {
                 self.event(json!({"type": "text-delta", "messageId": "m1", "text": "once"}));
                 self.text("m1", "once");
@@ -360,7 +437,7 @@ impl Stub {
                     "action": command("touch first.txt")}));
                 self.event(json!({"type": "approval-requested", "requestId": "r2",
                     "action": command("touch second.txt")}));
-                std::thread::sleep(Duration::from_millis(200));
+                std::thread::sleep(Duration::from_millis(500));
                 self.event(json!({"type": "request-resolved", "requestId": "r1"}));
                 self.wait(Duration::from_secs(20), |stub| {
                     stub.responses.contains_key("r2")
@@ -426,6 +503,12 @@ impl Stub {
                 let _ = out.flush();
                 std::process::exit(0);
             }
+            "exit after turn" => {
+                self.text("m1", "finished");
+                self.event(json!({"type": "turn-completed", "turnId": turn_id}));
+                std::thread::sleep(Duration::from_millis(200));
+                std::process::exit(0);
+            }
             "crash" => {
                 self.event(json!({"type": "text-delta", "messageId": "m1", "text": "working"}));
                 self.event(json!({"type": "item-started", "itemId": "c1",
@@ -463,6 +546,10 @@ impl Stub {
                 self.event(json!({"type": "text-delta", "messageId": "m1", "text": "lo"}));
                 self.event(json!({"type": "turn-completed", "turnId": turn_id}));
             }
+            "empty reasoning" => {
+                self.event(json!({"type": "reasoning-delta", "messageId": "m1", "text": ""}));
+                self.event(json!({"type": "turn-completed", "turnId": turn_id}));
+            }
             "only reasoning" => {
                 self.event(json!({"type": "reasoning-final", "messageId": "r1",
                     "text": "planned the steps"}));
@@ -472,6 +559,26 @@ impl Stub {
                     "outcome": "completed", "exitCode": 0}));
                 self.event(json!({"type": "reasoning-final", "messageId": "r2",
                     "text": "checked the result"}));
+                self.event(json!({"type": "turn-completed", "turnId": turn_id}));
+            }
+            "nested events" => {
+                self.event(
+                    json!({"type": "item-started", "itemId": "parent", "action": {
+                    "kind": "tool", "name": "Agent", "input": {"description": "child"}}}),
+                );
+                self.event(
+                    json!({"type": "reasoning-delta", "messageId": "child-reasoning",
+                    "text": "child plan", "parentItemId": "parent"}),
+                );
+                self.event(json!({"type": "text-final", "messageId": "child-text",
+                    "text": "child note", "parentItemId": "parent"}));
+                self.event(json!({"type": "item-started", "itemId": "child-read",
+                    "parentItemId": "parent", "action": {
+                        "kind": "tool", "name": "Read", "input": {"file_path": "a.txt"}}}));
+                self.event(json!({"type": "item-completed", "itemId": "child-read",
+                    "parentItemId": "parent", "outcome": "completed", "output": "contents"}));
+                self.event(json!({"type": "item-completed", "itemId": "parent",
+                    "outcome": "completed", "output": "child done"}));
                 self.event(json!({"type": "turn-completed", "turnId": turn_id}));
             }
             "fail secret" => {

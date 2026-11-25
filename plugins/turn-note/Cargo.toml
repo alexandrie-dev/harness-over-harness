@@ -1,0 +1,17 @@
+[package]
+name = "hoh-plugin-turn-note"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+
+[dependencies]
+hoh-kernel = { path = "../../crates/hoh-kernel" }
+hoh-session = { path = "../../crates/hoh-session" }
+hoh-tools = { path = "../../crates/hoh-tools" }
+hoh-llm = { path = "../../crates/hoh-llm" }
+serde_json = "1"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }
+hoh-system-prompt = { path = "../../crates/hoh-system-prompt" }

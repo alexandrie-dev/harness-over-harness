@@ -1729,7 +1729,7 @@ async fn shutdown_with_an_unsaved_change_ends_in_time_and_the_file_is_already_wr
     )
     .await;
     assert!(changed.get("result").is_some(), "{changed}");
-    // The Tauri core waits 500 ms after `shutdown` and then kills the engine; stdin stays open.
+    // The Tauri core waits 5 seconds after `shutdown` and then kills the engine; stdin stays open.
     let asked = std::time::Instant::now();
     send(
         &mut stdin,
@@ -1744,7 +1744,7 @@ async fn shutdown_with_an_unsaved_change_ends_in_time_and_the_file_is_already_wr
     let took = asked.elapsed();
     assert_eq!(status.code(), Some(0), "{}", engine_stderr(root.path()));
     assert!(
-        took < Duration::from_millis(500),
+        took < Duration::from_secs(5),
         "the engine needed {took:?} after shutdown: the core would have killed it"
     );
     let on_disk: Value =
@@ -1793,4 +1793,45 @@ async fn a_model_changed_by_settings_set_is_the_name_of_the_next_request() {
         .collect();
     assert_eq!(names, ["window-mock", "second-model"]);
     engine.finish().await;
+}
+
+#[tokio::test]
+async fn compiled_plugin_is_mounted_and_listed_by_window_engine() {
+    let root = tempfile::tempdir().unwrap();
+    write_profile(root.path(), "http://127.0.0.1:9");
+    let mut child = command(root.path()).spawn().unwrap();
+    let mut stdin = child.stdin.take().unwrap();
+    let mut stdout = BufReader::new(child.stdout.take().unwrap()).lines();
+    let mut seen = Vec::new();
+    send(&mut stdin, json!({"jsonrpc":"2.0","id":"init","method":"initialize","params":{"cwd":window_workspace(root.path()),"provider":"openai-compatible","model":"local"}})).await;
+    let init = receive_until(&mut stdout, &mut seen, |frame| frame["id"] == "init").await;
+    assert!(
+        init.get("result").is_some(),
+        "{init}: {}",
+        engine_stderr(root.path())
+    );
+    send(
+        &mut stdin,
+        json!({"jsonrpc":"2.0","id":"plugins","method":"hoh/plugins/list","params":{}}),
+    )
+    .await;
+    let result = receive_until(&mut stdout, &mut seen, |frame| frame["id"] == "plugins").await;
+    let plugins = result["result"].as_array().expect("plugin list");
+    let plugin = plugins
+        .iter()
+        .find(|p| p["id"] == "turn-note")
+        .expect("example plugin");
+    assert_eq!(plugin["status"], "mounted", "{plugin}");
+    assert_eq!(plugin["manifest"]["panel"]["title"], "Последний ход");
+    send(
+        &mut stdin,
+        json!({"jsonrpc":"2.0","id":"shutdown","method":"shutdown","params":{}}),
+    )
+    .await;
+    let _ = receive_until(&mut stdout, &mut seen, |frame| frame["id"] == "shutdown").await;
+    drop(stdin);
+    tokio::time::timeout(Duration::from_secs(10), child.wait())
+        .await
+        .unwrap()
+        .unwrap();
 }
