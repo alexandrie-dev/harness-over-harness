@@ -684,9 +684,12 @@ test('the sidebar lists the chats of the engine with their titles; the open one 
 
 test('switching chats shows only that chat and does not mix histories', async () => {
   await withChats(async (controller, engine) => {
+    const listCalls = () => engine.requests.filter(request => request.method === 'session/list').length;
+    const beforeSwitch = listCalls();
     await controller.openSession('chat-old');
     assert.equal(controller.state.connection, 'ready'); assert.equal(controller.state.currentId, 'chat-old');
     assert.deepEqual(shown(controller), ['Старый вопрос', 'Старый ответ']);
+    assert.equal(listCalls(), beforeSwitch, 'switching between listed chats does not reload all session logs');
     controller.setDraft('Третий вопрос'); await controller.send();
     await waitUntil(() => !controller.state.busy && controller.state.entries.some(e => e.text === 'Ответ на: Третий вопрос'));
     assert.deepEqual(shown(controller), ['Старый вопрос', 'Старый ответ', 'Третий вопрос', 'Ответ на: Третий вопрос']);

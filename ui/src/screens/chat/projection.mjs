@@ -196,9 +196,13 @@ export function assistantChunks(event) {
   return result.length && result.join('') === finalText ? result : finalText ? [finalText] : [];
 }
 export class ChatProjection {
+  #entries = [];
+  #entriesShared = false;
+  #pendingUsers = 0;
+  #unfinished = new Set();
+
   constructor(folder = '') {
     this.folder = folder;
-    this.entries = [];
     this.running = false;
     this.seen = new Set();
     this.users = new Map();
@@ -210,11 +214,31 @@ export class ChatProjection {
     this.incomplete = new Map();
     this.retired = new Set();
   }
+  // Consumers can hold a stable snapshot. Replay only copies when writing after such a read.
+  get entries() {
+    this.#entriesShared = true;
+    return this.#entries;
+  }
+  #writableEntries() {
+    if (this.#entriesShared) {
+      this.#entries = this.#entries.slice();
+      this.#entriesShared = false;
+    }
+    return this.#entries;
+  }
+  #trackUnfinished(index, entry) {
+    if (entry.streaming || (entry.kind === 'step' && entry.status === 'running')) this.#unfinished.add(index);
+    else this.#unfinished.delete(index);
+  }
   replace(index, entry) {
-    const entries = this.entries.slice(); entries[index] = entry; this.entries = entries;
+    if (this.#entries[index].pending && !entry.pending) this.#pendingUsers--;
+    this.#writableEntries()[index] = entry;
+    this.#trackUnfinished(index, entry);
   }
   remove(index) {
-    const entries = this.entries.slice(); entries.splice(index, 1); this.entries = entries;
+    if (this.#entries[index].pending) this.#pendingUsers--;
+    this.#writableEntries().splice(index, 1);
+    this.#unfinished = new Set([...this.#unfinished].filter(i => i !== index).map(i => i > index ? i - 1 : i));
     for (const map of [this.users, this.assistants, this.calls, this.incomplete]) for (const [key, value] of map) {
       if (value === index) map.delete(key);
       else if (value > index) map.set(key, value - 1);
@@ -224,7 +248,13 @@ export class ChatProjection {
       else if (live.index > index) live.index--;
     }
   }
-  append(entry) { const index = this.entries.length; this.entries = [...this.entries, entry]; return index; }
+  append(entry) {
+    const index = this.#entries.length;
+    if (entry.pending) this.#pendingUsers++;
+    this.#writableEntries().push(entry);
+    this.#trackUnfinished(index, entry);
+    return index;
+  }
   optimistic(value) {
     const id = 'local-' + ++this.counter;
     // What the person typed is shown as typed: no filter ever touches it.
@@ -232,15 +262,15 @@ export class ChatProjection {
     return id;
   }
   receipt(localId, messageId) {
-    const index = this.entries.findIndex(e => e.id === localId);
+    const index = this.#entries.findIndex(e => e.id === localId);
     if (index >= 0 && typeof messageId === 'string') {
       this.users.set(messageId, index);
-      this.replace(index, { ...this.entries[index], pending: false });
+      this.replace(index, { ...this.#entries[index], pending: false });
     }
   }
   failed(localId) {
-    const index = this.entries.findIndex(entry => entry.id === localId);
-    if (index >= 0) this.replace(index, { ...this.entries[index], pending: false, failed: true });
+    const index = this.#entries.findIndex(entry => entry.id === localId);
+    if (index >= 0) this.replace(index, { ...this.#entries[index], pending: false, failed: true });
   }
   accept(event) {
     if (!event || !Number.isSafeInteger(event.seq) || event.seq < 0 || this.seen.has(event.seq)) return false;
@@ -278,7 +308,7 @@ export class ChatProjection {
       // a retried attempt of the same step starts the text over; the replaced one never comes back
       if (previous) this.retired.add(previous.attemptId);
       this.live.set(key, { attemptId: attempt, raw: '', last: -1, index: previous?.index, revision, gapped: false });
-      if (previous?.index !== undefined) this.replace(previous.index, { ...this.entries[previous.index], text: '', streaming: true });
+      if (previous?.index !== undefined) this.replace(previous.index, { ...this.#entries[previous.index], text: '', streaming: true });
       return;
     }
     const found = [...this.live.entries()].find(([, live]) => live.attemptId === attempt);
@@ -296,7 +326,7 @@ export class ChatProjection {
       this.retired.add(attempt);
       // A gap means the visible text is only a prefix. Keep its cursor until the
       // durable assistant/message settles it or the controller exhausts history.
-      if (!live.gapped && live.index !== undefined) this.replace(live.index, { ...this.entries[live.index], streaming: false });
+      if (!live.gapped && live.index !== undefined) this.replace(live.index, { ...this.#entries[live.index], streaming: false });
       return;
     }
     if (live.gapped) return;
@@ -319,7 +349,7 @@ export class ChatProjection {
       this.live.delete(key); this.retired.add(live.attemptId);
       if (live.index === undefined) continue;
       this.incomplete.set(key, live.index);
-      const entry = this.entries[live.index];
+      const entry = this.#entries[live.index];
       this.replace(live.index, { ...entry, text: withIncompleteMarker(entry.text), streaming: false, incomplete: true });
     }
   }
@@ -359,8 +389,8 @@ export class ChatProjection {
     if (event.type === 'user/message' && data.source?.kind === 'user') {
       const id = text(data.id); const value = contentText(data.content);
       if (!id || !value || this.users.has(id)) return;
-      const pending = this.entries.findIndex(e => e.kind === 'user' && e.pending && e.text === value);
-      if (pending >= 0) { this.users.set(id, pending); this.replace(pending, { ...this.entries[pending], pending: false }); }
+      const pending = this.#pendingUsers ? this.#entries.findIndex(e => e.kind === 'user' && e.pending && e.text === value) : -1;
+      if (pending >= 0) { this.users.set(id, pending); this.replace(pending, { ...this.#entries[pending], pending: false }); }
       else this.users.set(id, this.append({ id: 'user-' + id, kind: 'user', text: value }));
     }
     if (event.type === 'assistant/message') {
@@ -382,7 +412,7 @@ export class ChatProjection {
   result(message, turn) {
     const callId = String(turn ?? '') + ':' + text(message.toolCallId); const index = this.calls.get(callId);
     if (index === undefined) return;
-    const before = this.entries[index]; const args = this.arguments.get(callId) ?? {};
+    const before = this.#entries[index]; const args = this.arguments.get(callId) ?? {};
     let output = contentText(message.content);
     const parsed = argumentsOf(output);
     const structuredCode = parsed.exitCode ?? parsed.exit_code ?? parsed.code;
@@ -409,9 +439,9 @@ export class ChatProjection {
   /** The running step waits for the person (or was refused by them). Also used by the host's approval notifications. */
   waitForDecision(waiting, refused = false) {
     this.waiting = waiting;
-    const index = this.entries.findLastIndex(entry => entry.kind === 'step' && entry.status === 'running');
+    const index = this.#entries.findLastIndex(entry => entry.kind === 'step' && entry.status === 'running');
     if (index < 0) return;
-    const before = this.entries[index];
+    const before = this.#entries[index];
     const step = { ...before, waiting, ...(refused ? { refused: true } : {}) };
     this.replace(index, { ...step, label: labelFor(step, 'running') });
   }
@@ -423,24 +453,31 @@ export class ChatProjection {
       ? `Помощник работает только в папке «${name}». Чтобы разрешить этот файл, выберите другую папку внизу поля ввода.`
       : 'Помощник работает только в выбранной папке. Чтобы разрешить этот файл, выберите другую папку внизу поля ввода.';
   }
+  #finishEntries(stepStatus, preserveGaps) {
+    if (!this.#unfinished.size) return;
+    const gaps = preserveGaps ? new Set([...this.live.values()].filter(live => live.gapped).map(live => live.index)) : undefined;
+    for (const index of this.#unfinished) {
+      const entry = this.#entries[index];
+      if (entry.kind === 'step') {
+        const detail = stepStatus === 'error' ? 'Действие не удалось завершить.' : entry.detail;
+        this.replace(index, { ...entry, status: stepStatus, label: labelFor(entry, stepStatus), detail });
+      } else if (!gaps?.has(index)) {
+        this.replace(index, { ...entry, streaming: false });
+      }
+    }
+  }
   setRunning(running) {
     this.running = running;
-    const unfinished = new Set([...this.live.values()].filter(live => live.gapped).map(live => live.index));
-    if (!running) this.entries = this.entries.map((entry, index) => entry.kind === 'step' && entry.status === 'running'
-      ? { ...entry, status: 'error', label: labelFor(entry, 'error'), detail: 'Действие не удалось завершить.' }
-      : entry.streaming && !unfinished.has(index) ? { ...entry, streaming: false } : entry);
+    if (!running) this.#finishEntries('error', true);
   }
   /** The person pressed Stop: say so under the text, once. What was already done is not undone. */
   markStopped() {
-    if (this.entries.at(-1)?.kind === 'note') return;
+    if (this.#entries.at(-1)?.kind === 'note') return;
     this.append({ id: 'stopped-' + ++this.counter, kind: 'note', text: 'Вы остановили ответ. Уже сделанное не отменяется.' });
   }
   stop(preserveGaps = false) {
     this.running = false;
-    const unfinished = new Set([...this.live.values()].filter(live => live.gapped).map(live => live.index));
-    this.entries = this.entries.map((entry, index) => entry.kind === 'step' && entry.status === 'running'
-      ? { ...entry, status: 'stopped', label: labelFor(entry, 'stopped') }
-      : entry.streaming && (!preserveGaps || !unfinished.has(index)) ? { ...entry, streaming: false } : entry);
+    this.#finishEntries('stopped', preserveGaps);
     if (!preserveGaps) this.finishGaps();
   }
 }

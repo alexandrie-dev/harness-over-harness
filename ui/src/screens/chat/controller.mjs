@@ -49,7 +49,7 @@ export class ChatController {
     this.link = 0; this.chosen = ''; this.listSeq = 0; this.workingIds = new Set();
   }
   update(patch) { this.state = { ...this.state, ...patch }; this.changed(this.state); }
-  publish() { this.update({ entries: numberRepeatedSteps(this.projection.entries), busy: this.projection.running || this.cancelUnconfirmed }); }
+  publish(patch = {}) { this.update({ entries: numberRepeatedSteps(this.projection.entries), busy: this.projection.running || this.cancelUnconfirmed, ...patch }); }
   setDraft(draft) { this.update({ draft }); }
   async readHistory(transport, projection, current) {
     let afterSeq;
@@ -234,7 +234,9 @@ export class ChatController {
   }
   dismissQuestion(requestId) { return this.answerQuestion(requestId, { cancelled: true }); }
   async connect(recovering = false, target = '') {
-    this.flushReceived(); this.publish(); this.active = true; this.reloading = true;
+    this.flushReceived();
+    if (!target) this.publish();
+    this.active = true; this.reloading = true;
     const ownEpoch = ++this.epoch; const loadGeneration = ++this.generation;
     this.queue = Promise.resolve(); this.ignoreUntilNextTurn = false; this.allowNextTurn = false; this.cancelUnconfirmed = false;
     this.unsubscribe?.(); this.unsubscribe = undefined;
@@ -281,27 +283,32 @@ export class ChatController {
       const normalized = directory.cwd.replaceAll('\\', '/').replace(/\/$/, '');
       const name = humanFile(normalized, normalized.slice(0, normalized.lastIndexOf('/')));
       this.update({ folderPath: directory.cwd, folderLabel: folderLabelOf(normalized, name) });
-      await this.readHistory(transport, projection, () => ownEpoch === this.epoch && loadGeneration === this.generation);
-      if (ownEpoch !== this.epoch || loadGeneration !== this.generation) return;
-      const summary = await unlessMissing(() => transport.request('hoh/security/summary', {}), async () => {
-        const settings = await transport.request('hoh/settings/get', {});
-        return { model: { local: isLocalAddress(settings.model.baseUrl) } };
-      });
-      if (ownEpoch !== this.epoch) return;
-      await this.readSettings(transport, ownEpoch);
-      await this.readAccess(transport, ownEpoch);
-      if (ownEpoch !== this.epoch) return;
+      const stillLoading = () => ownEpoch === this.epoch && loadGeneration === this.generation;
+      const [summary] = await Promise.all([
+        unlessMissing(() => transport.request('hoh/security/summary', {}), async () => {
+          const settings = await transport.request('hoh/settings/get', {});
+          return { model: { local: isLocalAddress(settings.model.baseUrl) } };
+        }),
+        this.readHistory(transport, projection, stillLoading),
+        this.readSettings(transport, ownEpoch),
+        this.readAccess(transport, ownEpoch),
+      ]);
+      if (!stillLoading()) return;
       // A new engine cannot still be executing the previous process's turn.
       // History may end mid-turn if termination prevented its closing event.
       if (recovering) projection.stop();
-      this.projection = projection; this.publish(); this.reloading = false;
+      this.projection = projection; this.reloading = false;
       this.basePrivacy = summary.model.local ? 'local' : 'remote';
-      this.update({ privacy: this.privacyNow(this.state.executor === 'claude') || this.basePrivacy, connection: 'ready', error: '' });
-      void this.refreshSessions();
+      this.publish({ privacy: this.privacyNow(this.state.executor === 'claude') || this.basePrivacy, connection: 'ready', error: '' });
+      // Listing chats reads their logs on the engine. A switch between known chats
+      // leaves the list valid; turn completion still refreshes titles and ordering.
+      if (!target || !this.state.sessions.some(row => row.id === target)) void this.refreshSessions();
       loading = false;
       for (const event of buffered) this.enqueue(event);
     } catch (problem) {
       if (ownEpoch !== this.epoch) return;
+      // The other requests for this load may still be in flight.
+      this.epoch++;
       this.reloading = false;
       this.unsubscribe?.(); this.unsubscribe = undefined;
       this.update({ connection: 'error', busy: false, error: connectionProblem(problem) });
