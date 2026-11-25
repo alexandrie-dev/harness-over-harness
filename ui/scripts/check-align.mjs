@@ -261,8 +261,12 @@ const scenarios = [
       await setSidebar(page, sidebar);
       const editor = page.getByTestId('composer-editor');
       await editor.focus();
-      const png = 'iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAEElEQVR4nGP4z8AARAwQCgAf7gP9i18U1AAAAABJRU5ErkJggg==';
-      const paste = (text, file) => editor.evaluate((element, { text, file, png }) => {
+      const screenshots = [
+        'iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAEElEQVR4nGP4z8AARAwQCgAf7gP9i18U1AAAAABJRU5ErkJggg==',
+        'iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAD0lEQVR4nGNg+M8AQhAKABvyA/1tVLjHAAAAAElFTkSuQmCC',
+        'iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAD0lEQVR4nGNgYPgPRmAKABf2A/1+6zfzAAAAAElFTkSuQmCC',
+      ];
+      const paste = (text, file, png) => editor.evaluate((element, { text, file, png }) => {
         const clipboardData = new DataTransfer();
         if (text) clipboardData.setData('text/plain', text);
         if (file === 'text') clipboardData.items.add(new File(['clipboard contents'], 'clipboard.txt', { type: 'text/plain' }));
@@ -279,15 +283,22 @@ const scenarios = [
       const multiline = Array.from({ length: 35 }, (_, index) => `Clipboard line ${index + 1}`).join('\n');
       await paste(multiline, 'text');
       assert.equal((await editor.innerText()).trim().replace(/\n+/g, '\n'), multiline);
-      await paste('', 'image');
-      await page.getByRole('button', { name: 'Remove clipboard.png', exact: true }).waitFor();
+      const pendingImages = page.getByRole('button', { name: 'Remove clipboard.png', exact: true });
+      for (const [index, png] of screenshots.entries()) {
+        await paste('', 'image', png);
+        await pendingImages.nth(index).waitFor();
+      }
       await page.getByRole('button', { name: 'Submit message' }).click();
       await page.getByText(/Ответ на: Clipboard line 1/).waitFor();
       const prompt = engine.requests.find(({ method }) => method === 'session/prompt')?.params;
-      assert.deepEqual(prompt?.contentBlocks.map(block => block.type), ['image', 'text']);
-      const [sentText, imageReference] = prompt.contentBlocks[1].text.split(' ![clipboard.png]');
-      assert.equal(sentText.replace(/\n+/g, '\n'), multiline);
-      assert.match(imageReference, /^\(t3-context:\/\/v1\/image\/image_[^)]+\)$/);
+      assert.ok(prompt, 'pasted images reached session/prompt');
+      const [first, second, third, text] = prompt.contentBlocks;
+      assert.equal(prompt.contentBlocks.length, 4);
+      assert.deepEqual([first, second, third], screenshots.map(data => ({
+        type: 'image', data, mimeType: 'image/png', name: 'clipboard.png',
+      })));
+      assert.equal(text.type, 'text');
+      assert.equal(text.text.replace(/\n+/g, '\n'), multiline);
     }, blocks: ['conversation'],
   },
   {

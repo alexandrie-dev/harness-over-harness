@@ -90,6 +90,39 @@ test('an attached image context link stays in the conversation but is not duplic
   assert.equal(projection.messages.find(message => message.role === 'user').text, text);
 });
 
+test('clipboard tokens are matched by their draft context IDs on launch and follow-up', async t => {
+  const engine = new FakeEngine();
+  const { host, client } = connect(engine);
+  t.after(() => host.stop());
+  const threadId = 'chat-clipboard';
+  for (const messageId of ['first', 'follow-up']) {
+    const { attachments } = await client.call('assets.persistChatAttachments', {
+      threadId, messageId, attachments: [upload({ id: 'img-minted-' + messageId })],
+    });
+    const clipboardRef = '![clipboard.png](t3-context://v1/image/image_draft-' + messageId + ')';
+    const unmatched = '![other.png](t3-context://v1/image/image_other)';
+    const text = 'Describe this ' + unmatched + '\n' + clipboardRef;
+    const context = { version: 1, records: [
+      { ...attachments[0], kind: 'image', version: 1, contextId: 'image_draft-' + messageId, attachmentId: attachments[0].id },
+      { kind: 'image', contextId: 'image_other', attachmentId: 'unused-upload' },
+    ] };
+    if (messageId === 'first') {
+      await client.call('orchestration.launchThread', {
+        commandId: 'launch-clipboard', threadId, title: 'Clipboard', projectId: 'hoh-project',
+        modelSelection: { instanceId: 'codex', model: 'gpt-6' },
+        initialMessage: { messageId, text, attachments, context },
+      });
+    } else {
+      await client.call('orchestration.dispatchCommand', { ...dispatch(threadId, messageId, text, attachments), context });
+    }
+    assert.deepEqual(sent(engine, 'session/prompt').at(-1).params.contentBlocks, [
+      { type: 'image', data: PNG, mimeType: 'image/png', name: 'red.png' },
+      { type: 'text', text: 'Describe this ' + unmatched },
+    ]);
+  }
+  assert.deepEqual(engine.starts.map(start => start.executor), ['codex', 'codex']);
+});
+
 test('a picture too big, of another type, or not what it says is refused with T3\'s words; nothing reaches the engine', async () => {
   const engine = new FakeEngine();
   const { client } = connect(engine);

@@ -137,9 +137,18 @@ function imageContextId(imageId: string): string {
 const IMAGE_CONTEXT_REFERENCE = /!\[([^\[\]\n]{0,512})\]\(t3-context:\/\/v1\/image\/([a-z0-9_-]{1,128})\)/gi;
 
 /** Remove only T3 image references whose bytes are already carried by this turn's image blocks. */
-export function stripAttachedImageReferences(text: string, imageIds: readonly string[]): string {
+export function stripAttachedImageReferences(text: string, imageIds: readonly string[], context?: { records?: unknown }): string {
   if (!imageIds.length) return text;
   const attached = new Set(imageIds.map(imageContextId));
+  // The editor inserts a draft context ID, while the upload assigns the attachment ID.
+  const uploads = new Set(imageIds);
+  if (Array.isArray(context?.records)) {
+    for (const record of context.records) {
+      if (record?.kind === 'image' && typeof record.contextId === 'string' && uploads.has(record.attachmentId)) {
+        attached.add(record.contextId);
+      }
+    }
+  }
   return text.replace(IMAGE_CONTEXT_REFERENCE, (reference, _label: string, contextId: string) => attached.has(contextId) ? '' : reference).trim();
 }
 

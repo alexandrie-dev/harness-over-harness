@@ -491,12 +491,19 @@ impl CodexSession {
         params
     }
 
-    fn turn_params(&self, text: &str) -> Value {
+    fn turn_params(&self, prompt: &PromptParams) -> Value {
+        let mut input = Vec::with_capacity(prompt.images.len() + 1);
+        if !prompt.text.is_empty() || prompt.images.is_empty() {
+            input.push(json!({"type": "text", "text": prompt.text}));
+        }
+        input.extend(prompt.images.iter().map(|image| {
+            json!({"type": "image", "url": format!("data:{};base64,{}", image.media_type, image.data)})
+        }));
         let state = lock(&self.inner.state);
         let mode = &self.inner.mode;
         let mut params = json!({
             "threadId": state.thread_id,
-            "input": [{"type":"text","text":text}],
+            "input": input,
             "cwd": self.inner.cwd,
             "approvalPolicy": mode.approval_policy,
             "approvalsReviewer": mode.reviewer,
@@ -622,7 +629,7 @@ impl HarnessSession for CodexSession {
                 state.items_seen.clear();
             }
             let result = session
-                .request("turn/start", session.turn_params(&params.text))
+                .request("turn/start", session.turn_params(&params))
                 .await;
             let result = match result {
                 Ok(result) => result,

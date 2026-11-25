@@ -2194,7 +2194,7 @@ export class HohHost {
    * attachment store checks and copies them), then its text, with the skills Claude declared for the chat's folder
    * written as Claude runs them (`$name` → `/name`, T3's `planClaudeSkillDispatch`).
    */
-  private async send(thread: ThreadModel, messageId: string, text: string, attachments: unknown = [], interactionMode?: T3InteractionMode) {
+  private async send(thread: ThreadModel, messageId: string, text: string, attachments: unknown = [], interactionMode?: T3InteractionMode, context?: { records?: unknown }) {
     if (!thread.builtin) await this.requireAccess();
     if (!this.sessionAccessKnown.has(thread.id)) await this.notificationAccess.get(thread.id);
     if (this.deletingThreads.has(thread.id) || this.deletedThreads.has(thread.id) || this.threads.get(thread.id) !== thread)
@@ -2209,7 +2209,7 @@ export class HohHost {
       this.sentPreviewIds.add(image.id);
     }
     const prompt = skillsAsCommands(
-      stripAttachedImageReferences(text, images.map(image => image.id)),
+      stripAttachedImageReferences(text, images.map(image => image.id), context),
       this.skillsByFolder.get(`${thread.executor}\0${folderPath(thread.cwd)}`) ?? new Set(),
     );
     this.homePrompts.add(thread.id);
@@ -2476,7 +2476,7 @@ ${message.slice(0, 8000)}`;
           this.setLevel(target, command.modelSelection?.options);
           await this.withSelectionMutation(async () => {
             await this.applyMode(target, command.runtimeMode);
-            await this.send(target, String(command.messageId), String(command.text ?? ''), command.attachments, interaction);
+            await this.send(target, String(command.messageId), String(command.text ?? ''), command.attachments, interaction, command.context);
           });
           break;
         }
@@ -2585,7 +2585,7 @@ ${message.slice(0, 8000)}`;
         this.setLevel(thread, input.modelSelection?.options);
         await this.withSelectionMutation(async () => {
           if (existing) await this.applyMode(existing, input.runtimeMode);
-          await this.send(thread, messageId, message.text, message.attachments, interactionMode);
+          await this.send(thread, messageId, message.text, message.attachments, interactionMode, message.context);
         });
       } else if (existing) {
         await this.withSelectionMutation(() => this.applyMode(existing, input.runtimeMode));

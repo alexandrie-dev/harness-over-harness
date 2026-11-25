@@ -4,7 +4,8 @@ use std::time::{Duration, Instant};
 
 use hoh_external_harness::{
     AccessMode, ApprovalDecision, AuthState, ExternalHarness, HarnessEvent, HarnessPolicy,
-    HarnessResponse, InteractionMode, PromptParams, RespondParams, StartParams, VersionStatus,
+    HarnessResponse, InteractionMode, PromptImage, PromptParams, RespondParams, StartParams,
+    VersionStatus,
 };
 use hoh_harness_codex::{CodexConfig, CodexHarness};
 use serde_json::Value;
@@ -199,6 +200,50 @@ async fn folder_trust_is_explicit_in_thread_start_and_retained_for_turn() {
         assert_eq!(turn["params"]["cwd"], cwd);
         // Codex 0.166's generated TurnStartParams has no config field; the thread config applies.
         assert!(turn["params"].get("config").is_none());
+    }
+}
+
+#[tokio::test]
+async fn codex_turns_deliver_attached_images_with_or_without_text() {
+    const PNG: &str = "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAEElEQVR4nGP4z8AARAwQCgAf7gP9i18U1AAAAABJRU5ErkJggg==";
+    for text in ["Describe these screenshots", ""] {
+        let temp = TempDir::new().unwrap();
+        let (harness, log) = harness(&temp, "trust");
+        let started = harness
+            .start_with_folder_trust(start_params(&temp, None), AccessMode::Confirm, true)
+            .await
+            .unwrap();
+        started
+            .session
+            .prompt(PromptParams {
+                session_id: "hoh-session".into(),
+                turn_id: "turn-images".into(),
+                text: text.into(),
+                images: ["first.png", "second.png"]
+                    .into_iter()
+                    .map(|name| PromptImage {
+                        media_type: "image/png".into(),
+                        data: PNG.into(),
+                        name: Some(name.into()),
+                    })
+                    .collect(),
+            })
+            .await
+            .unwrap();
+        started.session.terminate(Duration::from_millis(100)).await;
+        let wire = lines(&log);
+        let turn = wire
+            .iter()
+            .find(|line| line["method"] == "turn/start")
+            .unwrap();
+        let image =
+            serde_json::json!({"type":"image","url":format!("data:image/png;base64,{PNG}")});
+        let mut expected = vec![];
+        if !text.is_empty() {
+            expected.push(serde_json::json!({"type":"text","text":text}));
+        }
+        expected.extend([image.clone(), image]);
+        assert_eq!(turn["params"]["input"], serde_json::json!(expected));
     }
 }
 
