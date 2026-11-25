@@ -4091,7 +4091,11 @@ async fn del3_failed_close_tail_rejects_delete_and_retry_until_saved() {
             "del3 late event",
             move |undos| -> Result<(), hoh_error::BoxError> {
                 undos.push(hoh_kernel::Undo::future(move || async move {
-                    session.append("plugin:test", json!({"ignorable":true,"tail":"del3"}), None)?;
+                    hoh_session::append_plugin_record(
+                        &session,
+                        "plugin:test",
+                        json!({"tail":"del3"}),
+                    )?;
                     flag.store(true, Ordering::SeqCst);
                     Ok(())
                 }))?;
