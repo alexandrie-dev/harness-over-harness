@@ -1,4 +1,6 @@
 //! The launcher's flags stop at the first app argument.
+use crate::plugin_creator;
+pub use crate::plugin_creator::AuthorCommand;
 use hoh_commander::{
     Command, CommanderError, InvalidArgumentError, Options, Output, ParseError, ParseOptions,
 };
@@ -39,8 +41,12 @@ pub enum DshInvocation {
     PluginNew {
         id: String,
     },
+    PluginAuthor {
+        command: AuthorCommand,
+        json: bool,
+    },
 }
-const HELP_EXAMPLES: &str = "\nExamples:\n  dsh web                                   boot the web profile (same as: dsh --profile web)\n  dsh rescue --from-default-profile web\n                                            recreate rescue from the shipped web template, then boot it\n  dsh headless \"run the tests\"              answer one task, print the result, and exit\n  dsh tui --patch ./extra.yml               boot a custom profile with one extra overlay\n  dsh tui --resume <session>                arguments after the launcher flags reach the app\n  dsh web --help                            the web app's own flags and help\n  hoh plugin new <id>                       create an in-repository Rust plugin scaffold\n  dsh plugin --profile tui add <package>    manage a profile plugin (unavailable in this build)\n";
+const HELP_EXAMPLES: &str = "\nExamples:\n  dsh web                                   boot the web profile (same as: dsh --profile web)\n  dsh rescue --from-default-profile web\n                                            recreate rescue from the shipped web template, then boot it\n  dsh headless \"run the tests\"              answer one task, print the result, and exit\n  dsh tui --patch ./extra.yml               boot a custom profile with one extra overlay\n  dsh tui --resume <session>                arguments after the launcher flags reach the app\n  dsh web --help                            the web app's own flags and help\n  hoh plugin --help                         discover the Plugin Creator commands\n  dsh plugin --profile tui add <package>    manage a profile plugin (unavailable in this build)\n";
 fn select_profile(value: &str, previous: Option<&Value>) -> Result<Value, InvalidArgumentError> {
     if previous.is_some() {
         return Err(InvalidArgumentError::new("select a profile only once"));
@@ -133,15 +139,8 @@ pub fn parse_dsh_args(
     manage_desktop_profile: bool,
     output: Output,
 ) -> Result<DshInvocation, ParseError> {
-    if argv.first().map(String::as_str) == Some("plugin")
-        && argv.get(1).map(String::as_str) == Some("new")
-    {
-        if argv.len() != 3 {
-            return Err(ParseError::Other("usage: hoh plugin new <id>".into()));
-        }
-        return Ok(DshInvocation::PluginNew {
-            id: argv[2].clone(),
-        });
+    if let Some(invocation) = plugin_creator::parse(argv, &output) {
+        return invocation;
     }
     let first = argv.first().map(String::as_str);
     let resolved = Arc::new(Mutex::new(None));
@@ -172,6 +171,7 @@ pub fn parse_dsh_args(
     if first == Some("plugin") {
         let result = resolved.clone();
         program.command("plugin").description("manage a profile's plugins by forwarding the remaining arguments to pnpm in the profile directory")
+            .add_help_text("after", plugin_creator::HELP)
             .help_option("-h, --help","show this help").pass_through_options(true)
             .required_option_with_parser("--profile <name>","the profile whose plugins to manage (initialized on first use)",select_profile)
             .allow_unknown_option(true).argument("[args...]","pnpm arguments, forwarded verbatim (add <pkg>, remove <pkg>, why <pkg>, ...)")

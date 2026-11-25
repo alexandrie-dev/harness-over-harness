@@ -14,6 +14,7 @@ workspace = true
 conformance-fixtures = ["dep:hoh-conformance"]
 
 [dependencies]
+hoh-plugin-creator = { path = "../../crates/hoh-plugin-creator" }
 hoh-authored-plugins = { path = "../../crates/hoh-authored-plugins" }
 hoh-loader = { path = "../../crates/hoh-loader" }
 hoh-kernel = { path = "../../crates/hoh-kernel" }

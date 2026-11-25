@@ -3,6 +3,7 @@ pub mod args;
 pub mod bin;
 pub mod dump_config;
 pub mod dump_config_schema;
+mod plugin_creator;
 mod plugin_inventory;
 pub mod plugin_new;
 pub mod process_shutdown;

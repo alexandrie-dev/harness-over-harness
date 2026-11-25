@@ -3,6 +3,7 @@ use hoh_kernel::{Cfg, Context, Error, NoConfig, Plugin, Service};
 #[cfg(debug_assertions)]
 use hoh_loader::cmdline::AppExitKey;
 use hoh_loader::{LoaderKey, PluginRegistry, ProfileContextKey};
+use hoh_plugin_creator::PluginCreator;
 #[derive(hoh_kernel::Inject)]
 struct EditorDeps {
     _loader: Service<LoaderKey>,
@@ -46,6 +47,7 @@ impl Plugin for ExitThenFailFixture {
 pub fn registry() -> PluginRegistry {
     let mut registry = PluginRegistry::default();
     registry
+        .add::<PluginCreator>(PluginCreator::NAME)
         .add::<crate::plugin_inventory::PluginInventory>("hoh:plugin-inventory")
         .add::<ConfigEditor>("@deepseek-ai/dsh-config-editor")
         .add::<hoh_llm::LlmPlugin>("@deepseek-ai/dsh-llm")

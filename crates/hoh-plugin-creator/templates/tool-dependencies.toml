@@ -1,0 +1,9 @@
+hoh-llm = { path = "../../crates/hoh-llm" }
+hoh-tools = { path = "../../crates/hoh-tools" }
+serde_json.workspace = true
+
+[dev-dependencies]
+hoh-system-prompt = { path = "../../crates/hoh-system-prompt" }
+hoh-timeout = { path = "../../crates/hoh-timeout" }
+hoh-tool-testkit = { path = "../../crates/hoh-tool-testkit" }
+tokio.workspace = true

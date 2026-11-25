@@ -783,6 +783,7 @@ dependencies = [
  "hoh-official-bundles",
  "hoh-permission-presets",
  "hoh-persona",
+ "hoh-plugin-creator",
  "hoh-plugin-package-inventory-deepseek",
  "hoh-protocol",
  "hoh-sandbox-local",
@@ -2405,6 +2406,15 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
+]
+
+[[package]]
+name = "hoh-plugin-creator"
+version = "0.1.0"
+dependencies = [
+ "hoh-kernel",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
