@@ -9,7 +9,7 @@ use serde::Serialize;
 use std::{
     ffi::CString,
     fs::File,
-    io::{Read, Take},
+    io::Read,
     path::{Component, Path, PathBuf},
 };
 
@@ -896,16 +896,6 @@ fn open_beneath(root: &File, relative: &Path) -> Result<File, String> {
     }
 }
 
-fn read_bounded(mut file: Take<&mut File>) -> Result<Vec<u8>, String> {
-    let mut bytes = Vec::new();
-    file.read_to_end(&mut bytes)
-        .map_err(|_| unavailable("the file could not be read"))?;
-    if bytes.len() as u64 > MAX_IMAGE_BYTES {
-        return Err(unavailable("the image is larger than 20 MiB"));
-    }
-    Ok(bytes)
-}
-
 #[cfg(unix)]
 fn unchanged_file(before: &std::fs::Metadata, after: &std::fs::Metadata) -> bool {
     before.dev() == after.dev()
@@ -925,11 +915,13 @@ fn content_fingerprint(bytes: &[u8]) -> u64 {
 }
 
 #[cfg(target_os = "linux")]
-fn read_project_image_from_root(
+fn read_project_file<T>(
     root_directory: &RootDirectory,
     requested: &str,
     home: &Path,
-) -> Result<ImageAsset, String> {
+    max_bytes: u64,
+    check_type: impl FnOnce(&Path) -> Result<T, String>,
+) -> Result<(Vec<u8>, PathBuf, std::fs::Metadata, T), String> {
     if requested.is_empty() || requested.contains('\0') {
         return Err(unavailable("the path is empty or invalid"));
     }
@@ -966,7 +958,7 @@ fn read_project_image_from_root(
     if relative.as_os_str().is_empty() {
         return Err(unavailable("the path is not a regular file"));
     }
-    let expected = expected_kind(&candidate)?;
+    let expected = check_type(&candidate)?;
 
     let mut file = open_beneath(&root_directory.file, &relative)?;
     let canonical = descriptor_path(&file, "image file")?;
@@ -987,8 +979,11 @@ fn read_project_image_from_root(
     if !opened.is_file() {
         return Err(unavailable("the path is not a regular file"));
     }
-    if opened.len() > MAX_IMAGE_BYTES {
-        return Err(unavailable("the image is larger than 20 MiB"));
+    if opened.len() > max_bytes {
+        return Err(unavailable(format!(
+            "the file is larger than {} MiB",
+            max_bytes / (1024 * 1024)
+        )));
     }
     if opened.nlink() != 1 {
         return Err(unavailable("files with multiple hardlinks cannot be shown"));
@@ -999,14 +994,16 @@ fn read_project_image_from_root(
         ));
     }
 
-    let bytes = read_bounded((&mut file).take(MAX_IMAGE_BYTES + 1))?;
-    if bytes.is_empty() {
-        return Err(unavailable("the image is empty"));
+    let mut bytes = Vec::new();
+    (&mut file)
+        .take(max_bytes + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|_| unavailable("the file could not be read"))?;
+    if bytes.is_empty() || bytes.len() as u64 > max_bytes {
+        return Err(unavailable(
+            "the file is empty or larger than the preview limit",
+        ));
     }
-    if sniff_kind(&bytes) != Some(expected) {
-        return Err(unavailable("the file contents do not match its image type"));
-    }
-    let decode_profile = inspect_image(expected, &bytes)?;
 
     // An in-place writer can keep the inode while changing the bytes. Require stable metadata
     // across the whole read, then verify once more that the name still resolves to this handle.
@@ -1034,6 +1031,26 @@ fn read_project_image_from_root(
     if checked_after != canonical || !checked_after.starts_with(&root) {
         return Err(unavailable("the file changed while it was being read"));
     }
+    Ok((bytes, canonical, after_read, expected))
+}
+
+#[cfg(target_os = "linux")]
+fn read_project_image_from_root(
+    root_directory: &RootDirectory,
+    requested: &str,
+    home: &Path,
+) -> Result<ImageAsset, String> {
+    let (bytes, canonical, after_read, expected) = read_project_file(
+        root_directory,
+        requested,
+        home,
+        MAX_IMAGE_BYTES,
+        expected_kind,
+    )?;
+    if sniff_kind(&bytes) != Some(expected) {
+        return Err(unavailable("the file contents do not match its image type"));
+    }
+    let decode_profile = inspect_image(expected, &bytes)?;
     let fingerprint = content_fingerprint(&bytes);
 
     let revision = format!(
@@ -1052,6 +1069,31 @@ fn read_project_image_from_root(
         file_revision: revision,
         decode_profile,
     })
+}
+
+/// Read an explicit HTML artifact through the same root and file checks as a project image.
+#[cfg(target_os = "linux")]
+pub fn read_project_html(
+    project_root: &Path,
+    expected_root: ProjectRootIdentity,
+    requested: &str,
+    home: &Path,
+) -> Result<String, String> {
+    let root = open_root_directory(project_root, expected_root)?;
+    let (bytes, _, _, ()) = read_project_file(&root, requested, home, 2 * 1024 * 1024, |path| {
+        if path
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .is_some_and(|extension| {
+                extension.eq_ignore_ascii_case("html") || extension.eq_ignore_ascii_case("htm")
+            })
+        {
+            Ok(())
+        } else {
+            Err(unavailable("the file must have an .html or .htm extension"))
+        }
+    })?;
+    String::from_utf8(bytes).map_err(|_| unavailable("the document must be UTF-8"))
 }
 
 /// Read one image after binding it to the requesting conversation's authoritative project root.
@@ -1174,6 +1216,34 @@ mod tests {
             requested,
             home,
         )
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn html_uses_the_project_boundary_and_requires_a_utf8_document() {
+        let scratch = Scratch::new("html");
+        let root = scratch.0.join("project");
+        std::fs::create_dir(&root).unwrap();
+        let identity = project_identity(&root);
+        std::fs::write(
+            root.join("report.html"),
+            b"<details><summary>Overview</summary>Body</details>",
+        )
+        .unwrap();
+        std::fs::write(root.join("invalid.html"), [0xff]).unwrap();
+        std::fs::write(root.join("notes.txt"), "<p>plain text file</p>").unwrap();
+        std::fs::write(scratch.0.join("other.html"), "<p>outside</p>").unwrap();
+        assert!(
+            read_project_html(&root, identity, "report.html", &scratch.0)
+                .unwrap()
+                .contains("Overview")
+        );
+        for file in ["../other.html", "invalid.html", "notes.txt"] {
+            assert!(
+                read_project_html(&root, identity, file, &scratch.0).is_err(),
+                "{file}"
+            );
+        }
     }
 
     #[cfg(not(target_os = "linux"))]

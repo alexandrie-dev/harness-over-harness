@@ -3330,6 +3330,16 @@ test('one stream attempt can deliver reasoning followed by text without losing t
   host.stop(); client.close();
 });
 
+test('grouped Home includes cold chats without completed turns, as Recent chats does', async () => {
+  const engine = new FakeEngine();
+  for (const id of ['first', 'second', 'third']) engine.seed(id, id, []);
+  const { host } = connect(engine);
+  await host.start();
+  assert.equal(host.home.entries().length, 0);
+  assert.deepEqual(host.home.projectEntries().map(entry => entry.id).sort(), ['first', 'second', 'third']);
+  assert.ok(host.home.projectEntries().every(entry => entry.state === 'ended' && !entry.request));
+});
+
 test('project counts include every unarchived chat, including one with no turns after host restart', async () => {
   const store = new Map();
   const engine = new FakeEngine({ store });

@@ -16,3 +16,6 @@ pub mod zoom;
 pub fn probe_compiled() -> bool {
     cfg!(feature = "probe")
 }
+
+#[cfg(feature = "desktop")]
+pub mod html_preview;

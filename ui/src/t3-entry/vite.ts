@@ -170,6 +170,57 @@ export function sidebarChrome(code: string): string {
     ['<SidebarMenuButton aria-label={label} onClick={onClick} size="icon">\n              {icon}\n            </SidebarMenuButton>', '<SidebarMenuButton aria-label={label} onClick={onClick}>\n              {icon}\n              <span>{label}</span>\n            </SidebarMenuButton>'],
   ]);
 }
+/** HoH accepts pasted text as text. The native engine only accepts raster attachments. */
+function composerPaste(code: string): string {
+  return anchorPatch('ChatComposer.tsx', code, [
+    ['  const { addComposerAttachments, removeComposerImage, foldPastedText } =', '  const { addComposerAttachments, removeComposerImage } ='],
+    ['    if (!foldPastedText(plainText, bypassAutoAttachment)) {\n      return;\n    }\n\n    event.preventDefault();\n    event.stopPropagation();', '    // Leave text to the editor, including long and multiline clipboard content.'],
+    [`      pasteTextAtEnd: (text: string, options) => {
+        const shortcutArmed = consumePasteAsTextShortcut(pasteAsTextShortcutUntilRef);
+        const bypassAutoAttachment = options?.bypassAutoAttachment === true || shortcutArmed;
+        const promptLength = promptRef.current.length;
+        if (
+          !foldPastedText(text, bypassAutoAttachment, {
+            start: promptLength,
+            end: promptLength,
+          })
+        ) {
+          return false;
+        }
+        focusComposer();
+        return true;
+      },`, '      pasteTextAtEnd: () => false,'],
+    ['      foldPastedText,\n', ''],
+  ]);
+}
+function editorPaste(code: string): string {
+  return anchorPatch('ComposerPromptEditorTiptap.tsx', code, [
+    ['            clipboardData.files.length > 0 &&\n            (literalText || !readPastedComposerContext(clipboardData)?.records.length)', '            clipboardData.files.length > 0 &&\n            !readPastedPlainText(clipboardData) &&\n            (literalText || !readPastedComposerContext(clipboardData)?.records.length)'],
+    ['          if (!pastedText) return false;\n          event.preventDefault();', '          if (!pastedText) return false;'],
+    ['          if (isInCodeBlock(view)) {\n            const { from, to } = view.state.selection;', '          if (isInCodeBlock(view)) {\n            event.preventDefault();\n            const { from, to } = view.state.selection;'],
+    ['          ) {\n            view.dispatch(\n              markAsClipboardEdit(\n                view.state.tr.insertText(pastedText, pasteFrom, pasteTo),', '          ) {\n            event.preventDefault();\n            view.dispatch(\n              markAsClipboardEdit(\n                view.state.tr.insertText(pastedText, pasteFrom, pasteTo),'],
+    ['          if (editorInstance) {\n            const $paste = view.state.selection.$from;', '          if (!editorInstance) return false;\n          {\n            event.preventDefault();\n            const $paste = view.state.selection.$from;'],
+  ]);
+}
+
+/** Local HTML links keep their file action and expose an isolated in-chat preview. */
+function markdownHtml(code: string): string {
+  const preview = resolve(UI, 'src/t3-entry/preview/HtmlDocument.tsx');
+  return anchorPatch('ChatMarkdown.tsx', code, [
+    ['    return (\n      <MarkdownFileLink\n        environmentId={environmentId}', '    const chip = (\n      <MarkdownFileLink\n        environmentId={environmentId}'],
+    ['      />\n    );\n  };\n\n  const componentState = {', `      />
+    );
+    if (threadRef && window.__TAURI_INTERNALS__ && /[.]html?$/i.test(fileLinkMeta.filePath)) {
+      return <HohHtmlDocument key={threadRef.threadId + ":" + fileLinkMeta.filePath} sessionId={threadRef.threadId}
+        path={fileLinkMeta.filePath} title={fileLinkMeta.basename} file={chip} />;
+    }
+    return chip;
+  };
+
+  const componentState = {`],
+  ], `import { HtmlDocument as HohHtmlDocument } from ${JSON.stringify(preview)};\n`);
+}
+
 /** From a clean profile, New chat invokes the same scratch action as Home. */
 export function chatRouteCommands(code: string): string {
   return anchorPatch('chatRouteCommands.ts', code, [
@@ -276,6 +327,9 @@ function hohT3(): Plugin {
       if (id === resolve(T3_WEB, 'components/settings/ThemePreviewCircles.tsx')) return { code: themeCards(code), map: null };
       if (id === resolve(T3_WEB, 'components/settings/ThemeSettings.tsx')) return { code: themeSettings(code), map: null };
       if (id === resolve(T3_BASE, 'shared/themePalettes.ts')) return { code: themePalettes(code), map: null };
+      if (id === resolve(T3_WEB, 'components/chat/ChatComposer.tsx')) return { code: composerPaste(code), map: null };
+      if (id === resolve(T3_WEB, 'components/ComposerPromptEditorTiptap.tsx')) return { code: editorPaste(code), map: null };
+      if (id === resolve(T3_WEB, 'components/ChatMarkdown.tsx')) return { code: markdownHtml(code), map: null };
       if (id === resolve(T3_WEB, 'components/ChatView.tsx')) return { code: chatViewHome(code), map: null };
       if (id === resolve(T3_WEB, 'components/Sidebar.tsx')) return { code: sidebarList(code), map: null };
       if (id === resolve(T3_WEB, 'components/sidebar/SidebarChrome.tsx')) return { code: sidebarChrome(code), map: null };

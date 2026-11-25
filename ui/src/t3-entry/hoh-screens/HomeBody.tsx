@@ -33,7 +33,7 @@ interface Agent {
   startedAt: number; doneAt: number | null; currentStep: string | null;
 }
 interface Home {
-  version(): number; subscribe(listener: () => void): () => void; entries(): Entry[]; projectCounts(): Record<string, number>; projectTitle(id: string): string; projectKey(id: string): string;
+  version(): number; subscribe(listener: () => void): () => void; entries(): Entry[]; projectEntries(): Entry[]; projectTitle(id: string): string; projectKey(id: string): string;
   answer(threadId: string, requestId: string, decision: 'accept' | 'decline'): Promise<void>;
   complete(threadId: string): Promise<void>;
 }
@@ -139,7 +139,7 @@ export function waitingLabel(entry: Pick<Entry, 'stopped' | 'interrupted' | 'can
 }
 const stateLabel = (entry: Entry) => entry.state === 'working'
   ? <><span className="hoh-orbit" aria-hidden />Working</>
-  : waitingLabel(entry);
+  : entry.state === 'ended' ? 'Inactive' : waitingLabel(entry);
 /** An agent as a card (HOH-41): the executor's mark top-left, the title, where it works, its subagents inside, the state at the bottom.
  *  The glow of the border follows the state (home.css: blue — working, red — waits for the person, neutral — done). */
 function Card({ entry, view, children }: { entry: Entry; view: View; children: React.ReactNode }) {
@@ -461,10 +461,11 @@ export function HomeBody() {
   const [, tick] = useState(0);
   useEffect(() => { const timer = setInterval(() => tick((n) => n + 1), 15_000); return () => clearInterval(timer); }, []);
   const now = Date.now();
-  const entries = (host?.entries() ?? []).map((entry) => ({
+  const withRunner = (entry: Entry) => ({
     ...entry,
     runner: entry.providerInstanceId === 'codex' ? 'codex' as const : 'claude' as const,
-  }));
+  });
+  const entries = (host?.entries() ?? []).map(withRunner);
   const working = entries.filter((entry) => entry.state === 'working' || entry.state === 'waiting').sort((a, b) => b.startedAt - a.startedAt);
   const done = entries.filter((entry) => entry.state === 'done' && entry.doneAt !== null && sameDay(entry.doneAt, now)).sort((a, b) => (b.doneAt ?? 0) - (a.doneAt ?? 0));
   const asking = entries.filter((entry) => entry.request);
@@ -474,10 +475,10 @@ export function HomeBody() {
     where: (entry) => host?.projectTitle(entry.projectId) ?? '',
     projectKey: (projectId) => host?.projectKey(projectId) ?? projectId,
   };
-  const projectEntries = entries.filter((entry) => entry.state !== 'ended');
+  const projectEntries = grouped ? (host?.projectEntries() ?? []).map(withRunner) : [];
   const lists = { working, done, asking, projectEntries, view };
   return (
-    <div className="hoh-home" data-hoh-home-body="" data-busy={working.length + done.length + asking.length > 0 || undefined}>
+    <div className="hoh-home" data-hoh-home-body="" data-busy={working.length + done.length + asking.length + projectEntries.length > 0 || undefined}>
       {grouped ? <GroupedCards {...lists} /> : <Cards {...lists} />}
       <QuickViewDialog />
     </div>

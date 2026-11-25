@@ -557,9 +557,10 @@ pub fn main_security_plugin<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin<R
             let allowed = webview.label() != "main" || {
                 // The files built into the app, as Tauri looks them up (key `/approval.html`).
                 let assets = webview.app_handle().asset_resolver();
-                main_navigation_allowed(url, legacy, |file| {
-                    assets.iter().any(|(key, _)| key == file)
-                })
+                crate::html_preview::navigation_allowed(url)
+                    || main_navigation_allowed(url, legacy, |file| {
+                        assets.iter().any(|(key, _)| key == file)
+                    })
             };
             #[cfg(feature = "probe")]
             if webview.label() == "main" {
@@ -1081,62 +1082,94 @@ pub async fn read_image_asset(
     }
     let engine = state.engine.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let answer = engine.request(
-            "session/working-directory/get",
-            json!({ "sessionId": session_id }),
-        )?;
-        let root = answer["cwd"]
-            .as_str()
-            .filter(|value| !value.trim().is_empty())
-            .ok_or_else(|| {
-                "Image unavailable: the conversation project folder is unknown.".to_owned()
-            })?;
-        let identity = answer
-            .get("rootIdentity")
-            .and_then(serde_json::Value::as_object)
-            .ok_or_else(|| {
-                "Image unavailable: the conversation project folder identity is unknown.".to_owned()
-            })?;
-        let parse_identity = |field: &str| -> Result<u64, String> {
-            let value = identity
-                .get(field)
-                .and_then(serde_json::Value::as_str)
-                .filter(|value| {
-                    !value.is_empty()
-                        && value.len() <= 20
-                        && value.bytes().all(|byte| byte.is_ascii_digit())
-                })
-                .ok_or_else(|| {
-                    "Image unavailable: the conversation project folder identity is invalid."
-                        .to_owned()
-                })?;
-            let parsed = value.parse::<u64>().map_err(|_| {
-                "Image unavailable: the conversation project folder identity is invalid.".to_owned()
-            })?;
-            if parsed.to_string() != value {
-                return Err(
-                    "Image unavailable: the conversation project folder identity is invalid."
-                        .to_owned(),
-                );
-            }
-            Ok(parsed)
-        };
-        let expected_root = crate::image_asset::ProjectRootIdentity {
-            device: parse_identity("device")?,
-            inode: parse_identity("inode")?,
-        };
-        let home = std::env::var_os("HOME")
-            .map(PathBuf::from)
-            .ok_or_else(|| "Image unavailable: the home folder is unknown.".to_owned())?;
-        crate::image_asset::read_project_image(
-            std::path::Path::new(root),
-            expected_root,
-            &path,
-            &home,
-        )
+        let (root, identity, home) = preview_root(&engine, session_id)?;
+        crate::image_asset::read_project_image(&root, identity, &path, &home)
     })
     .await
     .map_err(|_| "Image unavailable: the read was interrupted.".to_owned())?
+}
+
+fn preview_root(
+    engine: &Engine,
+    session_id: String,
+) -> Result<(PathBuf, crate::image_asset::ProjectRootIdentity, PathBuf), String> {
+    let answer = engine.request(
+        "session/working-directory/get",
+        json!({ "sessionId": session_id }),
+    )?;
+    let root = answer["cwd"]
+        .as_str()
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| {
+            "Image unavailable: the conversation project folder is unknown.".to_owned()
+        })?;
+    let identity = answer
+        .get("rootIdentity")
+        .and_then(serde_json::Value::as_object)
+        .ok_or_else(|| {
+            "Image unavailable: the conversation project folder identity is unknown.".to_owned()
+        })?;
+    let parse_identity = |field: &str| -> Result<u64, String> {
+        let value = identity
+            .get(field)
+            .and_then(serde_json::Value::as_str)
+            .filter(|value| {
+                !value.is_empty()
+                    && value.len() <= 20
+                    && value.bytes().all(|byte| byte.is_ascii_digit())
+            })
+            .ok_or_else(|| {
+                "Image unavailable: the conversation project folder identity is invalid.".to_owned()
+            })?;
+        let parsed = value.parse::<u64>().map_err(|_| {
+            "Image unavailable: the conversation project folder identity is invalid.".to_owned()
+        })?;
+        if parsed.to_string() != value {
+            return Err(
+                "Image unavailable: the conversation project folder identity is invalid."
+                    .to_owned(),
+            );
+        }
+        Ok(parsed)
+    };
+    let expected_root = crate::image_asset::ProjectRootIdentity {
+        device: parse_identity("device")?,
+        inode: parse_identity("inode")?,
+    };
+    let home = std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .ok_or_else(|| "Image unavailable: the home folder is unknown.".to_owned())?;
+    Ok((PathBuf::from(root), expected_root, home))
+}
+
+#[tauri::command]
+pub async fn preview_html(
+    window: tauri::WebviewWindow,
+    state: tauri::State<'_, Host>,
+    previews: tauri::State<'_, crate::html_preview::HtmlPreviews>,
+    session_id: String,
+    path: String,
+) -> Result<String, String> {
+    if window.label() != "main" {
+        return Err("HTML preview is available to the main window only.".into());
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = (state, previews, session_id, path);
+        Err("HTML preview is unavailable on this platform.".into())
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let engine = state.engine.clone();
+        let document = tauri::async_runtime::spawn_blocking(move || {
+            let (root, identity, home) = preview_root(&engine, session_id)?;
+            crate::image_asset::read_project_html(&root, identity, &path, &home)
+        })
+        .await
+        .map_err(|_| "The HTML read was interrupted.".to_owned())?
+        .map_err(|error| error.replacen("Image unavailable", "HTML preview unavailable", 1))?;
+        previews.store(document)
+    }
 }
 
 #[tauri::command]

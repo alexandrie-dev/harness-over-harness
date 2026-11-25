@@ -18,12 +18,15 @@ fn main() {
     #[cfg(feature = "probe")]
     hoh_desktop::probe::trace("process:start");
     tauri::Builder::default()
+        .manage(hoh_desktop::html_preview::HtmlPreviews::default())
+        .register_uri_scheme_protocol("hoh-preview", hoh_desktop::html_preview::respond)
         .plugin(hoh_desktop::native::main_security_plugin())
         .invoke_handler(tauri::generate_handler![
             hoh_desktop::native::engine_request,
             hoh_desktop::native::pick_folder,
             hoh_desktop::native::browse_folders,
             hoh_desktop::native::read_image_asset,
+            hoh_desktop::native::preview_html,
             hoh_desktop::native::open_link,
             hoh_desktop::native::question_answer,
             hoh_desktop::native::approval_history,

@@ -111,7 +111,7 @@ const CSP_ALLOWED = {
   // только мост Tauri к хосту HoH (ui/src/hoh-host); http://hoh.local и ws://hoh.local отвечает хост в странице, в сеть не уходят.
   'connect-src': ['ipc:', 'http://ipc.localhost'],
   'object-src': ["'none'"],
-  'frame-src': ["'none'"],
+  'frame-src': ["'none'", 'hoh-preview:'],
   'base-uri': ["'none'"],
   'form-action': ["'none'"],
 };

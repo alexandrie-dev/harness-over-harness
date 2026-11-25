@@ -589,7 +589,17 @@ export class HohHost {
     version: () => this.homeVersion,
     subscribe: (listener: () => void) => { this.homeListeners.add(listener); return () => { this.homeListeners.delete(listener); }; },
     entries: (): HomeEntry[] => [...this.threads.values()].filter(thread => thread.archivedAt === null).map(thread => this.homeEntry(thread)).filter((entry): entry is HomeEntry => entry !== null),
-    // Counts include chats without a loaded or completed turn; cards keep their real state.
+    // Grouped Home uses the same visible chats as Recent chats, even before their turns replay.
+    projectEntries: (): HomeEntry[] => [...this.threads.values()].flatMap(thread => {
+      const shell = thread.shell();
+      if (thread.archivedAt !== null || shell.latestUserMessageAt === null) return [];
+      return [this.homeEntry(thread) ?? {
+        id: thread.id, title: shell.title, projectId: thread.projectId, providerInstanceId: instanceOf(thread.executor),
+        state: 'ended', turnOrdinal: 0, startedAt: thread.updatedAt, doneAt: null,
+        steps: { done: 0, total: 0 }, agents: [],
+      }];
+    }),
+    // This count is also consumed independently by the project view.
     projectCounts: (): Record<string, number> => {
       const counts: Record<string, number> = {};
       for (const thread of this.threads.values()) if (thread.archivedAt === null) counts[thread.projectId] = (counts[thread.projectId] ?? 0) + 1;
