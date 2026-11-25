@@ -25,6 +25,7 @@ export const HOH_HOSTNAME = 'hoh.local';
 export interface InstallOptions extends WireServerOptions {
   readonly engine: HohEngine;
   readonly hostname?: string;
+  readonly pluginAuthoringSkill?: string;
   readonly target?: any;
 }
 
@@ -41,6 +42,9 @@ export function installHohHost(options: InstallOptions) {
   // The home screen (src/t3-entry/hoh-screens) reads the host through this handle.
   (options.target ?? globalThis).__HOH_HOME__ = host.home;
   (options.target ?? globalThis).__HOH_PLUGINS__ = pluginInventory(options.engine);
+  if (options.pluginAuthoringSkill) {
+    (options.target ?? globalThis).__HOH_PLUGIN_CREATOR__ = host.pluginCreator(options.pluginAuthoringSkill);
+  }
   (options.target ?? globalThis).__HOH_TRUST_ENGINE__ = {
     request: (method: string, params: unknown) => host.trustRequest(method, params),
     subscribe: (listener: any) => options.engine.subscribe(listener),
@@ -49,6 +53,8 @@ export function installHohHost(options: InstallOptions) {
   return {
     host,
     server,
-    uninstall: () => { delete (options.target ?? globalThis).__HOH_PLUGINS__; restoreSocket(); restoreFetch(); restoreXhr(); host.stop(); },
+    uninstall: () => { delete (options.target ?? globalThis).__HOH_PLUGINS__;
+      delete (options.target ?? globalThis).__HOH_PLUGIN_CREATOR__;
+      restoreSocket(); restoreFetch(); restoreXhr(); host.stop(); },
   };
 }

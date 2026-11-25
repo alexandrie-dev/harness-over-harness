@@ -104,3 +104,65 @@
   .hoh-plugins__top > button { width: 100%; }
   .hoh-plugin-grid { grid-template-columns: 1fr; }
 }
+
+.hoh-plugin-creator { padding-top: clamp(20px, 5vh, 48px); }
+.hoh-plugin-creator__form {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+  margin-top: 24px;
+  padding: clamp(16px, 4vw, 24px);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl);
+  background: var(--card);
+}
+.hoh-plugin-creator__choices {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 14rem), 1fr));
+  gap: 16px;
+}
+.hoh-plugin-creator__choices > div { min-width: 0; }
+.hoh-plugin-creator__form label {
+  display: block;
+  margin-bottom: 6px;
+  font-size: .875rem;
+  font-weight: 550;
+}
+.hoh-plugin-creator__form select,
+.hoh-plugin-creator__form textarea {
+  display: block;
+  width: 100%;
+  min-height: 36px;
+  padding: 8px 10px;
+  border: 1px solid var(--input);
+  border-radius: var(--radius-md);
+  background: var(--background);
+  color: var(--foreground);
+  font: inherit;
+  font-size: .875rem;
+}
+.hoh-plugin-creator__form textarea { resize: vertical; }
+.hoh-plugin-creator__form :is(button, select, textarea):focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+.hoh-plugin-creator__form button { cursor: pointer; }
+.hoh-plugin-creator__form button:disabled { opacity: .55; cursor: default; }
+.hoh-plugin-creator__add {
+  margin-top: 8px;
+  color: var(--muted-foreground);
+  font-size: .8125rem;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.hoh-plugin-creator__form [role="alert"] { color: var(--destructive); }
+.hoh-plugin-creator__actions { display: flex; justify-content: flex-end; }
+.hoh-plugin-creator__actions > button {
+  min-height: 36px;
+  padding: 8px 14px;
+  border-radius: var(--radius-md);
+  background: var(--primary);
+  color: var(--primary-foreground);
+  font-size: .875rem;
+  font-weight: 550;
+}

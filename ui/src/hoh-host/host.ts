@@ -26,6 +26,10 @@ import { englishError, hostFailure } from './errors.ts';
 import { folderProject, HOH_PROJECT_ID, hohProject, ThreadModel, type FolderProject, type HomeEntry } from './threads.ts';
 import { RpcFailure, type Handlers, type StreamSink } from './wire.ts';
 import { ThreadMetadataStore } from './thread-metadata.ts';
+import {
+  MAX_PLUGIN_BRIEF, PLUGIN_CREATOR_CHECKOUT_FILE, pluginAuthoringPrompt,
+  type PluginCreatorApi, type PluginCreatorOptions,
+} from './plugin-creator.ts';
 
 export interface HohHostOptions {
   readonly engine: HohEngine;
@@ -640,6 +644,70 @@ export class HohHost {
       return threadId;
     },
   };
+
+  private readonly pluginCreatorListeners = new Set<() => void>();
+
+  private pluginCreatorChanged() {
+    for (const listener of this.pluginCreatorListeners) listener();
+  }
+
+  private pluginCreatorHarnesses(): PluginCreatorOptions['harnesses'] {
+    const claude = claudeProvider(this.claudeDiscovery, this.iso(), this.mode !== null, this.discoveryFailure);
+    const codex = codexProvider(this.codexDiscovery, this.iso(), this.codexDiscoveryFailure);
+    return (['claude', 'codex'] as const).map(executor => {
+      const provider = executor === 'claude' ? claude : codex;
+      const model = this.model(executor);
+      return {
+        executor, name: provider.displayName, model,
+        available: provider.status === 'ready' && !!model,
+        reason: provider.message,
+      };
+    });
+  }
+
+  pluginCreator(skill: string): PluginCreatorApi {
+    return {
+      options: async () => {
+        await this.start();
+        return {
+          projects: [...this.folders.values()]
+            .filter(folder => folder.archivedAt === null)
+            .map(({ id, title, workspaceRoot }) => ({ id, title, path: workspaceRoot })),
+          harnesses: this.pluginCreatorHarnesses(),
+        };
+      },
+      subscribe: listener => {
+        this.pluginCreatorListeners.add(listener);
+        return () => this.pluginCreatorListeners.delete(listener);
+      },
+      launch: async ({ projectId, executor, brief }) => {
+        const task = typeof brief === 'string' ? brief.trim() : '';
+        if (!task || task.length > MAX_PLUGIN_BRIEF) throw new Error('Enter a plugin description of up to 8,000 characters.');
+        if (executor !== 'claude' && executor !== 'codex') throw new Error('Choose a harness.');
+        await this.start();
+        const project = this.folders.get(projectId);
+        if (!project || project.archivedAt !== null) throw new Error('Choose an active HoH checkout from your projects.');
+        const provider = this.pluginCreatorHarnesses().find(harness => harness.executor === executor);
+        if (!provider?.available) throw new Error(provider?.reason ?? 'The selected harness is unavailable.');
+        const cwd = project.workspaceRoot;
+        const files = await this.engine.request('hoh/workspace/entries', {
+          cwd, query: PLUGIN_CREATOR_CHECKOUT_FILE, limit: 10,
+        });
+        if (!Array.isArray(files?.entries) || !files.entries.some((entry: { kind: string; path: string }) =>
+          entry.kind === 'file' && entry.path === PLUGIN_CREATOR_CHECKOUT_FILE)) {
+          throw new Error('Choose the root of a HoH checkout that contains Plugin Creator.');
+        }
+        const threadId = 'thread-' + (globalThis.crypto?.randomUUID?.() ?? `${this.now().toString(36)}-${Math.random().toString(36).slice(2)}`);
+        const result = await this.launch({
+          threadId, commandId: 'plugin-creator-' + threadId, projectId,
+          title: 'Plugin Creator',
+          modelSelection: { instanceId: instanceOf(executor), model: provider.model },
+          initialMessage: { messageId: 'msg-' + threadId, text: pluginAuthoringPrompt(skill, task), attachments: [] },
+        });
+        return result.threadId;
+      },
+    };
+  }
 
   private iso() { return new Date(this.now()).toISOString(); }
   private model(executor: HohExecutor = this.selectedExecutor) {
@@ -1744,6 +1812,7 @@ export class HohHost {
   }
 
   private configChanged() {
+    this.pluginCreatorChanged();
     for (const sink of this.configSinks) sink.emit({ version: 1, type: 'snapshot', config: this.config() });
   }
 
@@ -1894,6 +1963,7 @@ export class HohHost {
   // ---- folder projects ("Add project") ----
 
   private emitProject(project: Record<string, unknown>) {
+    this.pluginCreatorChanged();
     this.sequence++;
     for (const sink of this.shellSinks) sink.emit({ kind: 'project.updated', sequence: this.sequence, project });
   }
@@ -1953,6 +2023,7 @@ export class HohHost {
         // HoH keeps every chat; a project with chats stays (T3 removes its threads only on a forced delete).
         if ([...this.threads.values()].some(thread => thread.projectId === projectId)) throw fail('This project still has chats.');
         this.folders.delete(projectId);
+        this.pluginCreatorChanged();
         for (const [threadId, home] of this.homes) if (home === projectId) this.homes.delete(threadId);
         this.save();
         this.sequence++;

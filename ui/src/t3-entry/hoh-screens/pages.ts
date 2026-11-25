@@ -1,7 +1,9 @@
 // Страницы боковой панели: пустая «Learning» и живой раунд дизайна «Plugins» (HOH-42).
 // Это не маршруты T3 (дерево маршрутов не трогаем): страница — слой поверх области справа от боковой панели (SidebarPages.tsx).
-export type PageKey = 'learning' | 'plugins' | 'usage';
-export const PAGE_TITLES: Readonly<Record<PageKey, string>> = { learning: 'Learning', plugins: 'Plugins', usage: 'Usage' };
+export type PageKey = 'learning' | 'plugins' | 'plugin-creator' | 'usage';
+export const PAGE_TITLES: Readonly<Record<PageKey, string>> = {
+  learning: 'Learning', plugins: 'Plugins', 'plugin-creator': 'Plugin Creator', usage: 'Usage',
+};
 
 export interface PageStore {
   current(): PageKey | null;
