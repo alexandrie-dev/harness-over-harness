@@ -193,6 +193,9 @@ impl HarnessSdkJsonRpcServer {
             .ok_or_else(|| error("Session storage is unavailable"))?;
         let record = {
             let mut state = lock(&self.inner.state);
+            if state.deleted.contains(&id) {
+                return Ok(json!({}));
+            }
             if state.deleting.contains(&id)
                 || state.prompt_admissions.contains_key(&id)
                 || state
@@ -240,10 +243,22 @@ impl HarnessSdkJsonRpcServer {
                         "Chat is running or waiting for a response. Stop it before deleting.",
                     ));
                 }
+                agent.reserve_deletion()?;
             }
             state.deleting.insert(id.clone());
             state.sessions.shift_remove(&id)
         };
+        // Drain buffered user events while the reserved agent is still alive. A failed flush
+        // leaves the agent and its writer intact, so a later retry can persist the tail.
+        if let Err(failure) = persistence.prepare_delete(&id).await {
+            let mut state = lock(&self.inner.state);
+            if let Some(record) = record {
+                record.handle.agent.release_deletion();
+                state.sessions.insert(id.clone(), record);
+            }
+            state.deleting.remove(&id);
+            return Err(failure);
+        }
         let result = async {
             if let Some(record) = record {
                 record.handle.dispose().await?;
@@ -252,7 +267,13 @@ impl HarnessSdkJsonRpcServer {
             Ok(json!({}))
         }
         .await;
-        lock(&self.inner.state).deleting.remove(&id);
+        {
+            let mut state = lock(&self.inner.state);
+            state.deleting.remove(&id);
+            if result.is_ok() {
+                state.deleted.insert(id);
+            }
+        }
         result
     }
 

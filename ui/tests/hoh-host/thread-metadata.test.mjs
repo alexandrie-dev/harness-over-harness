@@ -156,3 +156,44 @@ test('rename, pin and archive do not wait for a cold conversation history', asyn
   assert.deepEqual([restored.title, restored.pinOrderKey, !!restored.archivedAt], ['Named while loading', 'first', true]);
   close(reopened);
 });
+
+test('del2 events and approval remain visible while a deletion is refused', async () => {
+  const f = fixture(); const first = await f.open();
+  await projection(first.client);
+  const original = first.engine.request.bind(first.engine);
+  let release; const gate = new Promise(resolve => { release = resolve; });
+  first.engine.request = async (method, params) => {
+    if (method === 'session/delete') { await gate; throw new Error('Chat is running'); }
+    return original(method, params);
+  };
+  const deleting = first.client.request('orchestration.dispatchCommand', { type: 'thread.delete', commandId: 'delete-gate', threadId: 'chat' });
+  for (let i = 0; i < 100 && !first.host.deletingThreads.has('chat'); i++) await tick(2);
+  assert(first.host.deletingThreads.has('chat'));
+  first.engine.emitStatus('chat', 'running');
+  first.engine.emitEvent('chat', 'assistant/message', { message: { id: 'during-delete', content: [{ type: 'text', text: 'answer during delete' }] } });
+  first.engine.askApproval('chat', 'approval-during-delete', 'Allow this?');
+  release(); assert.equal((await deleting)._tag, 'Failure');
+  const data = await first.client.call('orchestration.getThreadProjection', { threadId: 'chat' });
+  assert(data.turnItems.some(item => item.type === 'assistant_message' && item.text?.includes('answer during delete')));
+  assert(data.runtimeRequests.some(item => item.id === 'approval-during-delete'));
+  assert.equal(first.host.thread('chat').running, true);
+  close(first);
+});
+
+test('del2 a delayed message cannot send after its chat is deleted', async () => {
+  const f = fixture(); const first = await f.open();
+  await projection(first.client);
+  const original = first.engine.request.bind(first.engine);
+  let release, entered; const gate = new Promise(resolve => { release = resolve; });
+  const seen = new Promise(resolve => { entered = resolve; });
+  first.engine.request = async (method, params) => {
+    if (method === 'hoh/executor/select') { entered(); await gate; }
+    return original(method, params);
+  };
+  const sending = first.client.request('orchestration.dispatchCommand', { type: 'message.dispatch', commandId: 'send-gate', threadId: 'chat', messageId: 'late', text: 'late', attachments: [], modelSelection: { instanceId: 'claudeAgent', model: 'a-different-model' }, runtimeMode: 'approval-required' });
+  await seen;
+  await command(first.client, 'thread.delete'); release();
+  assert.equal((await sending)._tag, 'Failure');
+  assert.equal(first.engine.requests.some(request => request.method === 'session/prompt' && request.params.sessionId === 'chat'), false);
+  close(first);
+});

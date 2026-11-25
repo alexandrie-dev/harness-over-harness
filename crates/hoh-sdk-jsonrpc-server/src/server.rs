@@ -226,6 +226,7 @@ struct State {
     approval_requests: bool,
     sessions: IndexMap<SessionId, Arc<SessionRecord>>,
     deleting: std::collections::HashSet<SessionId>,
+    deleted: std::collections::HashSet<SessionId>,
     prompt_admissions: std::collections::HashMap<SessionId, usize>,
     creations: IndexMap<SessionId, Creation>,
     scheduled: IndexMap<SessionId, Creation>,
@@ -282,6 +283,7 @@ impl HarnessSdkJsonRpcServer {
                     approval_requests: false,
                     sessions: IndexMap::new(),
                     deleting: std::collections::HashSet::new(),
+                    deleted: std::collections::HashSet::new(),
                     prompt_admissions: std::collections::HashMap::new(),
                     creations: IndexMap::new(),
                     scheduled: IndexMap::new(),
@@ -1008,10 +1010,22 @@ impl HarnessSdkJsonRpcServer {
         }
     }
     async fn get_or_create_session(&self, id: SessionId) -> Result<Arc<SessionRecord>, BoxError> {
+        let stored = if let Some(persistence) = self.inner.ctx.get::<SessionPersistenceService>() {
+            let exists = persistence.stat(&id, None).await?.is_some();
+            if !exists && persistence.is_trashed(&id).await? {
+                return Err(error("Chat was deleted"));
+            }
+            exists
+        } else {
+            false
+        };
         let pending = {
             let mut state = lock(&self.inner.state);
             if state.shutting_down {
                 return Err(error("SDK server is shutting down"));
+            }
+            if state.deleted.contains(&id) {
+                return Err(error("Chat was deleted"));
             }
             if state.deleting.contains(&id) {
                 return Err(error("Chat is being deleted"));
@@ -1023,7 +1037,7 @@ impl HarnessSdkJsonRpcServer {
             if let Some(pending) = state.creations.get(&id) {
                 pending.clone()
             } else {
-                self.open_session_locked(&mut state, id, false)
+                self.open_session_locked(&mut state, id, stored)
             }
         };
         pending.await.map_err(Into::into)

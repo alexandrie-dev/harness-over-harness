@@ -350,6 +350,7 @@ export class HohHost {
   private readonly titleRequests = new Map<string, string>();
   /** A completed Claude turn waits for the person until they explicitly mark that exact turn done. */
   private readonly deletedThreads = new Set<string>();
+  private readonly deletingThreads = new Set<string>();
   private readonly homeDispositions = new Map<string, HomeDisposition>();
   /** Last engine-history timestamp classified for Home; a session changed while the window was away is read next start. */
   private readonly homeObservedAt = new Map<string, number>();
@@ -2082,6 +2083,8 @@ export class HohHost {
   private async send(thread: ThreadModel, messageId: string, text: string, attachments: unknown = [], interactionMode?: T3InteractionMode) {
     if (!thread.builtin) await this.requireAccess();
     if (!this.sessionAccessKnown.has(thread.id)) await this.notificationAccess.get(thread.id);
+    if (this.deletingThreads.has(thread.id) || this.deletedThreads.has(thread.id) || this.threads.get(thread.id) !== thread)
+      throw new Error('This chat is being deleted or was deleted.');
     if (!thread.bindingKnown && !thread.builtin) throw new Error('Conversation executor and access mode are unavailable.');
     const firstMessage = thread.userMessageCount() === 0;
     const images = this.keptImages(attachments);
@@ -2411,10 +2414,12 @@ ${message.slice(0, 8000)}`;
         }
         case 'thread.delete': {
           const target = needThread();
-          if (this.deletedThreads.has(target.id)) throw dispatchError(command, 'This chat is being deleted.');
-          this.deletedThreads.add(target.id);
+          if (this.deletingThreads.has(target.id) || this.deletedThreads.has(target.id)) throw dispatchError(command, 'This chat is being deleted.');
+          this.deletingThreads.add(target.id);
           try { await this.engine.request('session/delete', { sessionId: target.id }); }
-          catch (error) { this.deletedThreads.delete(target.id); throw error; }
+          catch (error) { this.deletingThreads.delete(target.id); this.resumedSessions.delete(target.id); throw error; }
+          this.deletedThreads.add(target.id);
+          this.deletingThreads.delete(target.id);
           this.threads.delete(target.id);
           this.dirty.delete(target.id);
           // Preserve window-owned project, title and preferences for manual recovery from trash.
