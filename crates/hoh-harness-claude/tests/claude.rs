@@ -421,7 +421,12 @@ async fn commands_and_skills_are_what_the_cli_declares_for_the_folder() {
         assert!(args.contains(&switch.to_owned()), "{switch}: {args:?}");
     }
     let at = args.iter().position(|arg| arg == "--settings").unwrap();
-    assert_eq!(args[at + 1], "{\"disableAllHooks\":true}");
+    let settings: serde_json::Value = serde_json::from_str(&args[at + 1]).unwrap();
+    assert_eq!(settings["disableAllHooks"], true);
+    assert_eq!(
+        settings["enabledPlugins"]["telegram@claude-plugins-official"],
+        false
+    );
     let at = args
         .iter()
         .position(|arg| arg == "--setting-sources")
@@ -2650,6 +2655,84 @@ async fn an_input_without_questions_has_no_questions_key_in_the_answer() {
 }
 
 #[tokio::test]
+async fn fake_script_checks_window_argv_across_personal_launches() {
+    let dir = tempfile::tempdir().unwrap();
+    let log = dir.path().join("argv.jsonl");
+    let fake = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../scripts/u4-fake-claude.py");
+    let config = ClaudeConfig {
+        executable: fake,
+        extra_env: vec![
+            ("U4_STUB".into(), STUB.into()),
+            ("U4_ARGV_LOG".into(), log.display().to_string()),
+            ("STUB_STATE".into(), dir.path().display().to_string()),
+            (
+                "STUB_ARGS_FILE".into(),
+                dir.path().join("args").display().to_string(),
+            ),
+            (
+                "CLAUDE_CONFIG_DIR".into(),
+                dir.path().join("config").display().to_string(),
+            ),
+        ],
+        ..ClaudeConfig::default()
+    };
+    let harness = ClaudeHarness::new(config);
+    harness.commands(dir.path().into()).await.unwrap();
+    let first = harness
+        .start_with_folder_trust(
+            params(dir.path(), None, HarnessPolicy::default()),
+            AccessMode::Confirm,
+            false,
+        )
+        .await
+        .unwrap();
+    let native = String::from(first.result.native_session_id.clone());
+    first.session.terminate(Duration::from_millis(500)).await;
+    let resumed = harness
+        .start_with_folder_trust(
+            params(dir.path(), Some(&native), HarnessPolicy::default()),
+            AccessMode::Confirm,
+            false,
+        )
+        .await
+        .unwrap();
+    resumed.session.terminate(Duration::from_millis(500)).await;
+    let trusted = harness
+        .start_with_folder_trust(
+            params(dir.path(), None, HarnessPolicy::default()),
+            AccessMode::Confirm,
+            true,
+        )
+        .await
+        .unwrap();
+    trusted.session.terminate(Duration::from_millis(500)).await;
+    harness.generate_title("title".into()).await.unwrap();
+    let records: Vec<Vec<String>> = std::fs::read_to_string(log)
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    assert!(records.iter().any(|args| args.contains(&"--resume".into())));
+    assert!(
+        records
+            .iter()
+            .any(|args| args.contains(&"user,project,local".into()))
+    );
+    assert!(
+        records
+            .iter()
+            .any(|args| args.contains(&"--mcp-config".into()))
+    );
+    let titles: Vec<_> = records
+        .iter()
+        .filter(|args| args.contains(&"--json-schema".into()))
+        .collect();
+    assert_eq!(titles.len(), 2);
+    assert!(titles[0].contains(&"--no-session-persistence".into()));
+    assert!(!titles[1].contains(&"--no-session-persistence".into()));
+}
+
+#[tokio::test]
 async fn the_argv_the_function_returns_is_the_one_the_process_gets() {
     for access in [
         AccessMode::Confirm,
@@ -2673,7 +2756,15 @@ async fn the_argv_the_function_returns_is_the_one_the_process_gets() {
             .harness()
             .argv(&policy, access, None, None, None, &native);
         assert_eq!(argv[0], STUB);
-        assert_eq!(argv[1..], args[..], "{access:?}");
+        assert_eq!(argv[1..], args[..argv.len() - 1], "{access:?}");
+        let overlay = &args[argv.len() - 1..];
+        assert_eq!(overlay.len(), 2);
+        assert_eq!(overlay[0], "--settings");
+        let settings: serde_json::Value = serde_json::from_str(&overlay[1]).unwrap();
+        assert_eq!(
+            settings["enabledPlugins"]["telegram@claude-plugins-official"],
+            false
+        );
         let has = |flag: &str| args.iter().any(|a| a == flag);
         match access {
             AccessMode::Confirm

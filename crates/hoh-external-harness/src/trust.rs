@@ -95,7 +95,7 @@ pub(crate) fn snapshot(folder: &Path) -> std::io::Result<Snapshot> {
 
 /// Git worktrees may read local settings from the main checkout as well as the worktree root.
 /// Inspect Git's metadata directly: discovering trust must never execute repository programs.
-fn settings_roots(folder: &Path) -> std::io::Result<BTreeSet<PathBuf>> {
+pub fn settings_roots(folder: &Path) -> std::io::Result<BTreeSet<PathBuf>> {
     let mut roots = BTreeSet::from([folder.to_path_buf()]);
     for ancestor in folder.ancestors() {
         let dotgit = ancestor.join(".git");

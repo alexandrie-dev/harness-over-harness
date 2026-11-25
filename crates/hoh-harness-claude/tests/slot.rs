@@ -358,7 +358,23 @@ async fn the_launch_flags_are_the_flags_the_process_gets() {
                 let mut expected: Vec<String> = STREAM.map(str::to_owned).to_vec();
                 expected.extend(flags.iter().cloned());
                 expected.extend(["--session-id".to_owned(), native]);
-                assert_eq!(args, expected, "{config} {access:?} {policy:?}");
+                assert_eq!(
+                    &args[..expected.len()],
+                    expected,
+                    "{config} {access:?} {policy:?}"
+                );
+                let overlay = &args[expected.len()..];
+                if config.get("settingSources").and_then(|v| v.as_str()) == Some("isolated") {
+                    assert!(overlay.is_empty());
+                } else {
+                    assert_eq!(overlay.len(), 2);
+                    assert_eq!(overlay[0], "--settings");
+                    let settings: serde_json::Value = serde_json::from_str(&overlay[1]).unwrap();
+                    assert_eq!(
+                        settings["enabledPlugins"]["telegram@claude-plugins-official"],
+                        false
+                    );
+                }
                 started.session.terminate(Duration::from_millis(500)).await;
             }
         }

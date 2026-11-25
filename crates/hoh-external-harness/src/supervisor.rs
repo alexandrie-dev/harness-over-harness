@@ -144,7 +144,17 @@ impl Supervisor {
         for name in &spec.env_remove {
             command.env_remove(name);
         }
-        command.envs(spec.env.iter().map(|(k, v)| (k, v)));
+        command.envs(
+            spec.env
+                .iter()
+                .filter(|(k, _)| !is_telegram_env(k))
+                .map(|(k, v)| (k, v)),
+        );
+        for (name, _) in std::env::vars_os() {
+            if name.to_string_lossy().starts_with("TELEGRAM_") {
+                command.env_remove(name);
+            }
+        }
         if let (Some(cwd), Some(expected)) = (&spec.cwd, spec.cwd_identity) {
             #[cfg(unix)]
             {
@@ -786,6 +796,22 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn telegram_environment_is_removed_from_supervised_process() {
+        let _alone = SPAWNING.lock().await;
+        let spec = ProcessSpec {
+            program: PathBuf::from("sh"),
+            args: vec!["-c".into(), r#"if env | grep -q '^TELEGRAM_'; then echo '{"clean":false}'; else echo '{"clean":true}'; fi"#.into()],
+            env: vec![("TELEGRAM_U4_EXPLICIT".into(), "secret".into()), ("HOH_U4_ALLOWED".into(), "yes".into())],
+            ..ProcessSpec::default()
+        };
+        let supervisor = Supervisor::spawn(&spec, SupervisorLimits::default(), None).unwrap();
+        let mut frames = supervisor.take_frames().unwrap();
+        assert!(
+            matches!(next_frame(&mut frames).await, Some(Frame::Message(value)) if value["clean"] == true)
+        );
+    }
+
+    #[tokio::test]
     async fn the_first_send_to_a_process_that_closed_its_stdin_fails() {
         // The process closes its stdin, says so, and lives on; no other start meanwhile.
         let _alone = SPAWNING.lock().await;
@@ -1034,4 +1060,9 @@ mod tests {
         let lines = stderr_lines(b"token=abc123def456 failed\n").await;
         assert_eq!(lines, [format!("token={REDACTED} failed")]);
     }
+}
+
+/// Telegram credentials and state are never inherited by external harnesses.
+pub fn is_telegram_env(name: &str) -> bool {
+    name.starts_with("TELEGRAM_")
 }

@@ -98,7 +98,18 @@ async fn check_version(config: &CodexConfig) -> VersionCheck {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true)
-        .envs(config.extra_env.iter().map(|(name, value)| (name, value)));
+        .envs(
+            config
+                .extra_env
+                .iter()
+                .filter(|(name, _)| !hoh_external_harness::supervisor::is_telegram_env(name))
+                .map(|(name, value)| (name, value)),
+        );
+    for (name, _) in std::env::vars_os() {
+        if name.to_string_lossy().starts_with("TELEGRAM_") {
+            command.env_remove(name);
+        }
+    }
     let output = match tokio::time::timeout(config.version_timeout, command.output()).await {
         Ok(Ok(output)) => output,
         Ok(Err(error))
