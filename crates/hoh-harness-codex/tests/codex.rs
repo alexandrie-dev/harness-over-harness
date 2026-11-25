@@ -182,8 +182,8 @@ async fn every_mode_is_present_on_thread_and_first_turn() {
             AccessMode::Confirm,
             "untrusted",
             "user",
-            "read-only",
-            "readOnly",
+            "workspace-write",
+            "workspaceWrite",
         ),
         (
             AccessMode::AutoAcceptEdits,
@@ -264,6 +264,19 @@ async fn every_mode_is_present_on_thread_and_first_turn() {
                 .and_then(Value::as_str),
             Some(turn_sandbox)
         );
+        if mode == AccessMode::Confirm {
+            assert_eq!(thread["params"]["approvalPolicy"], "untrusted");
+            assert_eq!(
+                turn["params"]["sandboxPolicy"]["writableRoots"],
+                serde_json::json!([temp.path().to_str().unwrap()])
+            );
+        } else {
+            assert!(
+                turn["params"]["sandboxPolicy"]
+                    .get("writableRoots")
+                    .is_none()
+            );
+        }
         if approval == "granular" {
             assert_eq!(
                 turn.pointer("/params/approvalPolicy/granular/sandbox_approval")
@@ -318,6 +331,111 @@ async fn a_future_model_effort_is_forwarded_without_a_hard_coded_allowlist() {
         turn.pointer("/params/effort").and_then(Value::as_str),
         Some("super-high")
     );
+}
+
+#[tokio::test]
+async fn supervised_single_approval_uses_writable_project_and_single_use_accept() {
+    let temp = TempDir::new().unwrap();
+    let (harness, log) = harness(&temp, "supervised-write");
+    let mut started = harness
+        .start_with_access(start_params(&temp, None), AccessMode::Confirm)
+        .await
+        .unwrap();
+    started
+        .session
+        .prompt(PromptParams {
+            session_id: "hoh-session".into(),
+            turn_id: "turn-hoh".into(),
+            text: "create a file".into(),
+            images: Vec::new(),
+        })
+        .await
+        .unwrap();
+    let request_id = loop {
+        if let HarnessEvent::ApprovalRequested { request_id, .. } = event(&mut started.events).await
+        {
+            break request_id;
+        }
+    };
+    started
+        .session
+        .respond(RespondParams {
+            session_id: "hoh-session".into(),
+            request_id,
+            response: HarnessResponse::Approval {
+                decision: ApprovalDecision::Allow,
+            },
+        })
+        .await
+        .unwrap();
+    loop {
+        match event(&mut started.events).await {
+            HarnessEvent::ApprovalRequested { .. } => panic!("unexpected second approval"),
+            HarnessEvent::TurnCompleted { .. } => break,
+            HarnessEvent::SessionEnded {
+                reason, message, ..
+            } => panic!("stub failed: {reason:?}: {message:?}"),
+            _ => {}
+        }
+    }
+    assert_eq!(
+        fs::read_to_string(temp.path().join("approved.txt")).unwrap(),
+        "approved"
+    );
+    started.session.terminate(Duration::from_millis(100)).await;
+    let wire = lines(&log);
+    let argv = wire.iter().find(|v| v["stubEvent"] == "argv").unwrap();
+    assert_eq!(argv["args"][0], "app-server");
+    let answer = wire.iter().find(|v| v["id"] == "approval-command").unwrap();
+    assert_eq!(answer["result"]["decision"], "accept");
+}
+
+#[tokio::test]
+async fn approving_file_change_is_single_use_accept() {
+    let temp = TempDir::new().unwrap();
+    let (harness, log) = harness(&temp, "approvals");
+    let mut started = harness
+        .start_with_access(start_params(&temp, None), AccessMode::Confirm)
+        .await
+        .unwrap();
+    started
+        .session
+        .prompt(PromptParams {
+            session_id: "hoh-session".into(),
+            turn_id: "turn-hoh".into(),
+            text: "edit a file".into(),
+            images: Vec::new(),
+        })
+        .await
+        .unwrap();
+    for _ in 0..2 {
+        let request_id = loop {
+            if let HarnessEvent::ApprovalRequested { request_id, .. } =
+                event(&mut started.events).await
+            {
+                break request_id;
+            }
+        };
+        started
+            .session
+            .respond(RespondParams {
+                session_id: "hoh-session".into(),
+                request_id,
+                response: HarnessResponse::Approval {
+                    decision: ApprovalDecision::Allow,
+                },
+            })
+            .await
+            .unwrap();
+    }
+    while !matches!(
+        event(&mut started.events).await,
+        HarnessEvent::TurnCompleted { .. }
+    ) {}
+    started.session.terminate(Duration::from_millis(100)).await;
+    let wire = lines(&log);
+    let answer = wire.iter().find(|v| v["id"] == 71).unwrap();
+    assert_eq!(answer["result"]["decision"], "accept");
 }
 
 #[tokio::test]

@@ -160,8 +160,8 @@ pub(crate) fn mode_settings(access: hoh_external_harness::AccessMode) -> ModeSet
         AccessMode::Confirm => ModeSettings {
             approval_policy: json!("untrusted"),
             reviewer: "user",
-            sandbox: "read-only",
-            sandbox_policy: json!({"type":"readOnly"}),
+            sandbox: "workspace-write",
+            sandbox_policy: json!({"type":"workspaceWrite"}),
         },
         AccessMode::AutoAcceptEdits | AccessMode::AcceptEdits => ModeSettings {
             approval_policy: json!("on-request"),
@@ -483,6 +483,11 @@ impl CodexSession {
             "summary": "auto"
         });
         drop(state);
+        // Supervised commands still require approval, but an approved command needs the
+        // project's writable sandbox rather than a read-only sandbox and a second escalation.
+        if mode.approval_policy == json!("untrusted") {
+            params["sandboxPolicy"]["writableRoots"] = json!([self.inner.cwd]);
+        }
         if let Some(model) = &self.inner.model {
             params["model"] = json!(model);
         }
