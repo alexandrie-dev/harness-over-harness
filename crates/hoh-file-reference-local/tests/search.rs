@@ -373,7 +373,7 @@ async fn still_offers_a_lib_tree_where_several_ecosystems_keep_their_sources() {
 #[tokio::test]
 async fn disposing_a_search_aborts_its_pending_first_traversal() {
     let work = workspace();
-    let files = WorkspaceFileSearch::new(work.text(), FileSearchConfig::default()).unwrap();
+    let files = search(&work.text(), default_config());
     let abort = signal();
     let pending = files.list("README", &abort);
     tokio::pin!(pending);
