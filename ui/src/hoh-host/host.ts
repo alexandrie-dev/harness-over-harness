@@ -24,7 +24,7 @@ import { usagePricing, usageSummary, type UsageSummaryInput } from './usage.ts';
 import type { EngineNotification, EngineQuestion, EngineQuestionAnswer, HohEngine, LocalImageAsset } from './engine.ts';
 import { base64Of, readUploads, searchAnswer, skillsAsCommands, stripAttachedImageReferences, UPLOAD_PATH, UPLOAD_TTL_MS, uploadSlot, workspaceSnapshot, type KeptImage, type UploadSlot } from './composer.ts';
 import { englishError, hostFailure } from './errors.ts';
-import { folderProject, HOH_PROJECT_ID, hohProject, ThreadModel, type FolderProject, type HomeEntry } from './threads.ts';
+import { folderProject, HOH_PROJECT_ID, hohProject, ThreadModel, type FolderProject, type HomeEntry, type Item } from './threads.ts';
 import { RpcFailure, type Handlers, type StreamSink } from './wire.ts';
 import { ThreadMetadataStore } from './thread-metadata.ts';
 import {
@@ -202,6 +202,26 @@ const effectiveSessionMode = (session: any, fallback: HohAccessMode): HohAccessM
   ?? exactMode(session?.runtimeMode) ?? exactMode(session?.mode) ?? fallback;
 
 const PAGE = 1000;
+const TIMELINE_ROWS = 80;
+const EARLIER_TIMELINE_ROWS = 160;
+// Resume cursors are local to the current document. Do not recycle one if the host is re-created in it.
+let threadSequence = 0;
+
+interface StreamChange {
+  readonly from: number;
+  readonly items: Map<string, { item: Item; sequence: number }>;
+}
+
+interface JournalRead {
+  readonly generation: number;
+  afterSeq: number | undefined;
+  ready: boolean;
+  pending?: Promise<void>;
+  notifications: { notification: EngineNotification; at: number }[];
+  watermarks: { index: number; seq: number }[];
+  delivered: number;
+  watermark: number;
+}
 const NO_OP_COMMANDS = new Set([
   'thread.visit', 'thread.mark-unread', 'thread.settle', 'thread.unsettle', 'thread.auto-settle', 'thread.auto-settle.set',
   'thread.active.reorder', 'thread.tag.set', 'thread.snooze', 'thread.unsnooze',
@@ -257,6 +277,7 @@ export class HohHost {
   /** Last-known rows wait here until `access/get` supplies their real runtime mode. */
   private readonly savedSessions: any[] = [];
   private readonly loading = new Map<string, Promise<ThreadModel | undefined>>();
+  private readonly journals = new WeakMap<ThreadModel, JournalRead>();
   private readonly resumedSessions = new Set<string>();
   private readonly resumingSessions = new Map<string, Promise<void>>();
   private readonly questions = new Map<string, EngineQuestion>();
@@ -264,6 +285,11 @@ export class HohHost {
   private readonly shellCompletionSinks = new Set<StreamSink>();
   private readonly lifecycleSinks = new Set<StreamSink>();
   private readonly threadSinks = new Map<string, Set<StreamSink>>();
+  private readonly sinkSequences = new WeakMap<StreamSink, number>();
+  private readonly boundedSinks = new WeakSet<StreamSink>();
+  private readonly timelineStarts = new WeakMap<ThreadModel, number>();
+  private readonly threadSequences = new WeakMap<ThreadModel, number>();
+  private readonly streamChanges = new Map<string, StreamChange>();
   private readonly configSinks = new Set<StreamSink>();
   private readonly dirty = new Set<string>();
   private flushTimer: ReturnType<typeof setTimeout> | undefined;
@@ -484,11 +510,10 @@ export class HohHost {
   private save() {
     if (!this.storage) return;
     const sessions = [...this.threads.values()].flatMap(thread => {
-      const shell = thread.shell();
       // A local empty draft has not reached the engine and must not become a ghost after restart.
-      if (thread.loaded && shell.latestUserMessageAt === null) return [];
+      if (thread.loaded && thread.userMessageCount() === 0) return [];
       return [{
-        id: thread.id, title: shell.title, projectId: thread.projectId, executor: thread.executor, model: thread.model, mode: thread.mode,
+        id: thread.id, title: thread.titleText(), projectId: thread.projectId, executor: thread.executor, model: thread.model, mode: thread.mode,
         createdAt: thread.createdAt, updatedAt: thread.updatedAt, archivedAt: thread.archivedAt,
         homeProjectStats: thread.homeProjectStats,
         pluginCreator: thread.pluginCreator,
@@ -511,6 +536,7 @@ export class HohHost {
     thread.options = list.length ? list as any : undefined;
     if (list.length) this.levels.set(thread.id, list as any); else this.levels.delete(thread.id);
     this.save();
+    this.changed(thread.id);
   }
 
   private homeOf(threadId: string) {
@@ -1369,7 +1395,7 @@ export class HohHost {
           existing.model = model;
           existing.mode = mode;
           inventoryChanged = true;
-          if (this.shellSinks.size) this.changed(session.id);
+          if (existing.loaded || this.shellSinks.size) this.changed(session.id);
         }
         if (this.restored.delete(session.id)) {
           // The cache is only continuity for the first snapshot. Once this session is visible on
@@ -1468,21 +1494,16 @@ export class HohHost {
       if (this.stopped) return;
       try {
         const previousPluginCreator = thread.pluginCreator;
-        let afterSeq: number | undefined;
-        for (;;) {
-          const page = await this.engine.request('session/events', { sessionId: thread.id, limit: PAGE, ...(afterSeq === undefined ? {} : { afterSeq }) });
-          if (this.stopped) return;
-          const events: any[] = Array.isArray(page?.events) ? page.events : [];
-          for (const event of events) thread.applyEvent(event);
-          if (events.length < PAGE || (afterSeq !== undefined && page.nextSeq <= afterSeq)) break;
-          afterSeq = page.nextSeq;
-        }
+        const journal = this.journalFor(thread);
+        await this.replayJournal(thread, journal);
+        if (!this.currentJournal(thread, journal) || thread.loaded) return;
         // The engine's own word on whether the chat is working (`access/get` of the chat), when it gives one.
         try {
           const generation = this.modeGenerations.get(thread.id) ?? 0;
           const processGeneration = this.accessProcessGeneration;
           const own = (await this.engine.request('hoh/executor/access/get', { executor: thread.executor, sessionId: thread.id }))?.session;
-          if (own && generation === (this.modeGenerations.get(thread.id) ?? 0) && processGeneration === this.accessProcessGeneration) {
+          if (own && this.currentJournal(thread, journal) && !thread.loaded
+            && generation === (this.modeGenerations.get(thread.id) ?? 0) && processGeneration === this.accessProcessGeneration) {
             const boundMode = exactMode(own.runtimeMode);
             if ((own.executor === 'claude' || own.executor === 'codex') && boundMode && (!thread.bindingKnown || thread.executor === own.executor)) {
               thread.executor = own.executor;
@@ -1503,7 +1524,7 @@ export class HohHost {
             }
           }
         } catch { /* unknown: the history decides */ }
-        if (this.stopped) return;
+        if (!this.currentJournal(thread, journal) || thread.loaded) return;
         this.applyThreadMetadata(thread);
         thread.settleUnfinished(this.now());
         this.peeked.add(thread.id);
@@ -1552,8 +1573,72 @@ export class HohHost {
     await pending;
   }
 
+  private journalFor(thread: ThreadModel) {
+    let journal = this.journals.get(thread);
+    if (!journal || journal.generation !== this.accessProcessGeneration) {
+      journal = {
+        generation: this.accessProcessGeneration, afterSeq: journal?.afterSeq, ready: false,
+        notifications: [], watermarks: [], delivered: 0, watermark: 0,
+      };
+      this.journals.set(thread, journal);
+    }
+    return journal;
+  }
+
+  private currentJournal(thread: ThreadModel, journal: JournalRead) {
+    return !this.stopped && journal.generation === this.accessProcessGeneration && this.threads.get(thread.id) === thread;
+  }
+
+  private deliverJournalNotifications(journal: JournalRead, end: number) {
+    while (journal.delivered < end) {
+      const { notification, at } = journal.notifications[journal.delivered++];
+      this.onNotification(notification, at, true);
+    }
+  }
+
+  /** Home and the open chat share completed pages and the same in-flight read. */
+  private replayJournal(thread: ThreadModel, journal: JournalRead) {
+    if (journal.pending) return journal.pending;
+    journal.ready = false;
+    const pending = (async () => {
+      for (;;) {
+        if (!this.currentJournal(thread, journal)) throw new Error('The conversation changed while reading history.');
+        const afterSeq = journal.afterSeq;
+        const page = await this.engine.request('session/events', { sessionId: thread.id, limit: PAGE, ...(afterSeq === undefined ? {} : { afterSeq }) });
+        if (!this.currentJournal(thread, journal)) throw new Error('The conversation changed while reading history.');
+        const events = page?.events;
+        if (!Array.isArray(events)) throw new Error('Invalid conversation history.');
+        let nextSeq = afterSeq ?? -1;
+        for (const event of events) {
+          if (!Number.isSafeInteger(event?.seq) || event.seq <= nextSeq) throw new Error('Conversation history did not advance.');
+          nextSeq = event.seq;
+        }
+        if (nextSeq !== page.nextSeq) throw new Error('Invalid conversation history cursor.');
+        // A live message may arrive before the historical turn it belongs to. Merge ordered
+        // notifications at their durable sequence, including the frames preceding that event.
+        for (const event of events) {
+          while (journal.watermarks[journal.watermark]?.seq <= event.seq) {
+            this.deliverJournalNotifications(journal, journal.watermarks[journal.watermark++].index + 1);
+          }
+          thread.applyEvent(event);
+        }
+        journal.afterSeq = nextSeq;
+        if (events.length === PAGE) continue;
+        journal.ready = true;
+        this.deliverJournalNotifications(journal, journal.notifications.length);
+        journal.notifications = [];
+        journal.watermarks = [];
+        journal.delivered = 0;
+        journal.watermark = 0;
+        return;
+      }
+    })().finally(() => { journal.pending = undefined; });
+    journal.pending = pending;
+    return pending;
+  }
+
   /** A cached conversation can be opened before the desktop transport finishes connecting. */
-  private async readThreadHistory(thread: ThreadModel) {
+  private async readThreadHistory(thread: ThreadModel, journal: JournalRead) {
     const retryable = (error: unknown) => {
       const { code } = hostFailure(error);
       // The desktop bridge reports queue saturation and send failures as `failed`.
@@ -1561,21 +1646,18 @@ export class HohHost {
     };
     for (let attempt = 0; ; attempt++) {
       try {
+        const joiningBeforeResume = !this.resumedSessions.has(thread.id) && journal.pending !== undefined;
         try { await this.ensureSessionResumed(thread.id); }
         catch (error) {
           if (retryable(error)) throw error;
           // Already open, or recoverable as a read-only log.
         }
-        let afterSeq: number | undefined;
-        for (;;) {
-          const page = await this.engine.request('session/events', { sessionId: thread.id, limit: PAGE, ...(afterSeq === undefined ? {} : { afterSeq }) });
-          const events: any[] = Array.isArray(page?.events) ? page.events : [];
-          for (const event of events) thread.applyEvent(event);
-          if (events.length < PAGE || (afterSeq !== undefined && page.nextSeq <= afterSeq)) return;
-          afterSeq = page.nextSeq;
-        }
+        await this.replayJournal(thread, journal);
+        // A slow read that began before resume may still have returned the pre-resume log.
+        if (joiningBeforeResume) await this.replayJournal(thread, journal);
+        return;
       } catch (error) {
-        if (this.stopped || attempt >= this.loadRetries || !retryable(error)) throw error;
+        if (!this.currentJournal(thread, journal) || attempt >= this.loadRetries || !retryable(error)) throw error;
         await new Promise<void>(resolve => setTimeout(resolve, this.loadRetryMs));
         if (this.stopped) throw error;
       }
@@ -1589,9 +1671,10 @@ export class HohHost {
     if (!thread || thread.loaded) return thread;
     let pending = this.loading.get(threadId);
     if (!pending) {
+      const journal = this.journalFor(thread);
       pending = (async () => {
-        await this.readThreadHistory(thread);
-        if (this.deletedThreads.has(threadId)) return undefined;
+        await this.readThreadHistory(thread, journal);
+        if (!this.currentJournal(thread, journal)) return undefined;
         thread.settleUnfinished(this.now());
         // The model this chat is bound to (a chat that has had a turn keeps its own).
         const modeGeneration = this.modeGenerations.get(threadId) ?? 0;
@@ -1613,8 +1696,7 @@ export class HohHost {
             if (own?.runningRuntimeMode != null) thread.setRunningInteractionMode(own.runningRuntimeMode === 'plan' ? 'plan' : 'default');
           }
         } catch { /* the chat follows the choice for new chats */ }
-        if (this.deletedThreads.has(threadId)) return undefined;
-        thread.loaded = true;
+        if (!this.currentJournal(thread, journal)) return undefined;
         // Place the chat before publishing what its history taught us. Otherwise the first
         // `thread.updated` briefly assigns a chat with a known cwd to "No project".
         if (thread.cwd) {
@@ -1622,12 +1704,18 @@ export class HohHost {
           this.settleLocalImageContext(threadId, thread);
         }
         else if (!this.workspaceKnown && thread.projectId === HOH_PROJECT_ID) {
-          try { await this.ensureSessionResumed(threadId); this.setWorkspaceRoot((await this.engine.request('session/working-directory/get', { sessionId: threadId }))?.cwd); } catch { /* the placeholder stays */ }
+          try {
+            await this.ensureSessionResumed(threadId);
+            const directory = await this.engine.request('session/working-directory/get', { sessionId: threadId });
+            if (this.currentJournal(thread, journal)) this.setWorkspaceRoot(directory?.cwd);
+          } catch { /* the placeholder stays */ }
         }
+        if (!this.currentJournal(thread, journal)) return undefined;
+        thread.loaded = true;
         // The list row learns what the history knows (a title from the first message, the last answer).
         this.changed(threadId);
         return thread;
-      })().finally(() => this.loading.delete(threadId));
+      })().finally(() => { if (this.loading.get(threadId) === pending) this.loading.delete(threadId); });
       this.loading.set(threadId, pending);
     }
     return pending;
@@ -1710,29 +1798,55 @@ export class HohHost {
     } catch { /* No proof or storage: the banner must not claim a saved launch. */ }
   }
 
-  private onNotification(notification: EngineNotification) {
+  private onNotification(notification: EngineNotification, at = this.now(), replaying = false) {
     const params = notification.params ?? {};
+    const eventType = params.event?.type;
+    if (!replaying && notification.method === 'session.event'
+      && (eventType === 'plugin:external-harness/folder-trust-changed' || eventType === 'plugin:external-harness/launch')) {
+      const thread = this.threadFor(params.sessionId);
+      if (thread) {
+        const revision = (this.projectTrustRevisions.get(thread.id) ?? 0) + 1;
+        this.projectTrustRevisions.set(thread.id, revision);
+        try { if (this.threadMetadata.get(thread.id).appliedProjectTrust) this.threadMetadata.update(thread.id, { appliedProjectTrust: null }); } catch { /* Storage is optional. */ }
+        if (eventType === 'plugin:external-harness/launch') void this.rememberProjectTrust(thread, revision);
+      }
+    }
+    if (!replaying && (notification.method === 'session.event' || notification.method === 'session.assistant-stream' || notification.method === 'session.status')) {
+      const thread = this.threads.get(params.sessionId);
+      if (thread && !thread.loaded) {
+        const journal = this.journalFor(thread);
+        if (!journal.ready) {
+          this.resumedSessions.add(thread.id);
+          if (notification.method === 'session.status') {
+            // Inventory access reads must not supersede new information from the running process.
+            this.modeGenerations.set(thread.id, (this.modeGenerations.get(thread.id) ?? 0) + 1);
+            void this.refreshThreadMode(thread);
+          }
+          if (notification.method === 'session.event' && Number.isSafeInteger(params.event?.seq)) {
+            journal.watermarks.push({ index: journal.notifications.length, seq: params.event.seq });
+          }
+          journal.notifications.push({ notification, at });
+          if (!journal.pending) {
+            this.peeked.delete(thread.id);
+            this.schedulePeekToday();
+          }
+          return;
+        }
+      }
+    }
     switch (notification.method) {
       case 'session.event': {
         const thread = this.threadFor(params.sessionId);
         if (thread?.applyEvent(params.event)) {
-          if (!thread.loaded && !this.peeked.has(thread.id)) this.schedulePeekToday();
+          if (!replaying && !thread.loaded && !this.peeked.has(thread.id)) this.schedulePeekToday();
           this.changed(thread.id);
         }
-        if (thread && params.event?.type === 'plugin:external-harness/folder-trust-changed') {
-          this.projectTrustRevisions.set(thread.id, (this.projectTrustRevisions.get(thread.id) ?? 0) + 1);
-          try { if (this.threadMetadata.get(thread.id).appliedProjectTrust) this.threadMetadata.update(thread.id, { appliedProjectTrust: null }); } catch { /* Storage is optional. */ }
-        }
         if (thread && params.event?.type === 'plugin:external-harness/launch') {
-          const trustRevision = (this.projectTrustRevisions.get(thread.id) ?? 0) + 1;
-          this.projectTrustRevisions.set(thread.id, trustRevision);
-          try { if (this.threadMetadata.get(thread.id).appliedProjectTrust) this.threadMetadata.update(thread.id, { appliedProjectTrust: null }); } catch { /* Storage is optional. */ }
-          void this.rememberProjectTrust(thread, trustRevision);
           const runningPlan = params.event?.data?.runtimeMode === 'plan';
           const mode = runningPlan ? 'confirm' : exactMode(params.event?.data?.runtimeMode);
           if (mode) {
             thread.setRunningInteractionMode(runningPlan || params.event?.data?.interactionMode === 'plan' ? 'plan' : 'default');
-            thread.setRunning(true, this.now());
+            thread.setRunning(true, at);
             this.sessionAccessKnown.add(thread.id);
             this.modeGenerations.set(thread.id, (this.modeGenerations.get(thread.id) ?? 0) + 1);
             thread.mode = mode;
@@ -1742,7 +1856,7 @@ export class HohHost {
         }
         if (thread && params.event?.type === 'turn/start') void this.refreshThreadMode(thread);
         // The end of a turn reaches the thread list at once: the sidebar's "Working" must not wait for the next change.
-        if (thread && params.event?.type === 'turn/end') this.flush();
+        if (!replaying && thread && params.event?.type === 'turn/end') this.flush();
         if (thread && params.event?.type === 'working-directory/change') {
           this.placeByFolder(thread);
           if (thread.cwd) this.settleLocalImageContext(thread.id, thread);
@@ -1751,26 +1865,30 @@ export class HohHost {
       }
       case 'session.assistant-stream': {
         const thread = this.threadFor(params.sessionId);
-        if (thread?.applyStreamFrame(params.frame ?? {}, this.now())) this.changed(thread.id);
+        const change = thread?.applyStreamFrame(params.frame ?? {}, at);
+        if (thread && change) {
+          if (thread.loaded && typeof change !== 'boolean') this.streamChanged(thread, change);
+          else this.changed(thread.id);
+        }
         return;
       }
       case 'session.status': {
         const thread = this.threadFor(params.sessionId);
-        if (thread?.setRunning(params.status === 'running', this.now())) { this.changed(thread.id); if (params.status !== 'running') this.flush(); }
-        if (thread) void this.refreshThreadMode(thread);
+        if (thread?.setRunning(params.status === 'running', at)) { this.changed(thread.id); if (!replaying && params.status !== 'running') this.flush(); }
+        if (thread && !replaying) void this.refreshThreadMode(thread);
         return;
       }
       case 'approval.pending': {
         const thread = this.threadFor(params.sessionId);
-        if (thread?.approvalPending(params, this.now())) this.changed(thread.id);
+        if (thread?.approvalPending(params, at)) this.changed(thread.id);
         return;
       }
       case 'approval.resolved':
-        for (const thread of this.threads.values()) if (thread.approvalResolved(params, this.now())) this.changed(thread.id);
+        for (const thread of this.threads.values()) if (thread.approvalResolved(params, at)) this.changed(thread.id);
         return;
       case 'user-question.cancelled': {
         this.questions.delete(params.requestId);
-        for (const thread of this.threads.values()) if (thread.questionClosed(params.requestId, null, this.now())) this.changed(thread.id);
+        for (const thread of this.threads.values()) if (thread.questionClosed(params.requestId, null, at)) this.changed(thread.id);
         return;
       }
       default: return;
@@ -1789,6 +1907,7 @@ export class HohHost {
     this.accessProcessGeneration++;
     this.resumedSessions.clear();
     this.resumingSessions.clear();
+    this.loading.clear();
     this.notificationAccess.clear();
     this.sessionAccessKnown.clear();
     this.mode = null;
@@ -1806,6 +1925,10 @@ export class HohHost {
   private homeChanged() {
     if (this.stopped) return;
     this.homeDirty = true;
+    this.scheduleFlush();
+  }
+
+  private scheduleFlush() {
     if (this.flushTimer) return;
     this.flushTimer = setTimeout(() => this.flush(), this.throttleMs);
     // Node's test host should not stay alive solely for a deferred UI notification.
@@ -1814,8 +1937,24 @@ export class HohHost {
 
   private changed(threadId: string) {
     if (this.stopped) return;
+    const thread = this.threads.get(threadId);
+    if (thread) this.threadSequences.set(thread, ++threadSequence);
     this.dirty.add(threadId);
+    this.streamChanges.delete(threadId);
     this.homeChanged();
+  }
+
+  private streamChanged(thread: ThreadModel, item: Item) {
+    if (this.stopped) return;
+    const from = this.projectionSequence(thread);
+    const sequence = ++threadSequence;
+    this.threadSequences.set(thread, sequence);
+    // A queued structural change will deliver a full snapshot with the latest text.
+    if (this.dirty.has(thread.id)) return;
+    let change = this.streamChanges.get(thread.id);
+    if (!change) this.streamChanges.set(thread.id, change = { from, items: new Map() });
+    change.items.set(item.id, { item, sequence });
+    this.scheduleFlush();
   }
 
   private accessVisible(threadId: string) {
@@ -1841,13 +1980,107 @@ export class HohHost {
       const thread = this.threads.get(id);
       if (!thread || !this.accessVisible(id)) continue;
       this.sequence++;
-      for (const sink of this.shellSinks) sink.emit({ kind: 'thread.updated', sequence: this.sequence, location: thread.archivedAt === null ? 'active' : 'archive', thread: thread.shell() });
-      for (const sink of this.threadSinks.get(id) ?? []) sink.emit(this.threadSnapshot(thread));
+      if (this.shellSinks.size) {
+        const update = { kind: 'thread.updated', sequence: this.sequence, location: thread.archivedAt === null ? 'active' : 'archive', thread: thread.shell() };
+        for (const sink of this.shellSinks) sink.emit(update);
+      }
+      this.publishThread(thread);
     }
+    for (const [id, change] of this.streamChanges) {
+      const thread = this.threads.get(id);
+      if (thread) this.publishThread(thread, change);
+    }
+    this.streamChanges.clear();
   }
 
-  private threadSnapshot(thread: ThreadModel) {
-    return { kind: 'snapshot', snapshotSequence: this.sequence, projection: thread.projection() };
+  private projectionSequence(thread: ThreadModel) {
+    // A provisional snapshot can paint but cannot serve as a resume baseline.
+    if (!thread.loaded) return 0;
+    const existing = this.threadSequences.get(thread);
+    if (existing !== undefined) return existing;
+    const sequence = ++threadSequence;
+    this.threadSequences.set(thread, sequence);
+    return sequence;
+  }
+
+  private threadSnapshot(thread: ThreadModel, snapshotSequence = this.projectionSequence(thread), bounded = false) {
+    const projection = thread.projection();
+    if (!bounded || !thread.loaded) return { kind: 'snapshot', snapshotSequence, projection };
+    const rows = projection.visibleTurnItems;
+    const first = Math.max(0, rows.length - TIMELINE_ROWS);
+    const retainedStart = this.timelineStarts.get(thread);
+    const start = retainedStart === undefined ? first
+      : rows.findIndex(row => row.item.ordinal >= retainedStart);
+    const latestLocalTurnOrdinal = projection.turnItems.at(-1)?.ordinal ?? null;
+    if (start <= 0) return { kind: 'snapshot', snapshotSequence, projection, historyCursor: null, hasMoreHistory: false, latestLocalTurnOrdinal };
+    const boundary = rows[start].item.ordinal;
+    this.timelineStarts.set(thread, boundary);
+
+    // Keep unanswered decisions and their controls even if a turn has a very long tool log.
+    const pending = new Set(projection.runtimeRequests.filter(request => request.status === 'pending').map(request => request.id));
+    const inWindow = (item: Item) => item.ordinal >= boundary || item.streaming === true || pending.has(item.requestId);
+    const visibleTurnItems = rows.filter(row => inWindow(row.item));
+    const turnItems = projection.turnItems.filter(inWindow);
+    const messageIds = new Set(turnItems.map(item => item.messageId));
+    return {
+      kind: 'snapshot', snapshotSequence,
+      projection: {
+        ...projection, turnItems, visibleTurnItems,
+        messages: projection.messages.filter(message => messageIds.has(message.id)),
+      },
+      historyCursor: String(boundary), hasMoreHistory: true, latestLocalTurnOrdinal,
+    };
+  }
+
+  /** The local HTTP endpoints used by T3 to open and extend its visible timeline. */
+  async readTimeline(threadId: string, beforeOrdinal?: number) {
+    await this.start();
+    const thread = await this.loaded(threadId);
+    if (!thread) return undefined;
+    if (beforeOrdinal === undefined) {
+      const { kind: _kind, ...snapshot } = this.threadSnapshot(thread, this.projectionSequence(thread), true);
+      return snapshot;
+    }
+    const rows = thread.projection().visibleTurnItems;
+    const found = rows.findIndex(row => row.item.ordinal >= beforeOrdinal);
+    const end = found < 0 ? rows.length : found;
+    let start = Math.max(0, end - EARLIER_TIMELINE_ROWS);
+    // Ordinarily begin on a user message, keeping its answer and tool log with it.
+    while (start > 0 && end - start < EARLIER_TIMELINE_ROWS * 2 && rows[start].item.type !== 'user_message') start--;
+    const items = rows.slice(start, end);
+    const first = items[0]?.item.ordinal;
+    if (first !== undefined) this.timelineStarts.set(thread, Math.min(this.timelineStarts.get(thread) ?? beforeOrdinal, first));
+    return {
+      snapshotSequence: this.projectionSequence(thread), items,
+      nextCursor: start > 0 ? String(first) : null, hasMoreHistory: start > 0,
+    };
+  }
+
+  private publishThread(thread: ThreadModel, change?: StreamChange) {
+    const sinks = this.threadSinks.get(thread.id);
+    if (!sinks?.size) return;
+    const sequence = this.projectionSequence(thread);
+    let snapshot: ReturnType<HohHost['threadSnapshot']> | undefined;
+    let boundedSnapshot: ReturnType<HohHost['threadSnapshot']> | undefined;
+    let updates: unknown[] | undefined;
+    for (const sink of sinks) {
+      const before = this.sinkSequences.get(sink);
+      if (before === undefined || (sequence !== 0 && before === sequence)) continue;
+      if (change && before === change.from) {
+        updates ??= [...change.items.values()].sort((a, b) => a.sequence - b.sequence).map(({ item, sequence }) => ({
+          kind: 'event', sequence, event: {
+            type: 'turn-item.updated', id: 'stream-' + sequence, threadId: thread.id,
+            occurredAt: item.updatedAt, payload: { ...item },
+          },
+        }));
+        sink.emit(...updates);
+      } else if (this.boundedSinks.has(sink)) {
+        sink.emit(boundedSnapshot ??= this.threadSnapshot(thread, sequence, true));
+      } else {
+        sink.emit(snapshot ??= this.threadSnapshot(thread, sequence));
+      }
+      this.sinkSequences.set(sink, sequence);
+    }
   }
 
   private config() {
@@ -2175,9 +2408,10 @@ export class HohHost {
   /** Reconcile the projection with the engine's current launch, never with the browser's request. */
   private async refreshThreadMode(thread: ThreadModel, fallback = thread.mode) {
     const generation = this.modeGenerations.get(thread.id) ?? 0;
+    const process = this.accessProcessGeneration;
     try {
       const own = (await this.engine.request('hoh/executor/access/get', { executor: thread.executor, sessionId: thread.id }))?.session;
-      if ((this.modeGenerations.get(thread.id) ?? 0) !== generation) return;
+      if (this.stopped || process !== this.accessProcessGeneration || (this.modeGenerations.get(thread.id) ?? 0) !== generation) return;
       // A just-created SDK session may not expose its executor binding until its first prompt.
       // access/set already accepted `fallback`, and there is no running launch to contradict it.
       if (!own) {
@@ -2569,6 +2803,7 @@ ${message.slice(0, 8000)}`;
           this.deletingThreads.delete(target.id);
           this.threads.delete(target.id);
           this.dirty.delete(target.id);
+          this.streamChanges.delete(target.id);
           // Preserve window-owned project, title and preferences for manual recovery from trash.
           this.homePrompts.delete(target.id); this.failedHomePrompts.delete(target.id);
           this.resumedSessions.delete(target.id); this.restored.delete(target.id);
@@ -2863,24 +3098,42 @@ ${message.slice(0, 8000)}`;
           if (!sinks) this.threadSinks.set(threadId, sinks = new Set());
           this.registerLocalImageContext(threadId);
           const own = sinks;
+          own.add(sink);
+          if (payload?.acceptBoundedSnapshot) this.boundedSinks.add(sink);
           void this.start().then(() => {
             const provisional = this.threads.get(threadId);
-            if (open && provisional && !provisional.bindingKnown) {
-              own.add(sink);
+            if (!open) return undefined;
+            if (provisional && !provisional.loaded && !provisional.bindingKnown) {
+              this.sinkSequences.set(sink, 0);
               sink.emit(this.threadSnapshot(provisional));
             }
             return this.loaded(threadId);
           }).then(thread => {
             if (!open) return;
             // A thread that does not exist yet (a draft) gets its first snapshot when it is created.
-            if (thread) sink.emit(this.threadSnapshot(thread));
-            if (thread && payload?.requestCompletionMarker) sink.emit({ kind: 'synchronized' });
-            own.add(sink);
-          }, error => { if (open) sink.fail(new RpcFailure({ _tag: 'OrchestrationV2GetThreadProjectionError', threadId, message: errorText(error) })); });
+            if (thread) {
+              const sequence = this.projectionSequence(thread);
+              const canResume = sequence !== 0 && payload?.requestCompletionMarker && payload.afterSequence === sequence;
+              if (!canResume && this.sinkSequences.get(sink) !== sequence) {
+                sink.emit(this.threadSnapshot(thread, sequence, this.boundedSinks.has(sink)));
+              }
+              if (payload?.requestCompletionMarker) sink.emit({ kind: 'synchronized' });
+              this.sinkSequences.set(sink, sequence);
+            } else {
+              this.sinkSequences.set(sink, 0);
+              const created = this.threads.get(threadId);
+              if (created?.loaded) this.publishThread(created);
+            }
+          }, error => {
+            if (!open) return;
+            own.delete(sink);
+            if (!own.size && this.threadSinks.get(threadId) === own) this.threadSinks.delete(threadId);
+            sink.fail(new RpcFailure({ _tag: 'OrchestrationV2GetThreadProjectionError', threadId, message: errorText(error) }));
+          });
           return () => {
             open = false;
             own.delete(sink);
-            if (own.size) return;
+            if (own.size || this.threadSinks.get(threadId) !== own) return;
             this.threadSinks.delete(threadId);
             const thread = this.threads.get(threadId);
             if (!thread?.cwd) this.settleLocalImageContext(threadId, undefined);

@@ -296,9 +296,161 @@ test('cold history retries temporary bridge failures and deduplicates replayed e
     assert.equal(projection.messages.filter(message => message.role === 'assistant' && message.text === 'Recovered answer').length, 1);
     assert.equal(projection.runtimeRequests.filter(request => request.id === 'approval-during-retry').length, 1);
     assert.equal(projection.turnItems.filter(item => item.requestId === 'approval-during-retry').length, 1);
-    assert.equal(followingPages, 3);
-    assert.equal(firstPages, 3, 'each failed historical read replays an already applied page');
+    assert(followingPages >= 3, 'both failed reads are retried');
+    assert.equal(firstPages, 1, 'a failed suffix read keeps the applied prefix');
   } finally {
+    host.stop();
+    client.close();
+  }
+});
+
+test('Home and the opened chat share journal pages and apply a live reply to its historical run', async () => {
+  const id = 'replay-overlap';
+  const engine = new FakeEngine();
+  const user = (id, text) => ({ id, source: { kind: 'user' }, content: [{ type: 'text', text }] });
+  const answer = (turn, id, text) => ({ turn, step: 1, message: { id, content: [{ type: 'text', text }] } });
+  const end = { reason: { kind: 'completed' } };
+  const session = engine.seed(id, 'Replay overlap', [
+    ['user/message', user('first', 'First turn')],
+    ['assistant/message', answer(1, 'first-answer', 'Old answer')],
+    ['turn/end', end],
+  ]);
+  while (session.events.length < 1000) engine.persist(id, 'padding', {});
+  engine.persist(id, 'turn/start', { turn: 2 });
+  engine.persist(id, 'user/message', user('second', 'Second turn'));
+  const original = engine.request.bind(engine);
+  const cursors = [];
+  let release, started;
+  const blocked = new Promise(resolve => { release = resolve; });
+  const reading = new Promise(resolve => { started = resolve; });
+  engine.request = async (method, params) => {
+    if (method !== 'session/events' || params.sessionId !== id) return original(method, params);
+    cursors.push(params.afterSeq);
+    if (params.afterSeq === undefined) { started(); await blocked; }
+    return original(method, params);
+  };
+  const { host, client } = connect(engine);
+  const shell = await client.stream('orchestration.subscribeShell', { requestCompletionMarker: true });
+  await shell.until(value => value.kind === 'synchronized');
+  try {
+    await reading;
+    const interrupted = await client.stream('orchestration.subscribeThread', { threadId: id, requestCompletionMarker: true });
+    const opened = await client.stream('orchestration.subscribeThread', { threadId: id, requestCompletionMarker: true });
+    client.interrupt(interrupted);
+    engine.emitFrame(id, { type: 'start', attemptId: 'late', turn: 2, step: 1 });
+    engine.emitFrame(id, { type: 'chunk', attemptId: 'late', index: 0, chunk: { type: 'text-delta', text: 'New ' } });
+    engine.emitEvent(id, 'assistant/message', answer(2, 'new-answer', 'New answer'));
+    engine.emitEvent(id, 'turn/end', end);
+    release();
+    const synced = await opened.until(value => value.kind === 'snapshot' && value.snapshotSequence > 0);
+    await opened.until(value => value.kind === 'synchronized');
+    const second = synced.projection.runs.find(run => run.userMessageId === 'msg-second');
+    const replies = synced.projection.turnItems.filter(item => item.type === 'assistant_message');
+    assert.deepEqual(replies.map(item => [item.text, item.runId, item.streaming]), [
+      ['Old answer', 'run-msg-first', false], ['New answer', second.id, false],
+    ]);
+    assert.deepEqual(cursors.slice(0, 2), [undefined, 999]);
+    assert.equal(cursors.filter(cursor => cursor === undefined).length, 1);
+
+    const revisited = await client.stream('orchestration.subscribeThread', {
+      threadId: id, requestCompletionMarker: true, afterSequence: lastSnapshot(opened).snapshotSequence,
+    });
+    await revisited.until(value => value.kind === 'synchronized');
+    assert.deepEqual(revisited.values, [{ kind: 'synchronized' }]);
+    engine.emitEvent(id, 'user/message', user('third', 'Third turn'));
+    const changed = await client.stream('orchestration.subscribeThread', {
+      threadId: id, requestCompletionMarker: true, afterSequence: synced.snapshotSequence,
+    });
+    const updated = await changed.until(value => value.kind === 'snapshot');
+    assert(updated.projection.turnItems.some(item => item.type === 'user_message' && item.text === 'Third turn'));
+  } finally {
+    release();
+    host.stop();
+    client.close();
+  }
+});
+
+test('a reply from an obsolete engine cannot advance the history cursor or replace the current timeline', async () => {
+  const id = 'stale-history';
+  const engine = new FakeEngine();
+  engine.seed(id, 'Restored conversation', [
+    ['user/message', { id: 'current', source: { kind: 'user' }, content: [{ type: 'text', text: 'Current history' }] }],
+  ]);
+  const request = engine.request.bind(engine);
+  let release, started;
+  const blocked = new Promise(resolve => { release = resolve; });
+  const reading = new Promise(resolve => { started = resolve; });
+  const cursors = [];
+  engine.request = async (method, params) => {
+    if (method === 'session/events' && params.sessionId === id) {
+      cursors.push(params.afterSeq);
+      if (cursors.length === 1) {
+        started();
+        await blocked;
+        return { events: [{ seq: 0, time: 1, type: 'user/message', data: {
+          id: 'stale', source: { kind: 'user' }, content: [{ type: 'text', text: 'Obsolete history' }],
+        } }], nextSeq: 0 };
+      }
+    }
+    return request(method, params);
+  };
+  const { host, client } = connectColdHistory(engine, id);
+  try {
+    const original = await client.stream('orchestration.subscribeThread', { threadId: id });
+    await reading;
+    engine.setStatus('restarting');
+    const replacement = await client.stream('orchestration.subscribeThread', { threadId: id, requestCompletionMarker: true });
+    await replacement.until(value => value.kind === 'synchronized');
+    release();
+    await tick(20);
+    assert(original.exit);
+    const messages = lastSnapshot(replacement).projection.messages;
+    assert.deepEqual(messages.map(message => message.text), ['Current history']);
+    assert.deepEqual(cursors, [undefined, undefined]);
+  } finally {
+    release();
+    host.stop();
+    client.close();
+  }
+});
+
+test('a long T3 timeline loads earlier turns over local HTTP and retains them through live changes', async () => {
+  const id = 'bounded-history';
+  const engine = new FakeEngine();
+  const events = [];
+  for (let turn = 1; turn <= 150; turn++) {
+    events.push(
+      ['user/message', { id: 'u' + turn, source: { kind: 'user' }, content: [{ type: 'text', text: 'Prompt ' + turn }] }],
+      ['assistant/message', { turn, step: 1, message: { id: 'a' + turn, content: [{ type: 'text', text: 'Answer ' + turn }] } }],
+      ['turn/end', { reason: { kind: 'completed' } }],
+    );
+  }
+  engine.seed(id, 'Long timeline', events);
+  const { host, client } = connect(engine);
+  const target = { fetch: async () => new Response('external') };
+  const restore = mod.http.installHohFetch(mod.socket.socketMatcher('hoh.local'), target, (thread, cursor) => host.readTimeline(thread, cursor));
+  const origin = 'http://hoh.local/api/orchestration/threads/' + id;
+  try {
+    const stream = await client.stream('orchestration.subscribeThread', { threadId: id, acceptBoundedSnapshot: true, requestCompletionMarker: true });
+    const recent = await stream.until(value => value.kind === 'snapshot' && value.hasMoreHistory);
+    assert(recent.projection.visibleTurnItems.length <= 80);
+    assert.equal(recent.projection.visibleTurnItems.at(-1).item.text, 'Answer 150');
+    const reply = await target.fetch(origin + '/history?cursor=' + recent.historyCursor);
+    assert.equal(reply.status, 200);
+    const page = await reply.json();
+    assert.equal(page.snapshotSequence, recent.snapshotSequence);
+    assert.equal(page.items.length, 160);
+    assert(page.items.at(-1).item.ordinal < recent.projection.visibleTurnItems[0].item.ordinal);
+    assert.equal((await target.fetch(origin + '/history?cursor=bad')).status, 400);
+
+    engine.emitEvent(id, 'user/message', { id: 'u151', source: { kind: 'user' }, content: [{ type: 'text', text: 'Prompt 151' }] });
+    const updated = await stream.until(value => value.kind === 'snapshot' && value.snapshotSequence > recent.snapshotSequence);
+    assert.equal(updated.projection.visibleTurnItems[0].sourceItemId, page.items[0].sourceItemId);
+    assert.equal(updated.projection.visibleTurnItems.at(-1).item.text, 'Prompt 151');
+    assert.equal(updated.historyCursor, page.nextCursor);
+    assert.equal((await (await target.fetch(origin + '/bounded')).json()).historyCursor, page.nextCursor);
+  } finally {
+    restore();
     host.stop();
     client.close();
   }
@@ -749,9 +901,11 @@ test('new chat with a first message, streamed answer, tool step, end of turn', a
   const emptyReasoning = itemsOf(thinkingStarted).find(item => item.type === 'reasoning');
   assert.equal(emptyReasoning.streaming, true); assert.equal(emptyReasoning.status, 'running');
   engine.emitFrame('thread-1', { type: 'chunk', attemptId: 'reason-1', revision: 1, index: 1, time: 2, chunk: { type: 'reasoning-delta', text: 'Обдумываю ' } });
-  const thinking = await thread.until(value => value.kind === 'snapshot' && itemsOf(value).some(item => item.type === 'reasoning' && item.text === 'Обдумываю '));
-  const liveReasoning = itemsOf(thinking).find(item => item.type === 'reasoning');
+  const thinking = await thread.until(value => value.kind === 'event' && value.event.type === 'turn-item.updated' && value.event.payload.text === 'Обдумываю ');
+  const liveReasoning = thinking.event.payload;
   assert.equal(liveReasoning.streaming, true); assert.equal(liveReasoning.status, 'running');
+  assert.equal(liveReasoning.id, emptyReasoning.id);
+  assert.equal(lastSnapshot(thread), thinkingStarted, 'continuations do not send the full history again');
 
   // A text attempt may overlap the reasoning attempt; neither start retires the other.
   engine.emitFrame('thread-1', { type: 'start', attemptId: 'att-1', revision: 1, turn: 1, step: 1 });

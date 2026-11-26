@@ -87,6 +87,76 @@ localStorage.setItem('hoh:first-run:done', '1');
 """
 
 
+COMPARE = """
+localStorage.setItem('hoh:first-run:done', '1');
+(async () => {
+  const q = selector => document.querySelector(selector);
+  const frame = () => new Promise(requestAnimationFrame);
+  const wait = async (predicate, label) => {
+    const until = performance.now() + 16000;
+    do {
+      const result = predicate();
+      if (result) return result;
+      await frame();
+    } while (performance.now() < until);
+    throw new Error(label);
+  };
+  const stats = values => {
+    const sorted = values.slice().sort((a, b) => a - b);
+    const n = sorted.length;
+    return {
+      n,
+      p50: Math.round((sorted[Math.floor((n - 1) / 2)] + sorted[Math.ceil((n - 1) / 2)]) / 2),
+      p95: Math.round(sorted[Math.ceil(n * .95) - 1]),
+      max: Math.round(sorted.at(-1)),
+    };
+  };
+  const legacy = location.pathname.endsWith('legacy.html');
+  const quick = globalThis.hohPerfQuick === true;
+  const row = id => legacy ? q('[data-chat-id="' + id + '"]') :
+    [...document.querySelectorAll('[data-sidebar-row]')].find(el => el.getAttribute('data-sidebar-row').endsWith(id));
+  const atLong = () => legacy ? q('[data-entry-id=assistant-last]') :
+    [...(quick ? q('.hoh-quick-view') ?? document.createElement('div') : document).querySelectorAll('[data-message-role=assistant]')]
+      .some(el => el.textContent.includes('Ответ 2500.'));
+  const atShort = () => legacy ? row('window-main')?.getAttribute('aria-current') === 'true' : location.pathname.endsWith('/window-main');
+  const ready = () => q('[data-chat-screen][data-connection=ready]');
+  const card = () => q('.hoh-card[data-thread-id="perf-long"] button.hoh-card__open');
+  const samples = [];
+  let readyMs;
+  try {
+    await wait(() => quick ? card() : row('perf-long') && row('window-main'), 'chat entries');
+    await wait(() => legacy ? ready() : q('[data-chat-composer-form]'), 'composer');
+    const boot = Math.round(performance.now());
+    for (let index = 0; index < 25; index++) {
+      const started = performance.now();
+      (quick ? card() : row('perf-long')).click();
+      await wait(atLong, 'last reply');
+      await frame();
+      samples.push(Math.round(performance.now() - started));
+      if (index === 0 && legacy) {
+        await wait(ready, 'full history');
+        readyMs = Math.round(performance.now() - started);
+      }
+      if (quick) {
+        q('.hoh-quick-view button[aria-label="Close"]').click();
+        await wait(() => !q('.hoh-quick-view__chat'), 'quick view closed');
+      } else {
+        row('window-main').click();
+        await wait(() => atShort() && !atLong(), 'short chat selected');
+      }
+      await frame();
+    }
+    document.title = 'HOH_PERF ' + JSON.stringify({
+      legacy, quick, boot, cold: samples[0], readyMs, warm: stats(samples.slice(1)), samples,
+    });
+  } catch (error) {
+    document.title = 'HOH_PERF ' + JSON.stringify({
+      error: String(error), legacy, quick, path: location.pathname, samples, text: document.body.innerText.slice(0, 320),
+    });
+  }
+})();
+"""
+
 SMOKE = """
 localStorage.setItem('hoh:first-run:done', '1');
 let pass = false;
@@ -112,13 +182,14 @@ def send(message):
 
 def engine():
     state = {"window-main": [], LONG_CHAT: []}
+    now_ms = int(time.time() * 1000)
 
     def block(text):
         return [{"type": "text", "text": text}]
 
     def event(chat, event_type, data):
         history = state[chat]
-        row = {"type": event_type, "seq": len(history), "time": 1, "data": data}
+        row = {"type": event_type, "seq": len(history), "time": now_ms, "data": data}
         history.append(row)
         return row
 
@@ -129,6 +200,10 @@ def engine():
         event(LONG_CHAT, "assistant/message", {"turn": turn, "step": 1, "message": {
             "id": "last" if turn == HISTORY_TURNS else f"msg-{turn}", "content": block(f"Ответ {turn}. " + CHUNK * 3)}})
         event(LONG_CHAT, "turn/end", {"turn": turn, "reason": {"kind": "completed"}})
+
+    event("window-main", "user/message", {"id": "short-user", "source": {"kind": "user"}, "content": block("Короткий чат")})
+    event("window-main", "assistant/message", {"turn": 1, "step": 1, "message": {"id": "short-reply", "content": block("Короткий ответ")}})
+    event("window-main", "turn/end", {"turn": 1, "reason": {"kind": "completed"}})
 
     def notify(method, chat, **params):
         send({"method": method, "params": {"sessionId": chat, **params}})
@@ -171,7 +246,7 @@ def engine():
             cwd = params["cwd"]
             result = {"serverInfo": {"name": "perf", "version": "1"}, "hoh": {"protocolVersion": 1, "approvals": "host"}}
         elif method == "session/list":
-            result = {"sessions": [{"id": key, "title": key, "employeeId": "default", "updatedAt": 0} for key in state]}
+            result = {"sessions": [{"id": key, "title": key, "employeeId": "default", "updatedAt": now_ms} for key in state]}
         elif method == "session/working-directory/get":
             result = {"cwd": cwd}
         elif method == "session/events":
@@ -191,14 +266,20 @@ def engine():
             return
 
 
-def stage(dist, destination, smoke=False):
+def stage(dist, destination, smoke=False, compare=False, quick=False):
     shutil.copytree(dist, destination)
-    index = destination / "index.html"
-    index.write_text(index.read_text().replace("</head>", '<script src="./native-perf.js"></script></head>', 1))
-    (destination / "native-perf.js").write_text(SMOKE if smoke else PROBE)
+    entries = ("index.html", "legacy.html") if compare or quick else ("index.html",)
+    for entry in entries:
+        index = destination / entry
+        if index.exists():
+            index.write_text(index.read_text().replace("</head>", '<script src="/native-perf.js"></script></head>', 1))
+    probe = SMOKE if smoke else COMPARE if compare or quick else PROBE
+    if quick:
+        probe = "globalThis.hohPerfQuick = true;\n" + probe
+    (destination / "native-perf.js").write_text(probe)
 
 
-def run(binary, engine_path=None):
+def run(binary, engine_path=None, *, legacy=False):
     with tempfile.TemporaryDirectory(prefix="hoh-native-perf-") as home:
         tmp = Path(home)
         (tmp / "runtime").mkdir(mode=0o700)
@@ -209,9 +290,10 @@ def run(binary, engine_path=None):
             **{key: os.environ[key] for key in ("XAUTHORITY", "DBUS_SESSION_BUS_ADDRESS") if key in os.environ},
             "HOME": home, "XDG_RUNTIME_DIR": str(tmp / "runtime"), "GDK_BACKEND": "x11",
             "HOH_NATIVE_PERF_PROBE": "1",
+            **({"HOH_WINDOW_SHELL": "legacy"} if legacy else {}),
             **({"HOH_ENGINE_PATH": engine_path} if engine_path else {"HOH_TEST_ENGINE": str(Path(__file__).resolve())}),
         }
-        process = subprocess.run([binary], env=env, capture_output=True, text=True, timeout=50)
+        process = subprocess.run([binary], env=env, capture_output=True, text=True, timeout=100)
         for line in process.stdout.splitlines():
             if line.startswith(MARKER):
                 metrics = json.loads(line[len(MARKER):])
@@ -224,6 +306,8 @@ if __name__ == "__main__":
     if len(sys.argv) == 1:
         engine()
     elif sys.argv[1] == "stage":
-        stage(Path(sys.argv[2]), Path(sys.argv[3]), "--smoke" in sys.argv[4:])
+        stage(Path(sys.argv[2]), Path(sys.argv[3]), smoke="--smoke" in sys.argv[4:],
+              compare="--compare" in sys.argv[4:], quick="--quick" in sys.argv[4:])
     elif sys.argv[1] == "run":
-        sys.exit(run(sys.argv[2], *sys.argv[3:]))
+        sys.exit(run(sys.argv[2], *[arg for arg in sys.argv[3:] if arg != "--legacy"],
+                     legacy="--legacy" in sys.argv[3:]))

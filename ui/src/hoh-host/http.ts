@@ -48,13 +48,28 @@ export function hohHttpResponse(method: string, pathname: string): Response {
 }
 
 /** Replace `globalThis.fetch` for the HoH environment's origin. Returns a function that restores it. */
-export function installHohFetch(isHohAddress: (url: string) => boolean, target: any = globalThis): () => void {
+export function installHohFetch(
+  isHohAddress: (url: string) => boolean,
+  target: any = globalThis,
+  readHistory?: (threadId: string, cursor?: number) => Promise<unknown>,
+): () => void {
   const previous = target.fetch as typeof fetch;
   target.fetch = (input: RequestInfo | URL, init?: RequestInit) => {
     const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
     if (!isHohAddress(url)) return previous(input as RequestInfo, init);
     const method = (init?.method ?? (typeof input === 'object' && 'method' in input ? input.method : 'GET')).toUpperCase();
-    return Promise.resolve(hohHttpResponse(method, new URL(url).pathname));
+    const address = new URL(url);
+    const historyRoute = method === 'GET' && /^\/api\/orchestration\/threads\/([^/]+)\/(bounded|history)$/.exec(address.pathname);
+    if (historyRoute && readHistory) {
+      const [, pathId, type] = historyRoute;
+      const input = address.searchParams.get('cursor') ?? '';
+      const cursor = type === 'history' && /^\d+$/.test(input) ? Number(input) : undefined;
+      if (type === 'history' && (cursor === undefined || !Number.isSafeInteger(cursor))) return Promise.resolve(new Response(null, { status: 400 }));
+      return Promise.resolve().then(() => readHistory(decodeURIComponent(pathId), cursor))
+        .then(result => result === undefined ? new Response(null, { status: 503 }) : json(200, result),
+          () => new Response(null, { status: 503 }));
+    }
+    return Promise.resolve(hohHttpResponse(method, address.pathname));
   };
   return () => { target.fetch = previous; };
 }

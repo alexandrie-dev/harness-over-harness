@@ -115,8 +115,6 @@ body:has([data-slot="dialog-popup"].hoh-quick-view) [data-hoh-home-body] + .chat
 }
 .hoh-card--plugin-creator:hover { box-shadow: 0 6px 24px color-mix(in srgb, var(--glow) 18%, transparent); }
 .hoh-card--plugin-creator .hoh-card__open:focus-visible { outline: none; }
-.hoh-card--plugin-creator[data-state="done"] { --glow: var(--success); }
-.hoh-card--plugin-creator[data-state="done"] .hoh-card__state b { color: var(--success-foreground); }
 .hoh-card--plugin-creator[data-state="working"] .hoh-card__state b { color: var(--primary); }
 .hoh-card--plugin-creator[data-state="ended"] .hoh-card__state b { color: var(--muted-foreground); }
 .hoh-card--plugin-creator .hoh-card__title { grid-area: 1 / 2; align-self: end; }

@@ -72,13 +72,14 @@ export class ChatController {
     });
   }
   setDraft(draft) { this.update({ draft }); }
-  async readHistory(transport, projection, current, afterSeq) {
+  async readHistory(transport, projection, current, afterSeq, commitPage) {
     for (;;) {
       const page = await transport.request('session/events', { sessionId: this.sessionId, limit: 1000, ...(afterSeq === undefined ? {} : { afterSeq }) });
       if (!current()) return false;
       for (const event of page.events) projection.event(event);
+      if (page.events.length === 1000 && afterSeq !== undefined && page.nextSeq <= afterSeq) throw new Error('History did not advance');
+      commitPage?.(page.nextSeq);
       if (page.events.length < 1000) return page.nextSeq;
-      if (afterSeq !== undefined && page.nextSeq <= afterSeq) throw new Error('History did not advance');
       afterSeq = page.nextSeq;
     }
   }
@@ -115,7 +116,10 @@ export class ChatController {
     const entries = this.projection.entries;
     if (entries.length > 6000 || entries.some(entry =>
       entry.kind === 'note' || entry.pending || entry.failed || entry.incomplete || entry.streaming)) return;
-    this.historyCache.set(this.sessionId, { projection: this.projection, afterSeq: this.historySeq });
+    this.historyCache.set(this.sessionId, {
+      projection: this.projection, afterSeq: this.historySeq, source: entries,
+      entries: entries === this.publishedSource ? this.publishedEntries : numberRepeatedSteps(entries),
+    });
     if (this.historyCache.size > 4) this.historyCache.delete(this.historyCache.keys().next().value);
   }
   scheduleSessionsRefresh() {
@@ -315,7 +319,6 @@ export class ChatController {
     if (target && target !== this.sessionId) this.cacheOpenChat();
     if (!target) { this.historyCache.clear(); if (!this.state.openingChat) this.publish(); }
     const cached = this.historyCache.get(target);
-    this.historyCache.delete(target);
     this.active = true; this.reloading = true;
     const ownEpoch = ++this.epoch; const loadGeneration = ++this.generation;
     this.pendingPublish = undefined;
@@ -326,7 +329,7 @@ export class ChatController {
     const ownLink = target ? this.link : ++this.link;
     if (target) this.chosen = target;
     // A question belongs to its chat and survives switching; a new link to the engine drops them.
-    this.update({ ...(target ? { entries: cached ? numberRepeatedSteps(cached.projection.entries.slice(-160)) : [], currentId: target } : { questions: [] }), openingChat: Boolean(target || this.state.openingChat), connection: recovering ? 'recovering' : 'connecting', busy: false, canceling: false,
+    this.update({ ...(target ? { entries: cached?.entries ?? [], currentId: target } : { questions: [] }), openingChat: Boolean(target || this.state.openingChat), connection: recovering ? 'recovering' : 'connecting', busy: false, canceling: false,
       error: recovering ? 'Связь с Помощником прервалась, восстанавливаю…' : '' });
     const buffered = []; let loading = true;
     try {
@@ -364,6 +367,10 @@ export class ChatController {
       if (ownEpoch !== this.epoch) return;
       const reusable = cached && cached.projection.folder === directory.cwd;
       if (reusable) projection = cached.projection;
+      else if (cached) {
+        this.historyCache.delete(target);
+        this.update({ entries: [] });
+      }
       projection.folder = directory.cwd;
       const normalized = directory.cwd.replaceAll('\\', '/').replace(/\/$/, '');
       const name = humanFile(normalized, normalized.slice(0, normalized.lastIndexOf('/')));
@@ -374,11 +381,20 @@ export class ChatController {
           const settings = await transport.request('hoh/settings/get', {});
           return { model: { local: isLocalAddress(settings.model.baseUrl) } };
         }),
-        reusable ? this.readHistory(transport, projection, stillLoading, cached.afterSeq) : this.openHistory(transport, projection, stillLoading),
+        reusable ? this.readHistory(transport, projection, stillLoading, cached.afterSeq, seq => { cached.afterSeq = seq; })
+          : this.openHistory(transport, projection, stillLoading),
         this.readSettings(transport, ownEpoch),
         this.readAccess(transport, ownEpoch),
       ]);
       if (!stillLoading()) return;
+      if (reusable) {
+        // Only the selection that finished opening takes ownership of the live projection.
+        this.historyCache.delete(target);
+        if (cached.source === projection.entries) {
+          this.publishedSource = cached.source;
+          this.publishedEntries = cached.entries;
+        }
+      }
       // A new engine cannot still be executing the previous process's turn.
       // History may end mid-turn if termination prevented its closing event.
       if (recovering) projection.stop();

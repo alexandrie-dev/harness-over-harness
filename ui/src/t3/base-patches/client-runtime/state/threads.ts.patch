@@ -3,3 +3,18 @@
 @@ -74 +74 @@
 -const THREAD_SYNC_ERROR = msg("Could not synchronize the thread.");
 +const THREAD_SYNC_ERROR = msg("Could not synchronize the chat.");
+@@ -193,0 +194 @@
++  readonly confirmedHoHProjection?: boolean;
+@@ -267,0 +269,3 @@
++  const isHoH = environmentId === "hoh-local";
++  // A persisted preview may come from a previous HoH window with unrelated cursors.
++  let confirmedHoHProjection = retained?.confirmedHoHProjection ?? false;
+@@ -316,0 +321 @@
++    confirmedHoHProjection,
+@@ -337,0 +343 @@
++      confirmedHoHProjection,
+@@ -696,0 +703 @@
++      if (isHoH) confirmedHoHProjection = item.snapshotSequence > 0;
+@@ -1113 +1120 @@
+-        const canResume = Option.isSome(current.data);
++        const canResume = Option.isSome(current.data) && (!isHoH || confirmedHoHProjection);

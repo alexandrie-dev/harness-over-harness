@@ -362,7 +362,7 @@
       "client-runtime/state/projectRemoval.ts": "видимый термин chat вместо thread",
       "client-runtime/state/threadFeedback.ts": "видимый термин chat вместо thread",
       "client-runtime/state/threadShell.ts": "видимый термин chat вместо thread",
-      "client-runtime/state/threads.ts": "видимый термин chat вместо thread",
+      "client-runtime/state/threads.ts": "видимый термин chat; курсор HoH передаётся для подтверждённого снимка из памяти окна",
       "client-runtime/t3ToolSummary.ts": "видимый термин chat вместо thread",
       "client-runtime/threadReference.ts": "видимый термин chat вместо thread",
       "client-runtime/work-log/t3ToolSentences.ts": "видимый термин chat вместо thread",
