@@ -28,7 +28,7 @@ import { folderProject, HOH_PROJECT_ID, hohProject, ThreadModel, type FolderProj
 import { RpcFailure, type Handlers, type StreamSink } from './wire.ts';
 import { ThreadMetadataStore } from './thread-metadata.ts';
 import {
-  MAX_PLUGIN_BRIEF, PLUGIN_CREATOR_CHECKOUT_FILE, pluginAuthoringPrefixes,
+  MAX_PLUGIN_BRIEF, pluginAuthoringPrefixes,
   type PluginCreatorApi, type PluginCreatorOptions,
 } from './plugin-creator.ts';
 
@@ -716,17 +716,9 @@ export class HohHost {
         if (executor !== 'claude' && executor !== 'codex') throw new Error('Choose a harness.');
         await this.start();
         const project = this.folders.get(projectId);
-        if (!project || project.archivedAt !== null) throw new Error('Choose an active HoH checkout from your projects.');
+        if (!project || project.archivedAt !== null) throw new Error('Choose a folder for the plugin.');
         const provider = this.pluginCreatorHarnesses().find(harness => harness.executor === executor);
         if (!provider?.available) throw new Error(provider?.reason ?? 'The selected harness is unavailable.');
-        const cwd = project.workspaceRoot;
-        const files = await this.engine.request('hoh/workspace/entries', {
-          cwd, query: PLUGIN_CREATOR_CHECKOUT_FILE, limit: 10,
-        });
-        if (!Array.isArray(files?.entries) || !files.entries.some((entry: { kind: string; path: string }) =>
-          entry.kind === 'file' && entry.path === PLUGIN_CREATOR_CHECKOUT_FILE)) {
-          throw new Error('Choose the root of a HoH checkout that contains Plugin Creator.');
-        }
         const threadId = 'thread-' + (globalThis.crypto?.randomUUID?.() ?? `${this.now().toString(36)}-${Math.random().toString(36).slice(2)}`);
         const result = await this.launch({
           threadId, commandId: 'plugin-creator-' + threadId, projectId,

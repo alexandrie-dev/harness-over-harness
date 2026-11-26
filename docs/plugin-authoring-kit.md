@@ -22,6 +22,12 @@ After approval, use the scaffold report's `editFiles` and verify with
 
 ## Checkout and integration
 
+External plugins will live in the HoH user profile's separate
+`external_plugins` directory. The external loader is planned. Authors or CI
+will build compatible artifacts ahead of time; users will install the ready
+snapshot without rebuilding HoH. The commands below author Rust components
+linked into the engine today.
+
 From the repository root, run `hoh plugin new my-plugin`. The command creates `plugins/my-plugin` with a manifest, a `Plugin` implementation and a smoke test; it refuses to overwrite an existing directory. `plugins/turn-note` is an example that records the outcome of each completed session turn and registers `last_turn` in the tool registry. Calling that tool from an external model is a separate integration.
 
 Use the [Plugin Creator workflow](plugin-creator.md) for scaffolding, metadata checks and offline package tests. For an engine build in the author worktree, run `scripts/plugin-dev.sh my-plugin` with `CARGO_HOME` and `CARGO_TARGET_DIR` set. It links the explicit release list in `plugins/index.json` plus the selected candidate and prints `HOH_ENGINE_PATH` for an existing desktop window. After review, add the ID to the release list and run `python3 scripts/generate-plugin-index.py` to update the checked-in dependency and Rust indexes.

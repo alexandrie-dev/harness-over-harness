@@ -5,8 +5,7 @@ import { buildHost } from './build.mjs';
 import { FakeEngine } from './fake-engine.mjs';
 
 const cwd = '/home/person/Projects/tools';
-const marker = 'crates/hoh-plugin-creator/Cargo.toml';
-const brief = 'Add a Rust tool that summarizes completed turns.';
+const brief = 'Write a Markdown skill for reviewing changes.';
 const skill = await readFile(new URL('../../src/t3-entry/skills/hoh-plugin-authoring/SKILL.md', import.meta.url), 'utf8');
 const guide = await readFile(new URL('../../../docs/plugin-authoring-kit.md', import.meta.url), 'utf8');
 let built;
@@ -26,19 +25,18 @@ async function setup(t, engine = new FakeEngine()) {
   const close = api.subscribe(() => changed.push(true));
   t.after(close);
   await host.handlers().unary['projects.mutate']({
-    type: 'project.create', commandId: 'add-checkout', projectId: 'author', title: 'HoH author worktree',
+    type: 'project.create', commandId: 'add-plugin-folder', projectId: 'author', title: 'Standalone plugin project',
     workspaceRoot: cwd,
   });
   assert(changed.length > 0);
-  assert.deepEqual((await api.options()).projects, [{ id: 'author', title: 'HoH author worktree', path: cwd }]);
+  assert.deepEqual((await api.options()).projects, [{ id: 'author', title: 'Standalone plugin project', path: cwd }]);
   return { host, api, engine };
 }
 
 for (const executor of ['claude', 'codex']) {
-  test(`Plugin Creator launches ${executor} in the chosen checkout with the bundled skill and request`, async t => {
+  test(`Plugin Creator launches ${executor} in an ordinary folder with the bundled standalone workflow`, async t => {
     const { api, engine, host } = await setup(t);
     await host.handlers().unary['server.updateSettings']({ patch: { defaultRuntimeMode: 'approval-required' } });
-    engine.files = [{ path: marker, kind: 'file' }];
     const selected = (await api.options()).harnesses.find(item => item.executor === executor);
     assert(selected.available);
     const threadId = await api.launch({ projectId: 'author', executor, brief });
@@ -46,17 +44,13 @@ for (const executor of ['claude', 'codex']) {
     assert.equal(prompts.length, 1);
     assert.equal(prompts[0].params.sessionId, threadId);
     const [{ text }] = prompts[0].params.contentBlocks;
-    assert(text.startsWith('# In-repository Rust plugin kit\n'));
-    assert(text.indexOf('## Start from the plugin APIs') < text.indexOf('# HoH plugin authoring'));
-    assert.match(text, /no extension point for microphone capture/);
-    const interview = text.indexOf('## Start with an interview');
-    const implementation = text.indexOf('## Implement the agreed plugin');
-    assert(interview > 0 && implementation > interview);
-    assert.match(text.slice(interview, implementation), /exactly one design question per turn/);
-    assert.match(text.slice(interview, implementation), /Wait for approval before scaffolding/);
-    assert(text.includes('hoh plugin new <id> --template tool --json'));
-    assert(text.includes('hoh plugin test <id> --json'));
-    assert(text.includes('plugins/turn-note'));
+    assert(text.startsWith('# Author an external HoH plugin\n'));
+    assert.match(text, /Do not require Git, a HoH checkout, or a build of the app/);
+    assert.match(text, /ask exactly one design question per turn/);
+    assert.match(text, /Wait for approval before scaffolding/);
+    assert.match(text, /SKILL\.md and hoh-package\.json/);
+    assert.doesNotMatch(text, /cargo run --offline -p hoh/);
+    assert(!engine.requests.some(call => call.method === 'hoh/workspace/entries'));
     assert(text.endsWith(brief));
     const user = host.threads.get(threadId).projection().messages.find(message => message.role === 'user');
     assert.equal(user.text, brief);
@@ -91,16 +85,14 @@ test('replays old Plugin Creator chats with the brief visible and leaves later m
   }
 });
 
-test('an unrelated folder or unavailable harness never sends a prompt', async t => {
+test('a missing folder or unavailable harness never sends a prompt', async t => {
   const engine = new FakeEngine();
   engine.codexDiscovery = { ...engine.codexDiscovery, auth: 'unauthenticated' };
   const { api } = await setup(t, engine);
   const options = await api.options();
   assert.equal(options.harnesses.find(item => item.executor === 'codex').available, false);
   await assert.rejects(api.launch({ projectId: 'author', executor: 'codex', brief }), /not authenticated/);
-  await assert.rejects(api.launch({ projectId: 'hoh-project', executor: 'claude', brief }), /active HoH checkout/);
-  engine.files = [{ path: 'unrelated/' + marker, kind: 'file' }];
-  await assert.rejects(api.launch({ projectId: 'author', executor: 'claude', brief }), /root of a HoH checkout/);
+  await assert.rejects(api.launch({ projectId: 'hoh-project', executor: 'claude', brief }), /Choose a folder for the plugin/);
   assert.deepEqual(engine.starts, []);
   assert.equal(engine.requests.some(call => call.method === 'session/prompt'), false);
 });

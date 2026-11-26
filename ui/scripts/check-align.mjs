@@ -533,19 +533,24 @@ const scenarios = [
         : data);
       const request = engine.request.bind(engine);
       engine.request = async (method, params) => {
-        if (method === 'hoh/workspace/entries') return { entries: [{ kind: 'file', path: 'crates/hoh-plugin-creator/Cargo.toml' }] };
         const result = await request(method, params);
         return method === 'session/working-directory/set' ? { ...result, cwd: engine.cwd } : result;
       };
       return engine;
-    }, stored: () => storage(true),
+    }, stored: () => {
+      const stored = storage(true);
+      const key = 'hoh-host.projects.v1';
+      const state = JSON.parse(stored[key]);
+      Object.assign(state.projects[1], { title: 'Plugin drafts', workspaceRoot: '/work/plugin-drafts' });
+      return { ...stored, [key]: JSON.stringify(state) };
+    },
     prepare: async (page, engine, sidebar) => {
       await page.locator('[data-hoh-page-item="plugin-creator"]').click();
       await page.getByRole('heading', { name: 'What should your plugin do?' }).waitFor();
       await setSidebar(page, sidebar);
-      const project = page.getByRole('combobox', { name: 'HoH checkout' });
+      const project = page.getByRole('combobox', { name: 'Plugin folder' });
       await project.click();
-      await page.getByRole('option', { name: 'Harness over Harness' }).click();
+      await page.getByRole('option', { name: 'Plugin drafts' }).click();
       const harness = page.getByRole('combobox', { name: 'Harness', exact: true });
       await harness.press('ArrowDown');
       const listbox = page.getByRole('listbox');
@@ -572,11 +577,11 @@ const scenarios = [
       ]);
       await page.getByText('Should the clock tool return local time or UTC? I recommend UTC for consistent output.').waitFor();
       await page.getByText('Build a clock plugin', { exact: true }).waitFor();
-      assert.equal(engine.cwd, '/work/hoh');
+      assert.equal(engine.cwd, '/work/plugin-drafts');
       assert.deepEqual(engine.promptExecutors, ['claude']);
       const prompt = engine.requests.find(({ method }) => method === 'session/prompt');
-      assert.match(prompt.params.contentBlocks[0].text, /^# In-repository Rust plugin kit/);
-      assert.match(prompt.params.contentBlocks[0].text, /Ask exactly one design question per turn/);
+      assert.match(prompt.params.contentBlocks[0].text, /^# Author an external HoH plugin/);
+      assert.match(prompt.params.contentBlocks[0].text, /ask exactly one design question per turn/);
       assert.match(prompt.params.contentBlocks[0].text, /Build a clock plugin$/);
     }, blocks: ['conversation'],
   },

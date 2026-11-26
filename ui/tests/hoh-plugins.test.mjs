@@ -77,7 +77,7 @@ test('Plugin Creator collects the checkout, harness and brief and opens the laun
   assert(h.nodes().find(node => node.props['aria-label'] === 'Send plugin request').disabled);
   assert.equal(textOf(h.byId('plugin-creator-project')), 'HoH worktree');
   assert.equal(textOf(h.byId('plugin-creator-harness')), 'Codex');
-  h.nodes().find(node => node.props['aria-label'] === 'Add project').props.onClick();
+  h.nodes().find(node => node.props['aria-label'] === 'Add plugin folder').props.onClick();
   assert.equal(added, 1);
   await h.click('Summarize session activity');
   assert.equal(h.byId('plugin-creator-brief').props.value, 'Summarize session activity');
@@ -97,7 +97,7 @@ test('Plugin Creator keeps the request available when starting a harness fails',
   const creator = {
     options: async () => creatorOptions,
     subscribe: () => () => {},
-    launch: async () => { throw new Error('Choose a HoH checkout.'); },
+    launch: async () => { throw new Error('Choose a folder for the plugin.'); },
   };
   const h = componentHarness(creatorPage, 'PluginCreatorPage', creatorMocks, {
     creator, onAddProject() {}, onOpenThread: () => assert.fail('Opened a failed launch'),
@@ -106,7 +106,7 @@ test('Plugin Creator keeps the request available when starting a harness fails',
   const form = await filledForm(h);
   await form.props.onSubmit({ preventDefault() {} });
   await h.settle();
-  assert.match(h.text(), /Choose a HoH checkout/);
+  assert.match(h.text(), /Choose a folder for the plugin/);
   assert.equal(h.byId('plugin-creator-brief').props.value, '  Add a clock tool.  ');
   assert.equal(h.nodes().find(node => node.props['aria-label'] === 'Send plugin request').disabled, false);
   h.unmount();

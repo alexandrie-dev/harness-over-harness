@@ -164,9 +164,9 @@ export function PluginCreatorPage({
                   <Select value={project?.id ?? null} disabled={pending}
                     onValueChange={value => setProjectId(value ?? '')}>
                     <SelectTrigger id="plugin-creator-project" className="hoh-plugin-creator__picker"
-                      variant="ghost" size="sm" aria-label="HoH checkout" title={project?.path}>
+                      variant="ghost" size="sm" aria-label="Plugin folder" title={project?.path}>
                       <Folder size={16} aria-hidden />
-                      <span className="truncate">{project?.title ?? 'Choose a project'}</span>
+                      <span className="truncate">{project?.title ?? 'Choose a folder'}</span>
                     </SelectTrigger>
                     <SelectPopup alignItemWithTrigger={false} className="hoh-plugin-creator__picker-list">
                       {options.projects.map(option => (
@@ -177,10 +177,10 @@ export function PluginCreatorPage({
                     </SelectPopup>
                   </Select>
                 ) : null}
-                <button type="button" className="hoh-plugin-creator__add" aria-label="Add project"
-                  title="Add project" disabled={pending} onClick={onAddProject}>
+                <button type="button" className="hoh-plugin-creator__add" aria-label="Add plugin folder"
+                  title="Add plugin folder" disabled={pending} onClick={onAddProject}>
                   <FolderPlus size={16} aria-hidden />
-                  {!options.projects.length ? 'Add project' : null}
+                  {!options.projects.length ? 'Add folder' : null}
                 </button>
                 <Select value={selected?.executor ?? null} disabled={pending}
                   onValueChange={value => setExecutor(value ?? '')}>
