@@ -1,5 +1,6 @@
-import { Channel, invoke, isTauri } from '@tauri-apps/api/core';
+import { invoke, isTauri } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
+import { subscribeEngineNotifications } from '../../lib/engine-notifications';
 import type { MethodMap, Notification } from '../../protocol';
 import type { DiscoverResult } from '../../lib/executor.mjs';
 
@@ -44,32 +45,13 @@ declare global {
   interface Window { __HOH_CHAT_TEST_TRANSPORT__?: ChatTransport; }
 }
 
-let nativeListener: ((event: Notification) => void) | undefined;
-let nativeSubscription: Promise<void> | undefined;
-
-async function subscribeNative(listener: (event: Notification) => void) {
-  nativeListener = listener;
-  // The window has one ordered transport. Selecting a chat changes only its
-  // consumer; overlapping selections cannot replace the transport out of order.
-  nativeSubscription ??= (async () => {
-    const deliver = (event: Notification) => nativeListener?.(event);
-    try {
-      await invoke('subscribe_engine_notifications', { onMessage: new Channel<Notification>(deliver) });
-    } catch {
-      await listen<Notification>('engine-notification', event => deliver(event.payload));
-    }
-  })().catch(error => { nativeSubscription = undefined; throw error; });
-  await nativeSubscription;
-  return () => { if (nativeListener === listener) nativeListener = undefined; };
-}
-
 export function chatTransport(): ChatTransport {
   // Browser-only adapter, installed by the headless harness; never used in Tauri.
   if (!isTauri() && window.__HOH_CHAT_TEST_TRANSPORT__) return window.__HOH_CHAT_TEST_TRANSPORT__;
   // Native bridge delivers protocol frames and process lifecycle separately.
   return {
     request: ((method: string, params: unknown) => invoke('engine_request', { method, params })) as ChatTransport['request'],
-    subscribe: subscribeNative,
+    subscribe: subscribeEngineNotifications,
     subscribeStatus: listener => listen<EngineStatus>('engine-status', event => listener(event.payload)),
     subscribeQuestions: listener => listen<PendingQuestion>('engine-question', event => listener(event.payload)),
     answerQuestion: (requestId, answer) => invoke<void>('question_answer', { requestId, answer }),

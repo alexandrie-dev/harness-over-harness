@@ -36,7 +36,7 @@ export function installHohHost(options: InstallOptions) {
   const server = new WireServer(host.handlers(), options);
   const matches = socketMatcher(options.hostname ?? HOH_HOSTNAME);
   const restoreSocket = installHohWebSocket(server, matches, options.target);
-  const restoreFetch = installHohFetch(matches, options.target);
+  const restoreFetch = installHohFetch(matches, options.target, (threadId, cursor) => host.readTimeline(threadId, cursor));
   // T3 uploads a picture's bytes with XMLHttpRequest to the address it was given; the host keeps them.
   const restoreXhr = installHohXhr(matches, (method, pathname, contentType, body) =>
     method === 'POST' ? host.receiveUpload(pathname, contentType, body) : Promise.resolve({ status: 404 }), options.target);

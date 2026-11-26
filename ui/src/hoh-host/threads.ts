@@ -24,10 +24,11 @@ function argumentsOf(value: unknown): Record<string, any> {
 }
 
 type Status = 'idle' | 'pending' | 'running' | 'waiting' | 'completed' | 'failed' | 'cancelled' | 'interrupted';
+const itemIsOpen = (status: Status) => status === 'running' || status === 'waiting' || status === 'pending';
 type RunStatus = 'running' | 'waiting' | 'completed' | 'interrupted' | 'failed' | 'cancelled';
 interface TokenUsage { usedTokens: number; maxTokens?: number; inputTokens: number; cachedInputTokens: number; outputTokens: number; reasoningOutputTokens: number; updatedAt: string }
 interface Run { id: string; ordinal: number; model: string; userMessageId: string; status: RunStatus; requestedAt: number; startedAt: number | null; completedAt: number | null; engineStartedAt?: number; useEngineStartOnStop?: boolean; lastJournalAt?: number; tokenUsage?: TokenUsage; cacheCreationTokens?: number }
-type Item = Record<string, any> & { id: string; type: string; status: Status; runId: string | null; ordinal: number };
+export type Item = Record<string, any> & { id: string; type: string; status: Status; runId: string | null; ordinal: number };
 /** A picture of a message as T3 lists it (`ChatImageAttachment`): its bytes went to the engine, not into the thread. */
 export interface ShownAttachment { readonly type: 'image'; readonly id: string; readonly name: string; readonly mimeType: string; readonly sizeBytes: number }
 interface Message { id: string; runId: string | null; role: 'user' | 'assistant' | 'system'; text: string; streaming: boolean; createdAt: number; updatedAt: number; attachments?: ShownAttachment[] }
@@ -195,8 +196,16 @@ export class ThreadModel {
   pinOrderKey: string | null = null;
   private readonly seen = new Set<number>();
   private readonly runs: Run[] = [];
+  private readonly runsById = new Map<string, Run>();
   private readonly items: Item[] = [];
+  private readonly itemsById = new Map<string, Item>();
+  private readonly itemsByRun = new Map<string, Set<Item>>();
+  private readonly childrenByParent = new Map<string, Set<Item>>();
+  private readonly openItems = new Set<Item>();
+  private visibleItems = 0;
   private readonly messages: Message[] = [];
+  private readonly messagesById = new Map<string, Message>();
+  private userMessages = 0;
   private readonly requests: Request[] = [];
   private readonly plans: Record<string, any>[] = [];
   private readonly live = new Map<string, Live>();
@@ -210,6 +219,8 @@ export class ThreadModel {
   private readonly outgoing: { text: string; messageId: string; at: number }[] = [];
   private readonly echoed = new Map<string, string>();
   private peakContextTokens?: number;
+  private reportedCostUsd?: number;
+  private reportedCostChanged = false;
   private readonly reportedCosts = new Map<number, { ledger: string; source: string; total: number }>();
   private ordinal = 0;
   private promptTimes: Record<string, number> = {};
@@ -223,7 +234,7 @@ export class ThreadModel {
   private pendingStartJournal: { run: Run; previous: number | undefined } | null = null;
 
   restorePromptTimes(times: Record<string, number> | undefined) { this.promptTimes = times ?? {}; }
-  promptTime(messageId: string): number | undefined { return this.runs.find(run => run.userMessageId === messageId)?.requestedAt; }
+  promptTime(messageId: string): number | undefined { return this.runsById.get('run-' + messageId)?.requestedAt; }
 
   constructor(seed: ThreadSeed) {
     this.id = seed.id;
@@ -239,7 +250,48 @@ export class ThreadModel {
   }
 
   private touch(at: number) { if (at > this.updatedAt) this.updatedAt = at; }
-  private item(id: string) { return this.items.find(item => item.id === id); }
+  private item(id: string) { return this.itemsById.get(id); }
+
+  private addItem(item: Item) {
+    this.items.push(item);
+    if (!this.itemsById.has(item.id)) this.itemsById.set(item.id, item);
+    if (itemIsOpen(item.status)) this.openItems.add(item);
+    if (item.parentItemId == null) this.visibleItems++;
+    else {
+      let children = this.childrenByParent.get(item.parentItemId);
+      if (!children) this.childrenByParent.set(item.parentItemId, children = new Set());
+      children.add(item);
+    }
+    if (item.runId !== null) this.linkItemToRun(item, item.runId);
+  }
+
+  private linkItemToRun(item: Item, runId: string) {
+    if (item.runId !== null) this.itemsByRun.get(item.runId)?.delete(item);
+    item.runId = runId;
+    let items = this.itemsByRun.get(runId);
+    if (!items) this.itemsByRun.set(runId, items = new Set());
+    items.add(item);
+  }
+
+  private removeItem(item: Item) {
+    this.items.splice(this.items.indexOf(item), 1);
+    if (this.itemsById.get(item.id) === item) {
+      const next = this.items.find(candidate => candidate.id === item.id);
+      if (next) this.itemsById.set(item.id, next);
+      else this.itemsById.delete(item.id);
+    }
+    this.openItems.delete(item);
+    if (item.runId !== null) this.itemsByRun.get(item.runId)?.delete(item);
+    if (item.parentItemId == null) this.visibleItems--;
+    else this.childrenByParent.get(item.parentItemId)?.delete(item);
+  }
+
+  private addMessage(message: Message) {
+    this.messages.push(message);
+    if (!this.messagesById.has(message.id)) this.messagesById.set(message.id, message);
+    if (message.role === 'user') this.userMessages++;
+  }
+
   private currentRun() { return this.runs.at(-1); }
   private inferredEnd(run: Run, fallback: number) {
     return !run.useEngineStartOnStop && run.lastJournalAt !== undefined
@@ -249,18 +301,20 @@ export class ThreadModel {
     return {
       id, threadId: this.id, runId, nodeId: null, providerThreadId: null, providerTurnId: null, nativeItemRef: null,
       parentItemId, ordinal: this.ordinal++, status, title: null,
-      startedAt: iso(at), completedAt: status === 'running' || status === 'waiting' || status === 'pending' ? null : iso(at), updatedAt: iso(at), type,
+      startedAt: iso(at), completedAt: itemIsOpen(status) ? null : iso(at), updatedAt: iso(at), type,
     };
   }
   private stoppedItemTime(item: Item, at: number) {
-    const run = this.runs.find(candidate => candidate.id === item.runId);
+    const run = item.runId === null ? undefined : this.runsById.get(item.runId);
     const stoppedAt = run && this.stopTimes[String(run.ordinal)];
     return typeof stoppedAt === 'number' && Number.isFinite(stoppedAt) ? Math.min(at, stoppedAt) : at;
   }
   private settleItem(item: Item, status: Status, at: number) {
     at = this.stoppedItemTime(item, at);
     item.status = status; item.updatedAt = iso(at);
-    item.completedAt = status === 'running' || status === 'waiting' || status === 'pending' ? null : iso(at);
+    if (itemIsOpen(status)) this.openItems.add(item);
+    else this.openItems.delete(item);
+    item.completedAt = itemIsOpen(status) ? null : iso(at);
     if ('streaming' in item) item.streaming = false;
   }
 
@@ -288,7 +342,7 @@ export class ThreadModel {
     if (index >= 0) this.outgoing.splice(index, 1);
     const run = this.runs.find(entry => entry.userMessageId === messageId);
     if (run && run.status === 'running') { run.status = 'failed'; run.completedAt = at; }
-    this.items.push({
+    this.addItem({
       ...this.base('item-error-' + messageId, 'error', 'failed', at, run?.id ?? null), title: 'Message not sent',
       failure: providerFailure(error, 'transport_error', 'The message was not sent. Try again.'),
     });
@@ -305,7 +359,7 @@ export class ThreadModel {
     const messageId = known ?? (pending >= 0 ? this.outgoing.splice(pending, 1)[0].messageId : 'msg-' + engineId);
     this.echoed.set(engineId, messageId);
     if (known || pending >= 0) {
-      const run = this.runs.find(entry => entry.userMessageId === messageId);
+      const run = this.runsById.get('run-' + messageId);
       if (this.pendingStartJournal?.run === run) this.pendingStartJournal = null;
       if (run && (run.status === 'running' || run.status === 'waiting')) {
         run.lastJournalAt = Math.max(run.lastJournalAt ?? at, at);
@@ -344,23 +398,25 @@ export class ThreadModel {
     // One run works at a time: the run this turn's start reopened was closed, and a run the engine never
     // closed ends where the next message begins (T3 shows any open run as working).
     if (this.reopened) { this.reopened.run.status = this.reopened.status; this.reopened.run.completedAt = this.reopened.completedAt; this.reopened = null; }
-    for (const run of this.runs) if (run.status === 'running' || run.status === 'waiting') {
-      run.status = 'completed';
-      run.completedAt = this.inferredEnd(run, at);
+    const previous = this.currentRun();
+    if (previous?.status === 'running' || previous?.status === 'waiting') {
+      previous.status = 'completed';
+      previous.completedAt = this.inferredEnd(previous, at);
     }
     if (!this.title) this.title = value.split('\n')[0].trim().slice(0, 80);
     const run: Run = { id: 'run-' + messageId, ordinal: this.runs.length + 1, model: this.model, userMessageId: messageId, status: 'running', requestedAt: at, startedAt: at, completedAt: null };
     this.runs.push(run);
+    this.runsById.set(run.id, run);
     // A stream notification can precede the durable user message that creates its run.
     for (const live of this.live.values()) {
       if (live.key.split(':', 1)[0] !== String(run.ordinal)) continue;
       for (const part of Object.values(live.parts)) {
         const item = this.item(part.itemId);
-        if (item) item.runId = run.id;
+        if (item && item.runId !== run.id) this.linkItemToRun(item, run.id);
       }
     }
-    this.messages.push({ id: messageId, runId: run.id, role: 'user', text: value, streaming: false, createdAt: at, updatedAt: at, ...(attachments.length ? { attachments } : {}) });
-    this.items.push({
+    this.addMessage({ id: messageId, runId: run.id, role: 'user', text: value, streaming: false, createdAt: at, updatedAt: at, ...(attachments.length ? { attachments } : {}) });
+    this.addItem({
       ...this.base('item-' + messageId, 'user_message', 'completed', at, run.id),
       createdBy: 'user', creationSource: 'web', messageId, inputIntent: 'turn_start', text: value, attachments,
     });
@@ -376,7 +432,7 @@ export class ThreadModel {
     const id = part?.itemId ?? 'item-a-' + messageId;
     const existing = this.item(id);
     if (!value) {
-      if (existing) this.items.splice(this.items.indexOf(existing), 1);
+      if (existing) this.removeItem(existing);
       if (parentItemId) this.refreshSubagent(parentItemId);
       return;
     }
@@ -385,14 +441,14 @@ export class ThreadModel {
       Object.assign(existing, { text: value, messageId: msgId });
       this.settleItem(existing, 'completed', at);
     } else if (!this.item('item-a-' + messageId)) {
-      this.items.push({ ...this.base(id, 'assistant_message', 'completed', at, undefined, parentItemId), messageId: msgId, text: value, streaming: false });
+      this.addItem({ ...this.base(id, 'assistant_message', 'completed', at, undefined, parentItemId), messageId: msgId, text: value, streaming: false });
     }
     // A child assistant message belongs to the Task inspector. Putting it in `messages` as well would make
     // T3 render it as a second, top-level answer instead of work performed inside the subagent.
     if (!parentItemId) {
-      const message = this.messages.find(entry => entry.id === msgId);
+      const message = this.messagesById.get(msgId);
       if (message) Object.assign(message, { text: value, streaming: false, updatedAt: at });
-      else this.messages.push({ id: msgId, runId: this.currentRun()?.id ?? null, role: 'assistant', text: value, streaming: false, createdAt: at, updatedAt: at });
+      else this.addMessage({ id: msgId, runId: this.currentRun()?.id ?? null, role: 'assistant', text: value, streaming: false, createdAt: at, updatedAt: at });
     }
     if (parentItemId) this.refreshSubagent(parentItemId);
   }
@@ -405,20 +461,20 @@ export class ThreadModel {
       this.consumeLivePart(attempt, 'reasoning');
       if (candidate && candidate !== part) {
         const duplicate = this.item(candidate.itemId);
-        if (duplicate) this.items.splice(this.items.indexOf(duplicate), 1);
+        if (duplicate) this.removeItem(duplicate);
       }
     }
     const id = part?.itemId ?? 'item-r-' + messageId;
     const existing = this.item(id);
     if (!value) {
-      if (existing) this.items.splice(this.items.indexOf(existing), 1);
+      if (existing) this.removeItem(existing);
       return;
     }
     if (existing) {
       Object.assign(existing, { text: value });
       this.settleItem(existing, 'completed', at);
     } else if (!this.item('item-r-' + messageId)) {
-      this.items.push({ ...this.base(id, 'reasoning', 'completed', at, undefined, parentItemId), text: value, streaming: false });
+      this.addItem({ ...this.base(id, 'reasoning', 'completed', at, undefined, parentItemId), text: value, streaming: false });
     }
   }
 
@@ -444,8 +500,7 @@ export class ThreadModel {
   private refreshSubagent(parentItemId: string) {
     const parent = this.item(parentItemId);
     if (!parent || !isSubagentCall(parent)) return;
-    const sections = this.items
-      .filter(item => item.parentItemId === parentItemId)
+    const sections = [...(this.childrenByParent.get(parentItemId) ?? [])]
       .sort((a, b) => a.ordinal - b.ordinal)
       .map(item => {
         if (item.type === 'assistant_message') return text(item.text).trim();
@@ -488,7 +543,7 @@ export class ThreadModel {
         if (plan.status === 'active') plan.status = 'superseded';
       }
       this.plans.push({ id: planId, threadId: this.id, runId, nodeId: NODE_ID, kind: 'proposed_plan', status: 'active', markdown });
-      this.items.push({ ...this.base(id, 'proposed_plan', 'completed', at, runId, parentItemId), planId, markdown, streaming: false });
+      this.addItem({ ...this.base(id, 'proposed_plan', 'completed', at, runId, parentItemId), planId, markdown, streaming: false });
       return;
     }
     const path = text(args.file_path ?? args.path ?? args.filePath ?? args.notebook_path);
@@ -513,7 +568,7 @@ export class ThreadModel {
     }
     this.calls.set(callId, id);
     this.toolInputs.set(rawId, { name, args, itemId: id });
-    this.items.push(item);
+    this.addItem(item);
     if (parentItemId) this.refreshSubagent(parentItemId);
   }
 
@@ -565,24 +620,29 @@ export class ThreadModel {
     if (payload.kind !== 'result-usage' || !launchId || !sessionId
       || typeof total !== 'number' || !Number.isFinite(total) || total < 0) return false;
     this.reportedCosts.set(seq, { ledger: JSON.stringify([launchId, sessionId]), source: text(provenance.sourceId), total });
+    this.reportedCostChanged = true;
     return true;
   }
 
   projectStats(): HomeProjectStats {
-    const ledgers = new Map<string, number>();
-    const sources = new Set<string>();
-    let reportedCostUsd: number | undefined;
-    // A live result can arrive before replay reaches older pages. Fold cumulative amounts
-    // in journal order, counting each provider result once and treating a drop as a reset.
-    for (const [, { ledger, source, total }] of [...this.reportedCosts].sort(([a], [b]) => a - b)) {
-      const key = JSON.stringify([ledger, source]);
-      if (source && sources.has(key)) continue;
-      if (source) sources.add(key);
-      const previous = ledgers.get(ledger) ?? 0;
-      reportedCostUsd = (reportedCostUsd ?? 0) + (total >= previous ? total - previous : total);
-      ledgers.set(ledger, total);
+    if (this.reportedCostChanged) {
+      const ledgers = new Map<string, number>();
+      const sources = new Set<string>();
+      let reportedCostUsd: number | undefined;
+      // A live result can arrive before replay reaches older pages. Fold cumulative amounts
+      // in journal order, counting each provider result once and treating a drop as a reset.
+      for (const [, { ledger, source, total }] of [...this.reportedCosts].sort(([a], [b]) => a - b)) {
+        const key = JSON.stringify([ledger, source]);
+        if (source && sources.has(key)) continue;
+        if (source) sources.add(key);
+        const previous = ledgers.get(ledger) ?? 0;
+        reportedCostUsd = (reportedCostUsd ?? 0) + (total >= previous ? total - previous : total);
+        ledgers.set(ledger, total);
+      }
+      this.reportedCostUsd = reportedCostUsd;
+      this.reportedCostChanged = false;
     }
-    return { prompts: this.echoed.size, peakContextTokens: this.peakContextTokens, reportedCostUsd };
+    return { prompts: this.echoed.size, peakContextTokens: this.peakContextTokens, reportedCostUsd: this.reportedCostUsd };
   }
 
   private endTurn(reason: string, at: number, error?: unknown, cause?: unknown, rawUsage?: unknown) {
@@ -601,12 +661,12 @@ export class ThreadModel {
     const closing = !!run && (open || lateCompletedGuess || (reason === 'aborted' && record(cause).kind === 'user'));
     if (lateCompletedGuess && run) {
       const notice = this.item('item-interrupted-' + run.id);
-      if (notice) this.items.splice(this.items.indexOf(notice), 1);
+      if (notice) this.removeItem(notice);
     }
     if (run && closing) {
       if (status === 'interrupted' && run.engineStartedAt !== undefined) {
         run.startedAt = run.engineStartedAt;
-        const message = this.messages.find(entry => entry.id === run.userMessageId);
+        const message = this.messagesById.get(run.userMessageId);
         const item = this.item('item-' + run.userMessageId);
         if (message) { message.createdAt = run.engineStartedAt; message.updatedAt = run.engineStartedAt; }
         if (item) Object.assign(item, { startedAt: iso(run.engineStartedAt), completedAt: iso(run.engineStartedAt), updatedAt: iso(run.engineStartedAt) });
@@ -616,15 +676,17 @@ export class ThreadModel {
     this.updateUsage(rawUsage, at);
     // T3 uses the final answer's update time for earlier runs. Advance it to the
     // durable turn/end, so later turns cannot change the displayed duration.
-    const answer = closing ? [...this.items].reverse().find(item => item.runId === run?.id && item.type === 'assistant_message' && !item.parentItemId) : undefined;
+    const answer = closing && run ? [...(this.itemsByRun.get(run.id) ?? [])].findLast(item => item.type === 'assistant_message' && !item.parentItemId) : undefined;
     if (answer) answer.updatedAt = iso(at);
-    const answerMessage = answer && this.messages.find(message => message.id === answer.messageId);
+    const answerMessage = answer && this.messagesById.get(answer.messageId);
     if (answerMessage) answerMessage.updatedAt = at;
-    for (const item of this.items) {
-      if (item.status === 'running' || item.status === 'waiting' || item.status === 'pending')
-        this.settleItem(item, item.type === 'assistant_message' ? 'completed' : status === 'completed' ? 'completed' : 'interrupted', at);
+    const subagents = new Set<string>();
+    for (const item of this.openItems) {
+      this.settleItem(item, item.type === 'assistant_message' || status === 'completed' ? 'completed' : 'interrupted', at);
+      if (isSubagentCall(item)) subagents.add(item.id);
+      if (item.parentItemId) subagents.add(item.parentItemId);
     }
-    for (const item of this.items) if (isSubagentCall(item)) this.refreshSubagent(item.id);
+    for (const parentId of subagents) this.refreshSubagent(parentId);
     for (const live of this.live.values()) this.retired.add(live.attemptId);
     // Keep settled parts until their durable assistant/message replaces them. Stop may
     // publish turn/end before that message; discarding the mapping duplicates the answer.
@@ -632,19 +694,19 @@ export class ThreadModel {
     // Mark only an explicit Stop: the click supplies it live and the engine's user cause
     // reconstructs it from the journal after a restart.
     if (status === 'interrupted' && userStopped && run && !this.item('item-stop-' + run.id)) {
-      this.items.push({
+      this.addItem({
         ...this.base('item-stop-' + run.id, 'run_interrupt_result', 'completed', at, run.id),
         message: 'Stopped by user',
       });
     }
     if (closing && status === 'interrupted' && !userStopped && run && !this.item('item-stop-' + run.id) && !this.item('item-interrupted-' + run.id)) {
-      this.items.push({
+      this.addItem({
         ...this.base('item-interrupted-' + run.id, 'system_notice', 'completed', at, run.id),
         message: 'Interrupted',
       });
     }
     // T3's own form and words for a failed turn (packages/provider-core/src/server/failure.ts `makeProviderFailureTurnItem`).
-    if (reason === 'error') this.items.push({ ...this.base('item-error-' + this.ordinal, 'error', 'failed', at), title: 'Provider error', failure: providerFailure(error, 'provider_error', 'Provider turn failed.') });
+    if (reason === 'error') this.addItem({ ...this.base('item-error-' + this.ordinal, 'error', 'failed', at), title: 'Provider error', failure: providerFailure(error, 'provider_error', 'Provider turn failed.') });
     this.running = false;
   }
 
@@ -748,8 +810,8 @@ export class ThreadModel {
     return true;
   }
 
-  /** Live reasoning/text (`session.assistant-stream`), replaced by durable `assistant/message`. */
-  applyStreamFrame(frame: Record<string, any>, at = Date.now()): boolean {
+  /** An item is returned only when an existing live row can be updated in place. */
+  applyStreamFrame(frame: Record<string, any>, at = Date.now()): boolean | Item {
     const attempt = text(frame.attemptId);
     if (!attempt || this.retired.has(attempt)) return false;
     if (frame.type === 'start') {
@@ -778,17 +840,22 @@ export class ThreadModel {
     const part = live.parts[kind] ??= { itemId: 'item-live-' + attempt + '-' + kind, raw: '' };
     part.raw += chunk.text;
     const item = this.item(part.itemId);
+    if (item) {
+      Object.assign(item, { text: part.raw, updatedAt: iso(this.stoppedItemTime(item, at)) });
+      if (item.streaming) return item;
+      this.touch(at);
+      return true;
+    }
     const turn = live.key.split(':', 1)[0];
     const current = this.currentRun();
     // An engine turn counter need not equal the number of user-visible runs.
     // A currently active run still owns its stream; a settled run must not
     // capture an early frame for the next one.
-    const streamRun = current && (current.status === 'running' || current.status === 'waiting')
-      ? current
-      : turn ? this.runs.find(run => String(run.ordinal) === turn) : current;
-    if (item) Object.assign(item, { text: part.raw, updatedAt: iso(this.stoppedItemTime(item, at)) });
-    else if (kind === 'text') this.items.push({ ...this.base(part.itemId, 'assistant_message', 'running', at, streamRun?.id ?? null), messageId: 'msg-live-' + attempt, text: part.raw, streaming: true });
-    else this.items.push({ ...this.base(part.itemId, 'reasoning', 'running', at, streamRun?.id ?? null), text: part.raw, streaming: true });
+    const matching = turn ? this.runs[Number(turn) - 1] : undefined;
+    const streamRun = current && (current.status === 'running' || current.status === 'waiting') ? current
+      : !turn ? current : matching && String(matching.ordinal) === turn ? matching : undefined;
+    if (kind === 'text') this.addItem({ ...this.base(part.itemId, 'assistant_message', 'running', at, streamRun?.id ?? null), messageId: 'msg-live-' + attempt, text: part.raw, streaming: true });
+    else this.addItem({ ...this.base(part.itemId, 'reasoning', 'running', at, streamRun?.id ?? null), text: part.raw, streaming: true });
     this.touch(at);
     return true;
   }
@@ -800,7 +867,7 @@ export class ThreadModel {
     if (running && this.settledByGuess && run && (run.status === 'interrupted' || run.status === 'completed')) {
       // The history ended mid-turn because the turn is still going: it was not stopped.
       const notice = this.item('item-interrupted-' + run.id);
-      if (notice) this.items.splice(this.items.indexOf(notice), 1);
+      if (notice) this.removeItem(notice);
       run.status = 'running'; run.completedAt = null; this.settledByGuess = false; this.running = true;
       return true;
     }
@@ -847,7 +914,7 @@ export class ThreadModel {
     const runId = run && (run.status === 'running' || run.status === 'waiting') ? run.id : null;
     const request = this.approvalDetails.get(params.approvalId) ?? { requestKind: 'command' };
     this.requests.push({ id: params.approvalId, kind: request.requestKind, status: 'pending', createdAt: at, resolvedAt: null });
-    this.items.push({
+    this.addItem({
       ...this.base('item-approval-' + params.approvalId, 'approval_request', 'waiting', at, runId),
       requestId: params.approvalId, requestKind: request.requestKind,
       ...((this.executor === 'codex' && request.requestKind === 'command' && request.itemId && request.prompt) ? { prompt: request.prompt } : text(params.humanText) ? { prompt: text(params.humanText) } : {}),
@@ -868,7 +935,7 @@ export class ThreadModel {
     request.resolvedAt = at;
     if (request.status === 'resolved') request.decision = allowed ? 'accept' : 'decline';
     const item = this.item('item-approval-' + params.approvalId);
-    if (item?.runId === null) this.items.splice(this.items.indexOf(item), 1);
+    if (item?.runId === null) this.removeItem(item);
     else if (item) this.settleItem(item, request.status === 'resolved' ? 'completed' : 'cancelled', at);
     this.approvalDetails.delete(params.approvalId);
     const run = this.currentRun();
@@ -881,7 +948,7 @@ export class ThreadModel {
   questionAsked(question: EngineQuestion, at = Date.now()) {
     if (this.requests.some(request => request.id === question.requestId)) return false;
     this.requests.push({ id: question.requestId, kind: 'user_input', status: 'pending', createdAt: at, resolvedAt: null });
-    this.items.push({
+    this.addItem({
       ...this.base('item-question-' + question.requestId, 'user_input_request', 'waiting', at),
       requestId: question.requestId,
       questions: question.questions.map((entry, index) => ({
@@ -916,7 +983,7 @@ export class ThreadModel {
 
   pendingRequest(id: string) { return this.requests.find(request => request.id === id && request.status === 'pending'); }
   activeRunId() { const run = this.currentRun(); return run && (run.status === 'running' || run.status === 'waiting') ? run.id : null; }
-  userMessageCount() { return this.messages.filter(message => message.role === 'user').length; }
+  userMessageCount() { return this.userMessages; }
   setInteractionMode(mode: T3InteractionMode) { this.interactionMode = mode; }
   setRunningInteractionMode(mode: T3InteractionMode | null) { this.runningInteractionMode = mode; }
   private projectedInteractionMode(): T3InteractionMode {
@@ -934,7 +1001,7 @@ export class ThreadModel {
 
   private instanceId() { return !this.bindingKnown ? 'unknown' : this.executor === 'codex' ? CODEX_INSTANCE_ID : CLAUDE_INSTANCE_ID; }
   private modelSelection() { return { instanceId: this.instanceId(), model: this.bindingKnown ? this.model : 'unknown', ...(this.options?.length ? { options: this.options } : {}) }; }
-  private titleText() { return nonBlank(this.title, 'New chat'); }
+  titleText() { return nonBlank(this.title, 'New chat'); }
 
   /** `OrchestrationV2ThreadProjection`, encoded. */
   *usageTurns() {
@@ -1001,13 +1068,13 @@ export class ThreadModel {
   home(turnOrdinal?: number): HomeEntry | null {
     const run = turnOrdinal === undefined ? this.currentRun() : this.runs.find(candidate => candidate.ordinal === turnOrdinal);
     if (!run) return null;
-    const calls = this.items.filter(item => item.runId === run.id && STEP_TYPES.has(item.type));
+    const calls = [...(this.itemsByRun.get(run.id) ?? [])].filter(item => STEP_TYPES.has(item.type));
     const roots = calls.filter(item => item.parentItemId === null);
     const steps = roots.filter(item => !isSubagentCall(item));
     const agents: HomeAgent[] = roots.filter(isSubagentCall).map(item => {
       const input = record(item.input);
       const kind = text(input.subagent_type) || 'general-purpose';
-      const child = this.items.filter(candidate => candidate.parentItemId === item.id).sort((a, b) => b.ordinal - a.ordinal)[0];
+      const child = [...(this.childrenByParent.get(item.id) ?? [])].at(-1);
       const childTool = child ? text(child.toolName) || child.type.replaceAll('_', ' ') : '';
       const currentStep = child?.type === 'assistant_message'
         ? text(child.text).replace(/\s+/g, ' ').trim()
@@ -1016,7 +1083,7 @@ export class ThreadModel {
         : child?.type === 'file_search' ? `Search: ${text(child.pattern)}`
         : child?.type === 'web_search' ? `Web: ${Array.isArray(child.patterns) ? child.patterns.join(', ') : ''}`
         : child ? (toolRequest(childTool, record(child.input), this.cwd).prompt ?? childTool).split('\n')[0] : '';
-      const children = this.items.filter(candidate => candidate.parentItemId === item.id);
+      const children = [...(this.childrenByParent.get(item.id) ?? [])];
       const activeChild = children.some(candidate => candidate.status === 'running' || candidate.status === 'waiting' || candidate.status === 'pending');
       const active = item.status === 'running' || item.status === 'waiting' || item.status === 'pending' || activeChild;
       // The Agent/Task result is authoritative: a subagent may recover from a failed inner command.
@@ -1051,8 +1118,8 @@ export class ThreadModel {
     const run = this.currentRun();
     const active = this.activeRunId();
     const pending = this.requests.find(request => request.status === 'pending');
-    const visible = [...this.messages].reverse().find(message => message.text.trim());
-    const lastUser = [...this.messages].reverse().find(message => message.role === 'user');
+    const visible = this.messages.findLast(message => message.text.trim());
+    const lastUser = this.messages.findLast(message => message.role === 'user');
     return {
       createdBy: 'user', creationSource: 'web',
       id: this.id, projectId: this.projectId, title: this.titleText(), providerInstanceId: this.instanceId(),
@@ -1068,7 +1135,7 @@ export class ThreadModel {
       // until the first message. A chat of the engine's history not read yet (older than today) is stamped by its last activity.
       latestUserMessageAt: lastUser ? iso(lastUser.createdAt) : this.loaded ? null : iso(this.updatedAt),
       hasActionableProposedPlan: this.plans.some(plan => plan.kind === 'proposed_plan' && plan.status === 'active'),
-      itemCount: this.items.length, visibleItemCount: this.items.filter(item => item.parentItemId === null).length,
+      itemCount: this.items.length, visibleItemCount: this.visibleItems,
       createdAt: iso(this.createdAt), updatedAt: iso(this.updatedAt),
       pinnedAt: this.pinnedAt === null ? null : iso(this.pinnedAt), pinOrderKey: this.pinOrderKey,
       archivedAt: this.archivedAt === null ? null : iso(this.archivedAt), settledOverride: null, settledAt: null, deletedAt: null,

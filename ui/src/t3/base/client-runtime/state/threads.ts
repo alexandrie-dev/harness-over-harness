@@ -191,6 +191,7 @@ interface ThreadResumeSnapshot {
   readonly sequence: number;
   readonly persisted: boolean;
   readonly acceptsBoundedSnapshots?: boolean;
+  readonly confirmedHoHProjection?: boolean;
 }
 
 interface ThreadResumeCache {
@@ -265,6 +266,9 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
     hasMissingPendingQuestionCard(candidate.state.data.value)
       ? undefined
       : candidate;
+  const isHoH = environmentId === "hoh-local";
+  // A persisted preview may come from a previous HoH window with unrelated cursors.
+  let confirmedHoHProjection = retained?.confirmedHoHProjection ?? false;
   const owner = {};
   if (resumeCache) resumeCache.owner = owner;
   const loaded =
@@ -314,6 +318,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
     sequence: initialSequence,
     persisted: retained?.persisted ?? Option.isSome(cached),
     acceptsBoundedSnapshots: canLoadHistory,
+    confirmedHoHProjection,
   };
   if (resumeCache?.owner === owner) resumeCache.snapshot = committed;
   const awaitingCompletion = yield* Ref.make(false);
@@ -335,6 +340,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
       state: current,
       sequence,
       acceptsBoundedSnapshots: yield* Ref.get(acceptsBoundedSocketSnapshots),
+      confirmedHoHProjection,
       persisted:
         committed.persisted &&
         matchesThreadSnapshot(committed, Option.getOrNull(current.data), sequence, current.history),
@@ -694,6 +700,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
             }
           : { resetHistory: true },
       );
+      if (isHoH) confirmedHoHProjection = item.snapshotSequence > 0;
       return;
     }
 
@@ -1110,7 +1117,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
         }
 
         const sequence = yield* SubscriptionRef.get(lastSequence);
-        const canResume = Option.isSome(current.data);
+        const canResume = Option.isSome(current.data) && (!isHoH || confirmedHoHProjection);
         const acceptBoundedSnapshot = yield* Ref.get(acceptsBoundedSocketSnapshots);
 
         return {

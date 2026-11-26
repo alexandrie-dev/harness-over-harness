@@ -359,6 +359,7 @@ export function serverConfig(input: ConfigInput) {
     cwd: input.cwd,
     // The folder HoH runs chats in is T3's "No project" (apps/server ManagedProjectFolders): no git there.
     scratchWorkspaceRoot: input.cwd,
+    threadSnapshotPagination: true,
     managedPolicy: HOH_MANAGED_POLICY,
     keybindingsConfigPath: input.cwd.replace(/\/$/, '') + '/.hoh-keybindings.json',
     keybindings: [],

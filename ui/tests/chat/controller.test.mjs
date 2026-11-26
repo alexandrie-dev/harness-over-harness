@@ -708,6 +708,48 @@ test('switching chats shows only that chat and does not mix histories', async ()
   });
 });
 
+test('a superseded warm open retains its preview and the last applied journal cursor', async () => {
+  await withChats(async (controller, engine) => {
+    await controller.openSession('chat-old');
+    const preview = controller.state.entries;
+    await controller.openSession('window-main');
+    const events = engine.sessions.get('chat-old').events;
+    for (let seq = 2; seq <= 1002; seq++) {
+      events.push(seq < 1001 ? { seq, type: 'padding', data: {} } : {
+        seq, type: 'assistant/message', data: { message: { id: 'suffix-' + seq, content: [{ type: 'text', text: 'Новый ответ ' + seq }] } },
+      });
+    }
+    const request = engine.request.bind(engine);
+    const cursors = [];
+    let release, entered;
+    const blocked = new Promise(resolve => { release = resolve; });
+    const pendingPage = new Promise(resolve => { entered = resolve; });
+    engine.request = async (method, params) => {
+      if (method === 'session/events' && params.sessionId === 'chat-old') {
+        cursors.push(params.afterSeq);
+        if (cursors.length === 2) { entered(); await blocked; }
+      }
+      return request(method, params);
+    };
+    const first = controller.openSession('chat-old');
+    assert.equal(controller.state.entries, preview);
+    try {
+      await pendingPage;
+      await controller.openSession('window-main');
+      const again = controller.openSession('chat-old');
+      assert.equal(controller.state.entries, preview);
+      await again;
+      assert.deepEqual(cursors, [1, 1001, 1001]);
+      assert.deepEqual(shown(controller), ['Старый вопрос', 'Старый ответ', 'Новый ответ 1001', 'Новый ответ 1002']);
+    } finally {
+      release();
+      await first;
+    }
+    assert.equal(controller.state.connection, 'ready');
+    assert.equal(shown(controller).at(-1), 'Новый ответ 1002');
+  });
+});
+
 test('the sidebar refreshes once for a burst of turn completion notifications', async () => {
   await withChats(async (controller, engine) => {
     const count = () => engine.requests.filter(request => request.method === 'session/list').length;
