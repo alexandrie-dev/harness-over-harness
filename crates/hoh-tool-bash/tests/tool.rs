@@ -897,7 +897,7 @@ async fn refuses_to_run_when_the_selected_working_directory_is_unavailable() {
     h.fx.service.set(&owner.agent, &child, None).await.unwrap();
     std::fs::remove_dir_all(&child).unwrap();
     let reply = pwd_in(&h, None, Some(owner.agent.clone())).await;
-    assert!(reply.contains(child.to_str().unwrap()), "{reply}");
+    assert!(reply.contains(child.as_str()), "{reply}");
     assert!(reply.contains("is unavailable"), "{reply}");
     assert!(lock(&h.shell.requests).is_empty());
 }
