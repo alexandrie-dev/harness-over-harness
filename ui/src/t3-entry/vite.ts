@@ -116,6 +116,16 @@ export function themePalettes(code: string): string {
  */
 const HOME_BODY = resolve(UI, 'src/t3-entry/hoh-screens/HomeBody.tsx');
 const SIDEBAR_TOP = resolve(UI, 'src/t3-entry/hoh-screens/SidebarTop.tsx');
+function chatIndexHome(code: string): string {
+  return anchorPatch('_chat.index.tsx', code, [[
+    '    void handleNewThread(projectRef, { replace: true })',
+    `    // The landing route can reopen the project draft that New chat just docked.
+    // Clear the view marker before navigation so that draft can render Home.
+    try { sessionStorage.removeItem("hoh-project-new-chat"); } catch { /* Storage is optional. */ }
+    window.dispatchEvent(new CustomEvent("hoh-project-new-chat", { detail: null }));
+    void handleNewThread(projectRef, { replace: true })`,
+  ]]);
+}
 export function chatViewHome(code: string): string {
   return anchorPatch('ChatView.tsx', code, [
     ['"pointer-events-none absolute inset-0 z-20 flex items-center [@media(max-height:34rem)]:items-end"', '"hoh-draft-hero pointer-events-none absolute inset-0 z-20 flex flex-col justify-end"'],
@@ -396,6 +406,7 @@ function hohT3(): Plugin {
       if (id === resolve(T3_WEB, 'components/settings/SettingsPanels.tsx')) return { code: chatSettingsWhisper(code), map: null };
       if (id === resolve(T3_WEB, 'components/ComposerPromptEditorTiptap.tsx')) return { code: editorPaste(code), map: null };
       if (id === resolve(T3_WEB, 'components/ChatMarkdown.tsx')) return { code: markdownHtml(code), map: null };
+      if (id === resolve(T3_WEB, 'routes/_chat.index.tsx')) return { code: chatIndexHome(code), map: null };
       if (id === resolve(T3_WEB, 'components/ChatView.tsx')) return { code: chatViewHome(code), map: null };
       if (id === resolve(T3_WEB, 'components/Sidebar.tsx')) return { code: sidebarList(code), map: null };
       if (id === resolve(T3_WEB, 'components/sidebar/SidebarChrome.tsx')) return { code: sidebarChrome(code), map: null };

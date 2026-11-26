@@ -309,6 +309,24 @@ const scenarios = [
     }, blocks: ['home', 'cards'],
   },
   {
+    name: 'home-from-project-draft', engine: busyEngine, stored: () => storage(false),
+    prepare: async (page, engine, sidebar) => {
+      await readyBusy(page, engine, false);
+      await setSidebar(page, 'expanded');
+      const newChat = page.getByRole('button', { name: /^New chat/ }).first();
+      const home = page.getByRole('link', { name: 'HoH home' });
+      const emptyChat = page.getByText('Send a message to start the conversation.', { exact: true });
+      const card = page.locator('.hoh-card').first();
+      for (let attempt = 0; attempt < 2; attempt++) {
+        await newChat.click();
+        await emptyChat.waitFor({ state: 'visible' });
+        await home.click();
+        await card.waitFor({ state: 'visible', timeout: 5000 });
+      }
+      await setSidebar(page, sidebar);
+    }, blocks: ['home', 'cards'],
+  },
+  {
     name: 'home-projects', engine: busyEngine, stored: () => storage(true),
     prepare: async (page, engine, sidebar) => { await readyBusy(page, engine, true); await setSidebar(page, sidebar); }, blocks: ['home', 'projects'],
   },
