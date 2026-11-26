@@ -1073,7 +1073,7 @@ fn read_project_image_from_root(
 
 /// Validate an absolute raster outside the project before using its parent as the read root.
 #[cfg(target_os = "linux")]
-fn external_image_path(path: &str) -> Result<&Path, String> {
+pub(crate) fn external_image_path(path: &str) -> Result<&Path, String> {
     let candidate = Path::new(path);
     if path.len() > 4096
         || !candidate.is_absolute()
@@ -1092,7 +1092,7 @@ fn external_image_path(path: &str) -> Result<&Path, String> {
 }
 
 #[cfg(target_os = "linux")]
-fn read_external_image(path: &str, home: &Path) -> Result<ImageAsset, String> {
+pub(crate) fn read_external_image(path: &str, home: &Path) -> Result<ImageAsset, String> {
     let candidate = external_image_path(path)?;
     // Reject protected paths before inspecting the containing folder.
     if protected_home_path(candidate, home) || system_pseudo_path(candidate) {

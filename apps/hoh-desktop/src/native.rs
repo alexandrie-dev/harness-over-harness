@@ -1218,7 +1218,7 @@ pub async fn confirm_external_image(
             {
                 return Ok(None);
             }
-            crate::image_asset::read_confirmed_image(&path, &home).map(Some)
+            crate::image_asset::read_external_image(&path, &home).map(Some)
         })
         .await
         .map_err(|_| "The image read was interrupted.".to_owned())?
