@@ -493,15 +493,12 @@ const scenarios = [
       await page.getByText('The measured conversation lane is ready.').waitFor();
       await setSidebar(page, sidebar);
       const panel = page.locator('[data-thread-details-card]');
-      if (!(await panel.isVisible().catch(() => false))) await page.getByRole('button', { name: 'Toggle chat details panel' }).click();
+      const toggle = page.getByRole('button', { name: 'Toggle chat details panel' });
+      if (!(await panel.isVisible())) await toggle.click();
       await panel.getByText('Context', { exact: true }).waitFor();
       await panel.getByText('Used', { exact: true }).waitFor();
-      // At narrow widths the details card is a popover and intentionally overlays the lane.
-      // Measure the conversation after closing it, as in the other conversation scenarios.
-      await page.keyboard.press('Escape');
-      if (await panel.isVisible().catch(() => false)) {
-        await page.getByRole('button', { name: 'Toggle chat details panel' }).click();
-      }
+      // Close the docked card or popover with the same control before measuring the lane.
+      await toggle.click();
       await panel.waitFor({ state: 'hidden' });
     }, blocks: ['conversation'],
   },
