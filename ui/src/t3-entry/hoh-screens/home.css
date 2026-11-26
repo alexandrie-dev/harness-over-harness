@@ -102,7 +102,8 @@ body:has([data-slot="dialog-popup"].hoh-quick-view) [data-hoh-home-body] + .chat
 }
 .hoh-card--plugin-creator {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-columns: [g1] auto [g2] minmax(0, 1fr) [g3];
+  grid-template-rows: [g1] auto [g2] auto [g3];
   column-gap: 14px;
   row-gap: 4px;
   align-content: center;
@@ -117,14 +118,14 @@ body:has([data-slot="dialog-popup"].hoh-quick-view) [data-hoh-home-body] + .chat
 .hoh-card--plugin-creator .hoh-card__open:focus-visible { outline: none; }
 .hoh-card--plugin-creator[data-state="working"] .hoh-card__state b { color: var(--primary); }
 .hoh-card--plugin-creator[data-state="ended"] .hoh-card__state b { color: var(--muted-foreground); }
-.hoh-card--plugin-creator .hoh-card__title { grid-area: 1 / 2; align-self: end; }
-.hoh-card--plugin-creator .hoh-card__state { grid-area: 2 / 2; margin-top: 0; align-self: start; column-gap: 4px; }
-.hoh-card--plugin-creator .hoh-steps, .hoh-card--plugin-creator .hoh-subs { grid-column: 1 / -1; margin-top: 4px; }
+.hoh-card--plugin-creator .hoh-card__title { grid-area: g1 / g2 / g2 / g3; align-self: end; }
+.hoh-card--plugin-creator .hoh-card__state { grid-area: g2 / g2 / g3 / g3; margin-top: 0; align-self: start; column-gap: 4px; }
+.hoh-card--plugin-creator .hoh-steps, .hoh-card--plugin-creator .hoh-subs { grid-column: g1 / g3; margin-top: 4px; }
 .hoh-card__partnership {
   display: flex;
   align-items: center;
   align-self: center;
-  grid-area: 1 / 1 / span 2;
+  grid-area: g1 / g1 / g3 / g2;
 }
 .hoh-card__emblem, .hoh-card__worker {
   display: grid;
