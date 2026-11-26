@@ -37,6 +37,12 @@ test('shows the empty state only after the engine returns an empty inventory', a
 
 const creatorPage = resolve(import.meta.dirname, '../src/t3-entry/hoh-screens/PluginCreatorPage.tsx');
 const creatorMocks = {
+  '~/components/chat/ComposerSpeechButton': {
+    ComposerSpeechButton: 'voice-start', ComposerSpeechRecordingPill: 'voice-recording',
+  },
+  './whisper/useComposerSpeechInput': {
+    useWhisperDictation: () => ({ available: false, blocksSubmission: false }),
+  },
   '../../t3/base/web/components/ui/select': {
     Select: 'select-root', SelectTrigger: 'button', SelectPopup: 'select-popup', SelectItem: 'select-item',
   },
@@ -103,5 +109,51 @@ test('Plugin Creator keeps the request available when starting a harness fails',
   assert.match(h.text(), /Choose a HoH checkout/);
   assert.equal(h.byId('plugin-creator-brief').props.value, '  Add a clock tool.  ');
   assert.equal(h.nodes().find(node => node.props['aria-label'] === 'Send plugin request').disabled, false);
+  h.unmount();
+});
+
+test('Plugin Creator keeps dictated text in the draft until it is submitted', async () => {
+  const launched = [];
+  let dictation;
+  let blocksSubmission = false;
+  const h = componentHarness(creatorPage, 'PluginCreatorPage', {
+    ...creatorMocks,
+    './whisper/useComposerSpeechInput': {
+      useWhisperDictation(options) {
+        dictation = options;
+        return {
+          available: true, configured: true, blocksSubmission, freezesEditor: blocksSubmission,
+          state: { phase: blocksSubmission ? 'recording' : 'idle' },
+          start() { blocksSubmission = true; },
+          stop() {
+            blocksSubmission = false;
+            options.commitDraft(options.readDraft().text + ' With a voice command.');
+          },
+        };
+      },
+    },
+  }, {
+    creator: {
+      options: async () => creatorOptions,
+      subscribe: () => () => {},
+      launch: async input => { launched.push(input); return 'plugin-chat'; },
+    },
+    onAddProject() {},
+    onOpenThread() {},
+  });
+  h.window.requestAnimationFrame = () => 0;
+  await h.settle();
+  await filledForm(h);
+  h.nodes().find(node => node.type === 'voice-start').props.onStart();
+  h.forceRender();
+  await h.nodes().find(node => node.type === 'form').props.onSubmit({ preventDefault() {} });
+  assert.equal(launched.length, 0);
+  assert.equal(dictation.readDraft().text, '  Add a clock tool.  ');
+  h.nodes().find(node => node.type === 'voice-recording').props.onStop();
+  await h.settle();
+  assert.equal(launched.length, 0);
+  assert.match(h.byId('plugin-creator-brief').props.value, /With a voice command/);
+  await h.nodes().find(node => node.type === 'form').props.onSubmit({ preventDefault() {} });
+  assert.equal(launched.length, 1);
   h.unmount();
 });

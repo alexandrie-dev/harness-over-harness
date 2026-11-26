@@ -15,10 +15,13 @@ import { encodeWhisperWav } from '../../whisper/Wav';
 import { transcribeWhisperRecording, useWhisperServer, whisperFailureMessage } from '../../whisper/client';
 
 type SpeechInputOptions = Parameters<typeof useEnvironmentSpeechInput>[0];
+
+type WhisperDraft = Pick<SpeechInputOptions, 'ownerKey' | 'disabled' | 'presented' | 'commitDraft'> & {
+  readDraft: () => { text: string } | null;
+};
 const idle: VoiceInputState = { phase: 'idle', error: null, errorAction: null };
 
-export function useHohComposerSpeechInput(input: SpeechInputOptions) {
-  const fallback = useEnvironmentSpeechInput(input);
+export function useWhisperDictation(input: WhisperDraft) {
   const navigate = useNavigate();
   const serverUrl = useWhisperServer();
   const russian = useLocale() === 'ru';
@@ -110,17 +113,11 @@ export function useHohComposerSpeechInput(input: SpeechInputOptions) {
   });
   const stop = useStableCallback(() => controller.stop());
   const cancel = useStableCallback(() => controller.cancel());
-  const finishWithoutSending = useStableCallback(() => { void controller.stop(); });
-  const skipPostProcessing = useStableCallback(() => {});
-
-  if (serverUrl === undefined) return { ...fallback, available: false, whisperError: null };
   const busy = voiceInputBlocksSubmission(state);
   return {
-    ...fallback,
-    setup: { ...fallback.setup, open: false },
-    available: true,
+    available: serverUrl !== undefined,
+    configured: Boolean(serverUrl),
     state,
-    preview: null,
     whisperError: state.phase === 'error' ? state.error : null,
     level,
     recordingStartedAt,
@@ -130,6 +127,21 @@ export function useHohComposerSpeechInput(input: SpeechInputOptions) {
     start,
     stop,
     cancel,
+  };
+}
+
+export function useHohComposerSpeechInput(input: SpeechInputOptions) {
+  const fallback = useEnvironmentSpeechInput(input);
+  const whisper = useWhisperDictation(input);
+  const finishWithoutSending = useStableCallback(() => { void whisper.stop(); });
+  const skipPostProcessing = useStableCallback(() => {});
+
+  if (!whisper.available) return { ...fallback, available: false, whisperError: null };
+  return {
+    ...fallback,
+    ...whisper,
+    setup: { ...fallback.setup, open: false },
+    preview: null,
     submitAfterDictation: finishWithoutSending,
     skipPostProcessing,
   };

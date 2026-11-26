@@ -106,6 +106,13 @@
 .hoh-plugin-creator__toolbar, .hoh-plugin-creator__options { display: flex; align-items: center; gap: 4px; min-width: 0; }
 .hoh-plugin-creator__toolbar { justify-content: space-between; gap: 8px; }
 .hoh-plugin-creator__options { flex-wrap: wrap; }
+.hoh-plugin-creator__actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+}
+.hoh-plugin-creator__actions [data-slot="voice-input-pill"] { flex: 0 0 auto; }
 .hoh-plugin-creator__picker { min-width: 0; max-width: min(12rem, 40vw); }
 .hoh-plugin-creator__picker-list { max-width: min(20rem, calc(100vw - 32px)); }
 :is(.hoh-plugin-creator__picker, .hoh-plugin-creator__picker-list) .provider-mark {

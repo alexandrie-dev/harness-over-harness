@@ -5,6 +5,8 @@ import {
   MAX_PLUGIN_BRIEF, type PluginCreatorApi, type PluginCreatorOptions,
 } from '../../hoh-host/plugin-creator';
 import { Select, SelectItem, SelectPopup, SelectTrigger } from '../../t3/base/web/components/ui/select';
+import { ComposerSpeechButton, ComposerSpeechRecordingPill } from '~/components/chat/ComposerSpeechButton';
+import { useWhisperDictation } from './whisper/useComposerSpeechInput';
 import './plugin-creator.css';
 
 const starters = [
@@ -68,7 +70,35 @@ export function PluginCreatorPage({
     ?? (available.length === 1 ? available[0] : undefined);
   const project = options?.projects.find(project => project.id === projectId)
     ?? (options?.projects.length === 1 ? options.projects[0] : undefined);
-  const canLaunch = !!(creator && project && selected?.available && brief.trim() && !pending);
+  const voice = useWhisperDictation({
+    ownerKey: 'plugin-creator-brief',
+    disabled: pending || !options,
+    readDraft: () => ({ text: brief }),
+    commitDraft: text => {
+      if (text.length > MAX_PLUGIN_BRIEF) {
+        setError(`The plugin request cannot exceed ${MAX_PLUGIN_BRIEF.toLocaleString()} characters.`);
+        return;
+      }
+      setBrief(text);
+      const editor = composer.current;
+      window.requestAnimationFrame(() => {
+        if (editor && composer.current === editor) {
+          editor.focus();
+          editor.setSelectionRange(text.length, text.length);
+        }
+      });
+    },
+  });
+  const canLaunch = !!(creator && project && selected?.available && brief.trim() && !pending && !voice.blocksSubmission);
+
+  function startDictation() {
+    if (!voice.configured) {
+      setError('Set the Whisper server address in Settings → Chat.');
+      return;
+    }
+    setError('');
+    void voice.start();
+  }
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -110,15 +140,22 @@ export function PluginCreatorPage({
         </section>
 
         {loadError ? <p role="alert">{loadError}</p> : !options ? <p role="status">Loading projects and harnesses…</p> : (
-          <form className="hoh-plugin-creator__composer" onSubmit={submit}>
+          <form className="hoh-plugin-creator__composer" onSubmit={submit}
+            onKeyDown={event => {
+              if (event.key === 'Escape' && voice.blocksSubmission) {
+                event.preventDefault();
+                event.stopPropagation();
+                voice.cancel();
+              }
+            }}>
             <textarea id="plugin-creator-brief" ref={composer} rows={3} aria-label="Plugin request"
-              maxLength={MAX_PLUGIN_BRIEF} value={brief} disabled={pending}
+              maxLength={MAX_PLUGIN_BRIEF} value={brief} disabled={pending} readOnly={voice.freezesEditor}
               placeholder="Describe the plugin you want to build…"
               onChange={event => setBrief(event.target.value)}
               onKeyDown={event => {
                 if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
                   event.preventDefault();
-                  event.currentTarget.form?.requestSubmit();
+                  if (!voice.blocksSubmission) event.currentTarget.form?.requestSubmit();
                 }
               }} />
             <div className="hoh-plugin-creator__toolbar">
@@ -165,12 +202,24 @@ export function PluginCreatorPage({
                   </SelectPopup>
                 </Select>
               </div>
-              <button type="submit" className="hoh-plugin-creator__send" aria-label="Send plugin request"
-                title="Send plugin request" disabled={!canLaunch}>
-                <ArrowUp size={19} aria-hidden />
-              </button>
+              <div className="hoh-plugin-creator__actions">
+                {voice.available && (
+                  <>
+                    <ComposerSpeechRecordingPill state={voice.state} progress={null} level={voice.level}
+                      recordingStartedAt={voice.recordingStartedAt} cancelShortcutLabel="Esc"
+                      disabled={pending} onStart={startDictation} onStop={() => void voice.stop()}
+                      onCancel={voice.cancel} onSkipPostProcessing={() => {}} />
+                    <ComposerSpeechButton state={voice.state} disabled={pending} onStart={startDictation} />
+                  </>
+                )}
+                <button type="submit" className="hoh-plugin-creator__send" aria-label="Send plugin request"
+                  title="Send plugin request" disabled={!canLaunch}>
+                  <ArrowUp size={19} aria-hidden />
+                </button>
+              </div>
             </div>
             {pending ? <p role="status">Opening {selected?.name} chat…</p> : null}
+            {voice.whisperError ? <p role="alert">{voice.whisperError}</p> : null}
             {error ? <p role="alert">{error}</p> : null}
             {!pending && !error && (selected?.available === false || !available.length) ? (
               <p role="status">{selected?.reason ?? options.harnesses.find(harness => harness.reason)?.reason ?? 'Connect a harness to send your request.'}</p>
