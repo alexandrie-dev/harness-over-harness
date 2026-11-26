@@ -288,6 +288,32 @@ test('cold history follows the same chat across an engine restart', async () => 
   }
 });
 
+test('cold history uses one retry budget when the engine repeatedly restarts', async () => {
+  const id = 'history-restarts';
+  const engine = new FakeEngine();
+  engine.seed(id, 'Saved chat', []);
+  const request = engine.request.bind(engine);
+  let resumes = 0;
+  engine.request = async (method, params) => {
+    if (method === 'session/resume' && params.sessionId === id) {
+      resumes++;
+      engine.setStatus('restarting');
+      throw { code: 'connecting' };
+    }
+    return request(method, params);
+  };
+  const { client, host } = connectColdHistory(engine, id, { loadRetries: 2, loadRetryMs: 5 });
+  try {
+    const stream = await client.stream('orchestration.subscribeThread', { threadId: id, requestCompletionMarker: true });
+    await stream.until(value => value.kind === 'synchronized' || stream.exit !== undefined);
+    assert.equal(stream.exit?._tag, 'Failure');
+    assert.equal(resumes, 3, 'the first attempt and two retries share the same budget');
+  } finally {
+    host.stop();
+    client.close();
+  }
+});
+
 test('cold history retries temporary bridge failures and deduplicates replayed events and approvals', async () => {
   const id = 'history-overload';
   const engine = new FakeEngine();

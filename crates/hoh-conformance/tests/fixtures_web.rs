@@ -125,14 +125,26 @@ async fn unloading_the_fixture_closes_a_connection_that_sent_no_request() {
     let mut idle = tokio::net::TcpStream::connect(("127.0.0.1", server.port))
         .await
         .unwrap();
-    kernel.shutdown().await;
-    let mut buffer = [0u8; 8];
-    let read = tokio::time::timeout(std::time::Duration::from_secs(5), idle.read(&mut buffer))
+    // The accept loop handles the earlier idle connection before answering this probe.
+    let mut probe = tokio::net::TcpStream::connect(("127.0.0.1", server.port))
         .await
-        .expect("the connection must be closed on unload");
-    match read {
-        Ok(bytes) => assert_eq!(bytes, 0),
-        // Shutdown can close the listening socket before it accepts the connection.
-        Err(error) => assert_eq!(error.kind(), std::io::ErrorKind::ConnectionReset),
-    }
+        .unwrap();
+    probe
+        .write_all(b"GET / HTTP/1.1\r\nHost: localhost\r\n\r\n")
+        .await
+        .unwrap();
+    let mut buffer = [0u8; 8];
+    let timeout = std::time::Duration::from_secs(5);
+    let probe_read = tokio::time::timeout(timeout, probe.read(&mut buffer))
+        .await
+        .expect("the server accepted the probe")
+        .unwrap();
+    assert_eq!(probe_read, 0);
+
+    kernel.shutdown().await;
+    let read = tokio::time::timeout(timeout, idle.read(&mut buffer))
+        .await
+        .expect("the accepted connection must be closed on unload")
+        .unwrap();
+    assert_eq!(read, 0);
 }

@@ -284,16 +284,9 @@ async fn deduplicates_lifecycle_announcements_and_falls_back_to_the_process_cwd(
 }
 
 #[tokio::test]
-async fn aborts_a_pending_first_search_when_its_agent_is_disposed_and_ignores_a_repeated_announcement()
- {
+async fn disposes_a_search_with_its_agent_and_ignores_a_repeated_announcement() {
     let f = Fixture::new().await;
     let root = f.workspace("dsh-file-reference-service-", &["README.md"]);
-    // A chain of nested directories: the traversal reads them one after another.
-    let mut deep = root.clone();
-    for _ in 0..300 {
-        deep.push("d");
-        std::fs::create_dir(&deep).unwrap();
-    }
     f.ctx
         .plugin::<LocalFileReferenceService>(json!({}))
         .unwrap()
@@ -303,18 +296,15 @@ async fn aborts_a_pending_first_search_when_its_agent_is_disposed_and_ignores_a_
     let (agent, disposer) = f
         .register_disposable_agent("dispose-agent", Some(&root.to_string_lossy()))
         .await;
-    let service = f.ctx.get::<FileReferences>().expect("fileReferences");
-    let pending = {
-        let agent = agent.agent.clone();
-        let service = service.clone();
-        tokio::spawn(async move { service.list(&agent, "never", &signal()).await })
-    };
-    // Let the query reach the index traversal before the agent goes away.
-    tokio::time::sleep(Duration::from_millis(2)).await;
-    assert!(!pending.is_finished(), "the traversal outlived the setup");
+    assert_eq!(list(&f, &agent, "README").await, vec![file("README.md")]);
     disposer.dispose().await;
-    let error = pending.await.unwrap().expect_err("search is aborted");
-    assert_eq!(error.to_string(), "file search index disposed");
+    assert!(
+        f.ctx
+            .get::<hoh_agent::Agents>()
+            .unwrap()
+            .get(agent.agent.id())
+            .is_none()
+    );
 
     // The announcement is idempotent: a second `agent/disposed` finds nothing to release.
     f.ctx

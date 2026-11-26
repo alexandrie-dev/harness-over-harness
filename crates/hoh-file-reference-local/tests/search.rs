@@ -371,6 +371,23 @@ async fn still_offers_a_lib_tree_where_several_ecosystems_keep_their_sources() {
 }
 
 #[tokio::test]
+async fn disposing_a_search_aborts_its_pending_first_traversal() {
+    let work = workspace();
+    let files = WorkspaceFileSearch::new(work.text(), FileSearchConfig::default()).unwrap();
+    let abort = signal();
+    let pending = files.list("README", &abort);
+    tokio::pin!(pending);
+
+    // Poll once to create the traversal on this single-threaded runtime.
+    // Dispose synchronously before the traversal task can run.
+    assert!(futures_util::poll!(&mut pending).is_pending());
+    files.dispose();
+    let error = pending.await.expect_err("search is aborted");
+    assert_eq!(error.to_string(), "file search index disposed");
+    assert!(files.list("README", &abort).await.unwrap().is_empty());
+}
+
+#[tokio::test]
 async fn cancels_individual_callers_skips_missing_directories_and_validates_limits() {
     let workspace = workspace();
     let root = workspace.text();

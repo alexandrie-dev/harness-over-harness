@@ -1638,13 +1638,15 @@ export class HohHost {
   }
 
   /** A cached conversation can be opened before the desktop transport finishes connecting. */
-  private async readThreadHistory(thread: ThreadModel, journal: JournalRead) {
+  private async readThreadHistory(thread: ThreadModel) {
     const retryable = (error: unknown) => {
       const { code } = hostFailure(error);
       // The desktop bridge reports queue saturation and send failures as `failed`.
       return code === 'connecting' || code === 'failed';
     };
+    const sameThread = () => !this.stopped && this.threads.get(thread.id) === thread;
     for (let attempt = 0; ; attempt++) {
+      const journal = this.journalFor(thread);
       try {
         const joiningBeforeResume = !this.resumedSessions.has(thread.id) && journal.pending !== undefined;
         try { await this.ensureSessionResumed(thread.id); }
@@ -1655,11 +1657,15 @@ export class HohHost {
         await this.replayJournal(thread, journal);
         // A slow read that began before resume may still have returned the pre-resume log.
         if (joiningBeforeResume) await this.replayJournal(thread, journal);
-        return;
+        return journal;
       } catch (error) {
-        if (!this.currentJournal(thread, journal) || attempt >= this.loadRetries || !retryable(error)) throw error;
+        const { code } = hostFailure(error);
+        // A reconnecting bridge can reject the read after its journal was invalidated.
+        // Keep the retry budget across generations while the same conversation exists.
+        const canRetry = code === 'connecting' || (code === 'failed' && this.currentJournal(thread, journal));
+        if (!canRetry || !sameThread() || attempt >= this.loadRetries) throw error;
         await new Promise<void>(resolve => setTimeout(resolve, this.loadRetryMs));
-        if (this.stopped) throw error;
+        if (!sameThread()) throw error;
       }
     }
   }
@@ -1671,10 +1677,10 @@ export class HohHost {
     if (!thread || thread.loaded) return thread;
     let pending = this.loading.get(threadId);
     if (!pending) {
-      const journal = this.journalFor(thread);
       pending = (async () => {
-        await this.readThreadHistory(thread, journal);
+        const journal = await this.readThreadHistory(thread);
         if (!this.currentJournal(thread, journal)) return undefined;
+        if (thread.loaded) return thread;
         thread.settleUnfinished(this.now());
         // The model this chat is bound to (a chat that has had a turn keeps its own).
         const modeGeneration = this.modeGenerations.get(threadId) ?? 0;
@@ -1711,17 +1717,12 @@ export class HohHost {
           } catch { /* the placeholder stays */ }
         }
         if (!this.currentJournal(thread, journal)) return undefined;
+        if (thread.loaded) return thread;
         thread.loaded = true;
         // The list row learns what the history knows (a title from the first message, the last answer).
         this.changed(threadId);
         return thread;
-      })().catch(error => {
-        if (this.stopped || this.threads.get(threadId) !== thread || journal.generation === this.accessProcessGeneration
-          || hostFailure(error).code !== 'connecting') throw error;
-        // The replacement engine is starting. Keep this reader attached to the current load.
-        if (this.loading.get(threadId) === pending) this.loading.delete(threadId);
-        return this.loaded(threadId);
-      }).finally(() => { if (this.loading.get(threadId) === pending) this.loading.delete(threadId); });
+      })().finally(() => { if (this.loading.get(threadId) === pending) this.loading.delete(threadId); });
       this.loading.set(threadId, pending);
     }
     return pending;
