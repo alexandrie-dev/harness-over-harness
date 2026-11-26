@@ -1071,9 +1071,9 @@ fn read_project_image_from_root(
     })
 }
 
-/// Only a user-confirmed absolute raster may use its own folder as the read root.
+/// Validate an absolute raster outside the project before using its parent as the read root.
 #[cfg(target_os = "linux")]
-pub(crate) fn external_image_path(path: &str) -> Result<&Path, String> {
+fn external_image_path(path: &str) -> Result<&Path, String> {
     let candidate = Path::new(path);
     if path.len() > 4096
         || !candidate.is_absolute()
@@ -1092,7 +1092,7 @@ pub(crate) fn external_image_path(path: &str) -> Result<&Path, String> {
 }
 
 #[cfg(target_os = "linux")]
-pub(crate) fn read_confirmed_image(path: &str, home: &Path) -> Result<ImageAsset, String> {
+fn read_external_image(path: &str, home: &Path) -> Result<ImageAsset, String> {
     let candidate = external_image_path(path)?;
     // Reject protected paths before inspecting the containing folder.
     if protected_home_path(candidate, home) || system_pseudo_path(candidate) {
@@ -1113,6 +1113,28 @@ pub(crate) fn read_confirmed_image(path: &str, home: &Path) -> Result<ImageAsset
         home,
     )
 }
+
+/// Read a raster for a known conversation, including absolute paths to artifacts outside it.
+#[cfg(target_os = "linux")]
+pub fn read_chat_image(
+    project_root: &Path,
+    expected_root: ProjectRootIdentity,
+    requested: &str,
+    home: &Path,
+) -> Result<ImageAsset, String> {
+    let root = open_root_directory(project_root, expected_root)?;
+    let path = Path::new(requested);
+    if path.is_absolute()
+        && !path.starts_with(descriptor_path(&root.file, "conversation project folder")?)
+        && !path.starts_with(project_root)
+    {
+        return read_external_image(requested, home);
+    }
+    read_project_image_from_root(&root, requested, home)
+}
+
+#[cfg(not(target_os = "linux"))]
+pub use read_project_image as read_chat_image;
 
 /// Read an explicit HTML artifact through the same root and file checks as a project image.
 #[cfg(target_os = "linux")]
@@ -1542,6 +1564,38 @@ mod tests {
             ),
             "outside this conversation's project",
         );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn chat_previews_absolute_rasters_outside_the_project_and_keeps_file_checks() {
+        let scratch = Scratch::new("external-artifact");
+        let project = scratch.0.join("project");
+        let artifacts = scratch.0.join("artifacts");
+        let protected = scratch.0.join(".codex");
+        for folder in [&project, &artifacts, &protected] {
+            std::fs::create_dir(folder).unwrap();
+        }
+        let raster = artifacts.join("shot.png");
+        let private = protected.join("private.png");
+        for path in [&raster, &private] {
+            std::fs::write(path, png(2, 2)).unwrap();
+        }
+        let preview = |path: &Path| {
+            read_chat_image(
+                &project,
+                project_identity(&project),
+                path.to_str().unwrap(),
+                &scratch.0,
+            )
+        };
+        let image = preview(&raster).unwrap();
+        assert_eq!(image.mime_type, "image/png");
+        assert_eq!(Path::new(&image.source_path), raster);
+        assert_refused(preview(&private), "protected");
+        let disguised = artifacts.join("disguised.png");
+        std::fs::write(&disguised, "not a raster").unwrap();
+        assert_refused(preview(&disguised), "do not match its image type");
     }
 
     #[cfg(target_os = "linux")]

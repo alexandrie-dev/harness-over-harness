@@ -1143,7 +1143,7 @@ pub async fn read_image_asset(
     let engine = state.engine.clone();
     tauri::async_runtime::spawn_blocking(move || {
         let (root, identity, home) = preview_root(&engine, session_id)?;
-        crate::image_asset::read_project_image(&root, identity, &path, &home)
+        crate::image_asset::read_chat_image(&root, identity, &path, &home)
     })
     .await
     .map_err(|_| "Image unavailable: the read was interrupted.".to_owned())?

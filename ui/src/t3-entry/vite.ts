@@ -261,26 +261,6 @@ function markdownHtml(code: string): string {
   ], `import { HtmlDocument as HohHtmlDocument } from ${JSON.stringify(preview)};\n`);
 }
 
-/** Ask before previewing a linked raster outside the conversation's project. */
-function externalMarkdownImage(code: string): string {
-  const prompt = resolve(UI, 'src/t3-entry/preview/ExternalImagePrompt.tsx');
-  return anchorPatch('ChatMarkdownMedia.tsx', code, [
-    ['  if (props.kind === "video") {\n    return (\n      <ChatMarkdownVideo', `  if (
-    window.__TAURI_INTERNALS__ && props.kind !== "video" && resource._tag === "media-file" &&
-    assetUrl._tag === "Failure" &&
-    unavailableDetail === "Image unavailable: the file is outside this conversation's project." &&
-    resource.path.startsWith("/") && /[.](png|jpe?g|gif|webp)$/i.test(resource.path)
-  ) {
-    return <HohExternalImagePrompt key={JSON.stringify([resource.threadId, resource.path])}
-      threadId={resource.threadId} path={resource.path} label={props.alt || resource.path.split("/").at(-1) || "Image"}
-      onApproved={refreshAssetUrl} />;
-  }
-  if (props.kind === "video") {
-    return (
-      <ChatMarkdownVideo`],
-  ], `import { ExternalImagePrompt as HohExternalImagePrompt } from ${JSON.stringify(prompt)};\n`);
-}
-
 /** From a clean profile, New chat invokes the same scratch action as Home. */
 export function chatRouteCommands(code: string): string {
   return anchorPatch('chatRouteCommands.ts', code, [
@@ -415,7 +395,6 @@ function hohT3(): Plugin {
       if (id === resolve(T3_WEB, 'components/chat/ChatComposer.tsx')) return { code: composerWhisper(composerPaste(code)), map: null };
       if (id === resolve(T3_WEB, 'components/settings/SettingsPanels.tsx')) return { code: chatSettingsWhisper(code), map: null };
       if (id === resolve(T3_WEB, 'components/ComposerPromptEditorTiptap.tsx')) return { code: editorPaste(code), map: null };
-      if (id === resolve(T3_WEB, 'components/chat/ChatMarkdownMedia.tsx')) return { code: externalMarkdownImage(code), map: null };
       if (id === resolve(T3_WEB, 'components/ChatMarkdown.tsx')) return { code: markdownHtml(code), map: null };
       if (id === resolve(T3_WEB, 'components/ChatView.tsx')) return { code: chatViewHome(code), map: null };
       if (id === resolve(T3_WEB, 'components/Sidebar.tsx')) return { code: sidebarList(code), map: null };
