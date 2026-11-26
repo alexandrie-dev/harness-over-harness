@@ -18,6 +18,13 @@ body:has([data-slot="dialog-popup"].hoh-quick-view) [data-hoh-home-body] + .chat
 .hoh-draft-hero:has(> .hoh-home:not([data-busy])) {
   justify-content: center;
 }
+/* The draft canvas starts below the header. Centre empty Home across the full window. */
+@media (height > 34rem) {
+  [data-chat-column]:has(> [data-chat-header]) .hoh-draft-hero:has(> .hoh-home:not([data-busy])) {
+    inset-block-start: auto;
+    block-size: 100dvh;
+  }
+}
 .hoh-home:not([data-busy]) { flex: 0 0 auto; overflow: visible; margin-bottom: 28px; -webkit-mask-image: none; mask-image: none; }
 .hoh-home:not([data-busy]) .hoh-home__inner { padding-block: 0; gap: 0; }
 @media (max-height: 34rem) {
