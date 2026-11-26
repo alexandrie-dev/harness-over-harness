@@ -1,30 +1,96 @@
 --- a/web/components/chat/ChatHeader.tsx
 +++ b/web/components/chat/ChatHeader.tsx
-@@ -0,0 +1 @@
+@@ -0,0 +1,2 @@
 +import { FolderTrust as HohFolderTrust } from "../../../../../t3-entry/hoh-screens/FolderTrust";
-@@ -184 +185 @@
++import { ChatProjectMenu } from "../../../../../t3-entry/hoh-screens/ChatProjectMenu";
+@@ -7 +9 @@
+-import { scopeThreadRef } from "@t3tools/client-runtime/environment";
++import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
+@@ -16,0 +19 @@
++  useCallback,
+@@ -25 +27,0 @@
+-import { MiddleTruncate } from "../ui/middle-truncate";
+@@ -35 +37 @@
+-import { ProjectFavicon } from "../ProjectFavicon";
++import type { DraftId } from "~/composerDraftStore";
+@@ -53,0 +56 @@
++  draftId: DraftId | null;
+@@ -54,0 +58 @@
++  workspaceRoot: string | null;
+@@ -78,0 +83 @@
++  draftId,
+@@ -79,0 +85 @@
++  workspaceRoot,
+@@ -88 +93,0 @@
+-  const activeProjectName = activeProject?.isScratch ? gt("No project") : activeProject?.title;
+@@ -93,0 +99,7 @@
++  const threadKey = scopedThreadKey(activeThreadRef);
++  const [workingDirectory, setWorkingDirectory] = useState<{ threadKey: string; cwd: string } | null>(null);
++  const onWorkingDirectory = useCallback((cwd: string) => {
++    setWorkingDirectory((previous) => previous?.threadKey === threadKey && previous.cwd === cwd
++      ? previous : { threadKey, cwd });
++  }, [threadKey]);
++  const cwd = isServerThread && workingDirectory?.threadKey === threadKey ? workingDirectory.cwd : workspaceRoot;
+@@ -156 +168,2 @@
+-    activeProjectName,
++    activeProject?.title,
++    cwd,
+@@ -184 +197 @@
 -      toastManager.add({ type: "warning", title: gt("Thread title cannot be empty") });
 +      toastManager.add({ type: "warning", title: gt("Chat title cannot be empty") });
-@@ -196 +197 @@
+@@ -196 +209 @@
 -          title: gt("Failed to rename thread"),
 +          title: gt("Failed to rename chat"),
-@@ -259,0 +261 @@
-+      <HohFolderTrust threadId={activeThreadId} fallbackCwd={activeProjectCwd} isServerThread={isServerThread} />
-@@ -261 +263 @@
+@@ -259,0 +273 @@
++      <HohFolderTrust key={threadKey} threadId={activeThreadId} fallbackCwd={workspaceRoot} isServerThread={isServerThread} onWorkingDirectory={onWorkingDirectory} />
+@@ -261 +275 @@
 -        ariaLabel={gt("Thread breadcrumb")}
 +        ariaLabel={gt("Chat breadcrumb")}
-@@ -272 +274 @@
+@@ -264,34 +278,4 @@
+-        {activeProject ? (
+-          <>
+-            <WorkspaceBreadcrumbItem className="shrink">
+-              <Tooltip>
+-                <TooltipTrigger
+-                  render={
+-                    <button
+-                      type="button"
 -                      aria-label={gt("New thread in {project}", { project: activeProjectName })}
-+                      aria-label={gt("New chat in {project}", { project: activeProjectName })}
-@@ -288 +290 @@
+-                      onClick={onNewThreadInProject}
+-                      className="inline-flex min-w-0 max-w-full cursor-pointer items-center gap-1.5 rounded-sm text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+-                    />
+-                  }
+-                >
+-                  <ProjectFavicon project={activeProject} className="size-3.5" />
+-                  <MiddleTruncate
+-                    data-slot="workspace-breadcrumb-text"
+-                    value={activeProjectName ?? ""}
+-                    showTitle={false}
+-                    variant="cap-aligned"
+-                  />
+-                </TooltipTrigger>
+-                <TooltipPopup side="top">
+-                  <T>
 -                    New thread in <Var>{activeProjectName}</Var>
-+                    New chat in <Var>{activeProjectName}</Var>
-@@ -306 +308 @@
+-                  </T>
+-                </TooltipPopup>
+-              </Tooltip>
+-            </WorkspaceBreadcrumbItem>
+-            <WorkspaceBreadcrumbSeparator>
+-              <WorkspaceBreadcrumbText>/</WorkspaceBreadcrumbText>
+-            </WorkspaceBreadcrumbSeparator>
+-          </>
+-        ) : null}
++        <WorkspaceBreadcrumbItem className="max-w-[55%] shrink">
++          <ChatProjectMenu key={threadKey} project={activeProject} cwd={cwd} draftId={draftId} onNewChat={onNewThreadInProject} />
++        </WorkspaceBreadcrumbItem>
++        <WorkspaceBreadcrumbSeparator />
+@@ -306 +290 @@
 -                      aria-label={gt("Open parent thread: {title}", {
 +                      aria-label={gt("Open parent chat: {title}", {
-@@ -339 +341 @@
+@@ -339 +323 @@
 -              aria-label={gt("Thread title")}
 +              aria-label={gt("Chat title")}
-@@ -362 +364 @@
+@@ -362 +346 @@
 -                    aria-label={gt("Thread actions for {title}", { title: activeThreadTitle })}
 +                    aria-label={gt("Chat actions for {title}", { title: activeThreadTitle })}

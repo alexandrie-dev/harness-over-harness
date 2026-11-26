@@ -1,11 +1,12 @@
 import { FolderTrust as HohFolderTrust } from "../../../../../t3-entry/hoh-screens/FolderTrust";
+import { ChatProjectMenu } from "../../../../../t3-entry/hoh-screens/ChatProjectMenu";
 import {
   AuthOrchestrationOperateScope,
   type EnvironmentId,
   type ScopedThreadRef,
   type ThreadId,
 } from "@t3tools/contracts";
-import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import {
   isAtomCommandInterrupted,
@@ -15,6 +16,7 @@ import { T, useGT, Var } from "gt-react";
 import { ChevronDownIcon } from "lucide-react";
 import {
   memo,
+  useCallback,
   useEffect,
   useRef,
   useState,
@@ -23,7 +25,6 @@ import {
 } from "react";
 import { isTrailingDoubleClick } from "../Sidebar.logic";
 import { Badge } from "../ui/badge";
-import { MiddleTruncate } from "../ui/middle-truncate";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { toastManager } from "../ui/toast";
 import { useThreadActionMenu } from "~/hooks/useThreadActionMenu";
@@ -33,7 +34,7 @@ import { canShareWithGuestAtom } from "./guestShareAvailability";
 import { useAtomValue } from "@effect/atom-react";
 import { useOrchestrationCommand } from "../../state/use-orchestration-command";
 import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
-import { ProjectFavicon } from "../ProjectFavicon";
+import type { DraftId } from "~/composerDraftStore";
 import {
   WorkspaceBreadcrumb,
   WorkspaceBreadcrumbItem,
@@ -52,7 +53,9 @@ interface ChatHeaderProps {
   activeThreadTitle: string;
   activeThreadLinkOrigin?: string | null | undefined;
   isServerThread: boolean;
+  draftId: DraftId | null;
   activeProject: EnvironmentProject | null;
+  workspaceRoot: string | null;
   parentThreadLink: { threadId: ThreadId; title: string } | null;
   onOpenThread: (threadId: ThreadId) => void;
   rightPanelOpen: boolean;
@@ -77,7 +80,9 @@ export const ChatHeader = memo(function ChatHeader({
   activeThreadTitle,
   activeThreadLinkOrigin,
   isServerThread,
+  draftId,
   activeProject,
+  workspaceRoot,
   parentThreadLink,
   onOpenThread,
   rightPanelOpen,
@@ -86,12 +91,18 @@ export const ChatHeader = memo(function ChatHeader({
   onFindInThread,
 }: ChatHeaderProps) {
   const gt = useGT();
-  const activeProjectName = activeProject?.isScratch ? gt("No project") : activeProject?.title;
   const activeProjectCwd = activeProject?.workspaceRoot ?? null;
   const interfaceFont = useClientSettings((settings) => settings.fontFamilySans);
   const breadcrumbContainerRef = useRef<HTMLDivElement>(null);
   const [collapseParentTitle, setCollapseParentTitle] = useState(false);
   const activeThreadRef = scopeThreadRef(activeThreadEnvironmentId, activeThreadId);
+  const threadKey = scopedThreadKey(activeThreadRef);
+  const [workingDirectory, setWorkingDirectory] = useState<{ threadKey: string; cwd: string } | null>(null);
+  const onWorkingDirectory = useCallback((cwd: string) => {
+    setWorkingDirectory((previous) => previous?.threadKey === threadKey && previous.cwd === cwd
+      ? previous : { threadKey, cwd });
+  }, [threadKey]);
+  const cwd = isServerThread && workingDirectory?.threadKey === threadKey ? workingDirectory.cwd : workspaceRoot;
   const canOperateThread = useEnvironmentScope(
     activeThreadEnvironmentId,
     AuthOrchestrationOperateScope,
@@ -154,7 +165,8 @@ export const ChatHeader = memo(function ChatHeader({
     };
   }, [
     // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Title, font and rename changes resize the breadcrumb text without resizing the list, so it re-measures.
-    activeProjectName,
+    activeProject?.title,
+    cwd,
     activeThreadTitle,
     parentThreadLink,
     interfaceFont,
@@ -258,45 +270,15 @@ export const ChatHeader = memo(function ChatHeader({
       )}
       onContextMenu={handleHeaderContextMenu}
     >
-      <HohFolderTrust threadId={activeThreadId} fallbackCwd={activeProjectCwd} isServerThread={isServerThread} />
+      <HohFolderTrust key={threadKey} threadId={activeThreadId} fallbackCwd={workspaceRoot} isServerThread={isServerThread} onWorkingDirectory={onWorkingDirectory} />
       <WorkspaceBreadcrumb
         ariaLabel={gt("Chat breadcrumb")}
         className="flex-1 overflow-clip [overflow-clip-margin:2px]"
       >
-        {activeProject ? (
-          <>
-            <WorkspaceBreadcrumbItem className="shrink">
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <button
-                      type="button"
-                      aria-label={gt("New chat in {project}", { project: activeProjectName })}
-                      onClick={onNewThreadInProject}
-                      className="inline-flex min-w-0 max-w-full cursor-pointer items-center gap-1.5 rounded-sm text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
-                    />
-                  }
-                >
-                  <ProjectFavicon project={activeProject} className="size-3.5" />
-                  <MiddleTruncate
-                    data-slot="workspace-breadcrumb-text"
-                    value={activeProjectName ?? ""}
-                    showTitle={false}
-                    variant="cap-aligned"
-                  />
-                </TooltipTrigger>
-                <TooltipPopup side="top">
-                  <T>
-                    New chat in <Var>{activeProjectName}</Var>
-                  </T>
-                </TooltipPopup>
-              </Tooltip>
-            </WorkspaceBreadcrumbItem>
-            <WorkspaceBreadcrumbSeparator>
-              <WorkspaceBreadcrumbText>/</WorkspaceBreadcrumbText>
-            </WorkspaceBreadcrumbSeparator>
-          </>
-        ) : null}
+        <WorkspaceBreadcrumbItem className="max-w-[55%] shrink">
+          <ChatProjectMenu key={threadKey} project={activeProject} cwd={cwd} draftId={draftId} onNewChat={onNewThreadInProject} />
+        </WorkspaceBreadcrumbItem>
+        <WorkspaceBreadcrumbSeparator />
         {parentThreadLink ? (
           <>
             <WorkspaceBreadcrumbItem>

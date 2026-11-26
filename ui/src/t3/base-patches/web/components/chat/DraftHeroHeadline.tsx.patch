@@ -1,30 +1,42 @@
 --- a/web/components/chat/DraftHeroHeadline.tsx
 +++ b/web/components/chat/DraftHeroHeadline.tsx
-@@ -137,6 +137,7 @@
-         ) ?? null);
-   const scratchTargetEnvironmentId = scratchEnvironmentId(activeProjectRef?.environmentId ?? null);
-   const scratchWorkspaceRoot = scratchWorkspaceRootFor(scratchTargetEnvironmentId);
+@@ -2 +2,2 @@
+-import { composerDraftHasUserContent, useComposerDraftStore } from "~/composerDraftStore";
++import { useComposerDraftStore } from "~/composerDraftStore";
++import { selectChatProject } from "../../../../../t3-entry/hoh-screens/ChatProjectMenu";
+@@ -4 +5 @@
+-import { scopedProjectKey, scopeProjectRef } from "@t3tools/client-runtime/environment";
++import { scopedProjectKey } from "@t3tools/client-runtime/environment";
+@@ -20 +20,0 @@
+-import { seedDraftModelSelection } from "~/lib/seedDraftModelSelection";
+@@ -75,4 +74,0 @@
+-  const setLogicalProjectDraftThreadId = useComposerDraftStore(
+-    (store) => store.setLogicalProjectDraftThreadId,
+-  );
+-  const getComposerDraft = useComposerDraftStore((store) => store.getComposerDraft);
+@@ -139,0 +136 @@
 +  const isHohHomeDraft = activeProject?.id === "hoh-project";
-   const isScratchDraft =
-     activeProject !== null &&
-     isScratchProject(activeProject, scratchWorkspaceRootFor(activeProject.environmentId));
-@@ -367,7 +368,9 @@
-         </DraftHeroProjectHeading>
-       ) : (
-         <h1 className="w-full text-center font-normal text-2xl text-foreground tracking-tight sm:text-3xl">
+@@ -175 +171,0 @@
+-  // Retargeting an empty draft would overwrite the project's draft and strand browser tabs.
+@@ -177,3 +173 @@
+-    if (!draftId) {
+-      return;
+-    }
++    if (!draftId) return;
+@@ -181,7 +175 @@
+-    const projectRef = scopeProjectRef(project.environmentId, project.id);
+-    if (!composerDraftHasUserContent(getComposerDraft(draftId))) {
+-      void openProjectDraft(projectRef);
+-      return;
+-    }
+-    setLogicalProjectDraftThreadId(logicalProjectKey, projectRef, draftId);
+-    seedDraftModelSelection(draftId, projectRef);
++    void selectChatProject(project, logicalProjectKey, draftId, openProjectDraft);
+@@ -368 +356,3 @@
 -          {isScratchDraft ? (
 +          {isHohHomeDraft ? (
 +            <>What should we build in HoH?</>
 +          ) : isScratchDraft ? (
-             <T>What should we work on?</T>
-           ) : canChooseProject ? (
-             <T>
-@@ -379,7 +382,7 @@
-           )}
-         </h1>
-       )}
+@@ -379 +369 @@
 -      {scratchWorkspaceRoot === null ? null : (
 +      {scratchWorkspaceRoot === null || isHohHomeDraft ? null : (
-         <p className="mt-2 flex h-6 w-full items-center justify-center text-sm">
-           {isScratchDraft ? projectSelector : orStartWithoutProject}
-         </p>

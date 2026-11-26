@@ -1,7 +1,8 @@
 import type { DraftId } from "~/composerDraftStore";
-import { composerDraftHasUserContent, useComposerDraftStore } from "~/composerDraftStore";
+import { useComposerDraftStore } from "~/composerDraftStore";
+import { selectChatProject } from "../../../../../t3-entry/hoh-screens/ChatProjectMenu";
 import { resolveEnvironmentMachineKind, type ScopedProjectRef } from "@t3tools/contracts";
-import { scopedProjectKey, scopeProjectRef } from "@t3tools/client-runtime/environment";
+import { scopedProjectKey } from "@t3tools/client-runtime/environment";
 import { isScratchProject } from "@t3tools/client-runtime/state/projects";
 import { T, useGT, Var } from "gt-react";
 import { FolderPlusIcon } from "lucide-react";
@@ -17,7 +18,6 @@ import { useProjectPin } from "~/hooks/useProjectGroupUpdate";
 import { useScratchProject } from "~/hooks/useScratchProject";
 import { isTriagePrompt } from "@t3tools/shared/triagePrompt";
 import { useClientSettings } from "~/hooks/useSettings";
-import { seedDraftModelSelection } from "~/lib/seedDraftModelSelection";
 import {
   deriveLogicalProjectKeyFromSettings,
   pickableProjectGroups,
@@ -72,10 +72,6 @@ export function DraftHeroHeadline({
   const { environments } = useEnvironments();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
-  const setLogicalProjectDraftThreadId = useComposerDraftStore(
-    (store) => store.setLogicalProjectDraftThreadId,
-  );
-  const getComposerDraft = useComposerDraftStore((store) => store.getComposerDraft);
   // A boolean, so typing in a draft does not re-render the hero.
   const isTriageDraftPrompt = useComposerDraftStore((store) =>
     draftId ? isTriagePrompt(store.getComposerDraft(draftId)?.prompt ?? "") : false,
@@ -173,19 +169,10 @@ export function DraftHeroHeadline({
       ? `${session.environmentId}:${session.projectId}:${session.logicalProjectKey}`
       : null;
   };
-  // Retargeting an empty draft would overwrite the project's draft and strand browser tabs.
   const selectProject = (project: (typeof projects)[number], logicalProjectKey: string) => {
-    if (!draftId) {
-      return;
-    }
+    if (!draftId) return;
     pendingScratchRef.current = null;
-    const projectRef = scopeProjectRef(project.environmentId, project.id);
-    if (!composerDraftHasUserContent(getComposerDraft(draftId))) {
-      void openProjectDraft(projectRef);
-      return;
-    }
-    setLogicalProjectDraftThreadId(logicalProjectKey, projectRef, draftId);
-    seedDraftModelSelection(draftId, projectRef);
+    void selectChatProject(project, logicalProjectKey, draftId, openProjectDraft);
   };
   const startScratch = async (): Promise<boolean> => {
     if (scratchTargetEnvironmentId === null || isScratchDraft) {

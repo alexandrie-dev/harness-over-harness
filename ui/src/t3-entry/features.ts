@@ -103,7 +103,6 @@ export const HIDDEN_SELECTORS: readonly string[] = [
   '[data-testid="timeline-minimap"]',
   // Правая общая панель остаётся скрытой. Thread details теперь нужна: в ней штатный компонент T3 показывает контекст Claude.
   '[aria-label="Toggle right panel"]',
-  'body:has([data-hoh-home-body]) header:has(nav[aria-label="Chat breadcrumb"])',
 ];
 
 /** Пункты палитры команд T3 (components/CommandPalette.tsx), которые не показываются: образец значения пункта. Все

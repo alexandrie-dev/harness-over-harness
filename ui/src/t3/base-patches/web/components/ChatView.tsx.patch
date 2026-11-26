@@ -47,24 +47,28 @@
 @@ -2888 +2905 @@
 -                ? gt("Available once the thread's worktree is set up.")
 +                ? gt("Available once the chat's worktree is set up.")
-@@ -3431,0 +3449,5 @@
+@@ -3419,0 +3437 @@
++              draftId={isServerThread || isSendBusy || backgroundSubmissionPending ? null : draftId}
+@@ -3422,0 +3441 @@
++              workspaceRoot={activeWorkspaceRoot ?? null}
+@@ -3431,0 +3451,5 @@
 +            {activeThread.runtimeMode === "unknown" ? (
 +              <span role="status" className="shrink-0 text-xs text-muted-foreground" data-hoh-unknown-access>
 +                {activeThread.modelSelection.instanceId === "unknown" ? <>Executor: <strong>Unknown</strong> · </> : null}Access: <strong>Unknown</strong>
 +              </span>
 +            ) : null}
-@@ -3514 +3536 @@
+@@ -3514 +3538 @@
 -                    activeActivityRun?.providerStartingLabelMsg
 +                    hohHasResponse ? null : activeActivityRun?.providerStartingLabelMsg
-@@ -3516 +3538 @@
+@@ -3516 +3540 @@
 -                      : null
 +                      : hohStartingLabel
-@@ -3719 +3741 @@
+@@ -3719 +3743 @@
 -                                    ? gt("This connection cannot change threads.")
 +                                    ? gt("This connection cannot change chats.")
-@@ -3760,0 +3783 @@
+@@ -3760,0 +3785 @@
 +                                currentRuntimeMode={activeRunningTurnId ? activeThread?.runtimeMode : undefined}
-@@ -3879,14 +3901,0 @@
+@@ -3879,14 +3903,0 @@
 -                                  {...(isServerThread
 -                                    ? {}
 -                                    : {
@@ -79,11 +83,11 @@
 -                                          />
 -                                        ),
 -                                      })}
-@@ -3937 +3946 @@
+@@ -3937 +3948 @@
 -                <ThreadDetailsPanel
 +                {isServerThread || isProjectNewChat ? <ThreadDetailsPanel
-@@ -4000,0 +4010 @@
+@@ -4000,0 +4012 @@
 +                  projection={serverProjection}
-@@ -4007 +4017 @@
+@@ -4007 +4019 @@
 -                />
 +                /> : null}

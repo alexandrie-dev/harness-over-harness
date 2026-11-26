@@ -3434,9 +3434,11 @@ export default function ChatView(props: ChatViewProps) {
               activeThreadEnvironmentId={activeThread.environmentId}
               activeThreadId={activeThread.id}
               isServerThread={isServerThread}
+              draftId={isServerThread || isSendBusy || backgroundSubmissionPending ? null : draftId}
               activeThreadTitle={activeThread.title}
               activeThreadLinkOrigin={activeThreadShell?.linkOrigin?.label ?? null}
               activeProject={activeProject ?? null}
+              workspaceRoot={activeWorkspaceRoot ?? null}
               parentThreadLink={headerParentThreadLink}
               onOpenThread={onOpenRelatedThreadStable}
               rightPanelOpen={inlineRightPanelOwnsTitleBar}

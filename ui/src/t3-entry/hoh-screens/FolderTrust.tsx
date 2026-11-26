@@ -9,7 +9,12 @@ type Trust = { cwd: string; executor: string; trusted: boolean; changed: boolean
 type FolderStatus = { cwd: string; rootIdentity: { device: string; inode: string }; changed: boolean };
 
 /** The approval itself is provided by the native host, not by this page. */
-export function FolderTrust({ threadId, fallbackCwd, isServerThread }: { threadId: string; fallbackCwd: string | null; isServerThread: boolean }) {
+export function FolderTrust({ threadId, fallbackCwd, isServerThread, onWorkingDirectory }: {
+  threadId: string;
+  fallbackCwd: string | null;
+  isServerThread: boolean;
+  onWorkingDirectory?(cwd: string): void;
+}) {
   const [state, setState] = useState<Trust | null>(null);
   const [busy, setBusy] = useState(false);
   const [folderUnknown, setFolderUnknown] = useState(false);
@@ -24,13 +29,20 @@ export function FolderTrust({ threadId, fallbackCwd, isServerThread }: { threadI
     const engine = window.__HOH_TRUST_ENGINE__;
     if (!engine) return;
     try {
+      let cwd = fallbackCwd;
+      let directoryCwd: string | undefined;
       if (isServerThread) {
         try {
           const folder = await engine.request('session/working-directory/status', { sessionId: threadId }) as FolderStatus;
           if (current !== generation.current) return;
+          directoryCwd = folder.cwd;
+          if (isKnownAbsoluteFolder(folder.cwd)) {
+            cwd = folder.cwd;
+            onWorkingDirectory?.(folder.cwd);
+          }
           setFolderChanged(folder.changed ? folder : null);
           if (folder.changed) { update(null); return; }
-        } catch { /* Older engines do not provide folder status. */ }
+        } catch { /* Older engines only provide the directory. */ }
       }
       let access = await engine.request('hoh/executor/access/get', isServerThread
         ? { executor: 'claude', sessionId: threadId }
@@ -41,11 +53,12 @@ export function FolderTrust({ threadId, fallbackCwd, isServerThread }: { threadI
         access = await engine.request('hoh/executor/access/get', isServerThread
           ? { executor, sessionId: threadId } : { executor }) as typeof access;
       }
-      let cwd = fallbackCwd;
-      if (isServerThread) try {
+      if (isServerThread && !directoryCwd) try {
         const directory = await engine.request('session/working-directory/get', { sessionId: threadId }) as { cwd?: string };
+        if (current !== generation.current) return;
         cwd = directory.cwd || cwd;
-      } catch { /* Use the project until an established session is available. */ }
+        if (directory.cwd && isKnownAbsoluteFolder(directory.cwd)) onWorkingDirectory?.(directory.cwd);
+      } catch { /* Use the project folder until the session directory is available. */ }
       // A placeholder such as ~/Documents/HoH is not an authoritative engine folder.
       if (!isKnownAbsoluteFolder(cwd)) { update(null); if (current === generation.current) setFolderUnknown(true); return; }
       const result = await engine.request('hoh/executor/trust/get', { executor, cwd }) as Trust;
@@ -69,7 +82,7 @@ export function FolderTrust({ threadId, fallbackCwd, isServerThread }: { threadI
       if (result.changed && current === generation.current) setChangedNotice(true);
       update({ ...result, isolated, running, applied });
     } catch { update(null); }
-  }, [threadId, fallbackCwd, isServerThread]);
+  }, [threadId, fallbackCwd, isServerThread, onWorkingDirectory]);
   useEffect(() => {
     setState(null);
     setFolderUnknown(false);
@@ -85,7 +98,7 @@ export function FolderTrust({ threadId, fallbackCwd, isServerThread }: { threadI
     void window.__HOH_TRUST_ENGINE__?.subscribe?.(event => {
       if (event.method === 'session.event' && event.params?.sessionId === threadId) {
         if (event.params?.event?.type === 'plugin:external-harness/folder-trust-changed') { setChangedNotice(true); void refresh(); }
-        if (event.params?.event?.type === 'plugin:external-harness/launch') void refresh();
+        if (event.params?.event?.type === 'plugin:external-harness/launch' || event.params?.event?.type === 'working-directory/change') void refresh();
       }
     }).then(off => { if (stopped) off(); else unsubscribe = off; }).catch(() => {});
     return () => { stopped = true; unsubscribe?.(); generation.current++; window.clearInterval(timer); window.removeEventListener('focus', refresh); };
