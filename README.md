@@ -36,3 +36,9 @@ HOH_ENGINE_PATH="$HOH_BUILD_DIR/engine/release/hoh" "$HOH_BUILD_DIR/desktop/rele
 
 - [Конфигурация окна и запуск движка](apps/hoh-desktop/PORT_NOTES.md)
 - [Зависимости и проверка поставки UI](docs/ts/DEPS.md)
+
+## Лицензия
+
+Права на оригинальный код и материалы HoH принадлежат Alexandrie.
+Условия приведены в [LICENSE](LICENSE). Сторонние компоненты сохраняют
+свои лицензии и уведомления. См. [NOTICE](NOTICE) и [ui/NOTICE.md](ui/NOTICE.md).
