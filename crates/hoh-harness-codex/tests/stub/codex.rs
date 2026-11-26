@@ -310,6 +310,24 @@ fn main() {
                     json!({"method":"turn/started","params":{"threadId":"thread-stub","turn":{"id":"turn-stub","status":"inProgress","startedAt":1}}}),
                 );
                 if scenario == "subagent-notifications" {
+                    for (thread, turn, input, cached) in [
+                        ("child-thread", "child-turn", 900, 200),
+                        ("thread-stub", "stale-turn", 900, 200),
+                        ("thread-stub", "turn-stub", 10, 20),
+                        ("thread-stub", "turn-stub", 320, 200),
+                    ] {
+                        send(json!({
+                            "method": "thread/tokenUsage/updated",
+                            "params": {
+                                "threadId": thread, "turnId": turn,
+                                "tokenUsage": {
+                                    "last": { "inputTokens": input, "cachedInputTokens": cached, "outputTokens": 30 },
+                                    "total": { "inputTokens": 3500, "cachedInputTokens": 2300, "outputTokens": 900 },
+                                    "modelContextWindow": 200000
+                                }
+                            }
+                        }));
+                    }
                     send(
                         json!({"method":"turn/started","params":{"threadId":"child-thread","turn":{"id":"child-turn","status":"inProgress"}}}),
                     );

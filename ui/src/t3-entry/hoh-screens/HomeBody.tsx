@@ -3,8 +3,9 @@
 // Это не отдельный экран: vite.ts подставляет <HomeBody/> в пустой разговор T3 (ChatView, DraftHeroHeadline), так что поле ввода,
 // чип модели с уровнями, Permissions, выбор проекта и отправка — настоящие, их. Здесь только содержимое над ними.
 // Данные — то, что хост знает о разговорах (window.__HOH_HOME__, ui/src/hoh-host: host.home); блоков без данных нет.
-import { CheckIcon, ChevronDownIcon, PlusIcon, XIcon } from 'lucide-react';
+import { CheckIcon, ChevronDownIcon, CoinsIcon, LayersIcon, ListTodoIcon, PlusIcon, XIcon } from 'lucide-react';
 import { useEffect, useId, useLayoutEffect, useRef, useState, useSyncExternalStore, type CSSProperties, type MouseEvent } from 'react';
+import { formatCount, formatTokens, formatUsd } from '@t3tools/shared/usageFormat';
 
 import { ClaudeAI, OpenAI } from '~/components/Icons';
 import { T3AppIcon } from '~/components/T3AppIcon';
@@ -344,6 +345,38 @@ function Runners({ runners }: { runners: ProjectGroup<Entry>['runners'] }) {
   );
 }
 
+function FolderStats({ entries }: { entries: Entry[] }) {
+  const prompts: number[] = [];
+  const context: number[] = [];
+  const costs: number[] = [];
+  for (const { projectStats } of entries) {
+    if (!projectStats) continue;
+    prompts.push(projectStats.prompts);
+    if (projectStats.peakContextTokens !== undefined) context.push(projectStats.peakContextTokens);
+    if (projectStats.reportedCostUsd !== undefined) costs.push(projectStats.reportedCostUsd);
+  }
+  const promptTotal = prompts.reduce((sum, value) => sum + value, 0);
+  const peak = context.reduce((max, value) => Math.max(max, value), 0);
+  const cost = costs.reduce((sum, value) => sum + value, 0);
+  const costLabel = cost > 0 && cost < 0.01 ? '<$0.01' : formatUsd(cost);
+  const coverage = (count: number) => `Recorded for ${formatCount(count)} of ${formatCount(entries.length)} chats shown in this project`;
+  const stats = [
+    { label: 'All Tasks', icon: ListTodoIcon, value: prompts.length ? formatTokens(promptTotal) : '—', detail: `Requests sent to agents. ${coverage(prompts.length)}` },
+    { label: 'Summary Context', icon: LayersIcon, value: context.length ? formatTokens(peak) : '—', detail: context.length ? `Peak context: ${formatCount(peak)} tokens. ${coverage(context.length)}` : 'No context measurements recorded' },
+    { label: 'Reported cost', icon: CoinsIcon, value: costs.length ? costLabel : '—', detail: costs.length ? `${costLabel} in provider-reported usage cost. ${coverage(costs.length)}` : 'No cost reported by the providers' },
+  ];
+  return (
+    <span className="hoh-project__stats">
+      {stats.map(({ label, icon: Icon, value, detail }) => (
+        <span key={label} className="hoh-project__stat" title={detail}>
+          <strong>{value}</strong>
+          <small><Icon aria-hidden="true" />{label}</small>
+        </span>
+      ))}
+    </span>
+  );
+}
+
 function FolderCard({ group, expanded, setButton, onEnter, onLeave, onToggle }: {
   group: ProjectGroup<Entry>;
   expanded: boolean;
@@ -375,10 +408,11 @@ function FolderCard({ group, expanded, setButton, onEnter, onLeave, onToggle }: 
     >
       <span className="hoh-project__top">
         <span className="hoh-project__icon" aria-hidden><i /><b /><em /></span>
-        <span className="hoh-project__heading">
-          <span className="hoh-project__counts"><span>{agentLabel}</span><i /><span>{waitingCount} waiting</span></span>
-          <span className="hoh-project__title">{group.title}</span>
-        </span>
+        <FolderStats entries={group.entries} />
+      </span>
+      <span className="hoh-project__heading">
+        <span className="hoh-project__counts"><span>{agentLabel}</span><i /><span>{waitingCount} waiting</span></span>
+        <span className="hoh-project__title">{group.title}</span>
       </span>
       <span className="hoh-project__actions">
         <span className="hoh-project__chip"><i />{group.waiting > 0 ? 'Needs answer' : group.states.working > 0 ? 'Active' : group.ready > 0 ? 'Ready for review' : group.states.interrupted > 0 ? 'Interrupted' : group.states.stopped > 0 ? 'Stopped' : group.states.done > 0 ? 'Done' : 'Inactive'}</span>

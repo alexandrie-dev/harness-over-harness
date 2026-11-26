@@ -3359,6 +3359,51 @@ test('grouped Home includes cold chats without completed turns, as Recent chats 
   assert.ok(host.home.projectEntries().every(entry => entry.state === 'ended' && !entry.request));
 });
 
+test('project stats backfill old chats and preserve measured peaks and cumulative provider costs', async () => {
+  const engine = new FakeEngine();
+  const id = 'project-stats';
+  const user = (messageId) => ['user/message', { id: messageId, source: { kind: 'user' }, content: [{ type: 'text', text: messageId }] }];
+  const context = (inputTokens) => ['plugin:hoh/context-usage', {
+    usage: { inputTokens, cacheCreationInputTokens: 10, cacheReadInputTokens: 30, outputTokens: 10 },
+  }];
+  const cost = (launchId, sourceId, totalCostUsd) => ['plugin:hoh-external-harness/telemetry', {
+    harness: 'claude',
+    record: {
+      provenance: { launchId, nativeSessionId: 'native-chat', sourceId },
+      payload: { kind: 'result-usage', totalCostUsd },
+    },
+  }];
+  engine.seed(id, 'Usage history', [
+    user('first'), context(680), context(200), cost('launch-1', 'r1', 1.25),
+    user('second'), context(320), cost('launch-1', 'r2', 2.5), cost('launch-1', 'r1', 1.25),
+    cost('launch-2', 'r3', 0.5), ['turn/end', { reason: { kind: 'completed' } }],
+  ]);
+  const session = engine.store.get(id);
+  engine.clock += 2 * 24 * 60 * 60 * 1000;
+  const items = new Map([[mod.host.STORAGE_KEY, JSON.stringify({
+    version: 2, homeObservedAt: { [id]: session.updatedAt },
+  })]]);
+  const storage = { getItem: key => items.get(key) ?? null, setItem: (key, value) => items.set(key, value) };
+  const statsOf = (host) => host.home.projectEntries().find(entry => entry.id === id)?.projectStats;
+  const first = connect(engine, { storage, now: () => engine.clock });
+  try {
+    await first.host.start();
+    for (let attempt = 0; !statsOf(first.host) && attempt < 20; attempt++) await tick(5);
+    assert.deepEqual(statsOf(first.host), { prompts: 2, peakContextTokens: 730, reportedCostUsd: 3 });
+    for (const [type, data] of [user('third'), context(800), cost('launch-2', 'r4', 0.75)]) engine.emitEvent(id, type, data);
+    first.host.flush();
+    assert.deepEqual(statsOf(first.host), { prompts: 3, peakContextTokens: 850, reportedCostUsd: 3.25 });
+  } finally {
+    first.host.stop(); first.client.close();
+  }
+  const second = connect(new FakeEngine({ store: engine.store }), { storage, now: () => engine.clock });
+  try {
+    assert.deepEqual(statsOf(second.host), { prompts: 3, peakContextTokens: 850, reportedCostUsd: 3.25 });
+  } finally {
+    second.host.stop(); second.client.close();
+  }
+});
+
 test('project counts include every unarchived chat, including one with no turns after host restart', async () => {
   const store = new Map();
   const engine = new FakeEngine({ store });

@@ -453,6 +453,15 @@ export class HohHost {
       });
       thread.options = this.levels.get(id);
       thread.archivedAt = entry?.archivedAt === null ? null : timeOf(entry?.archivedAt);
+      const stats = entry?.homeProjectStats;
+      if (Number.isSafeInteger(stats?.prompts) && stats.prompts >= 0) {
+        const { prompts, peakContextTokens, reportedCostUsd } = stats;
+        thread.homeProjectStats = {
+          prompts,
+          ...(Number.isSafeInteger(peakContextTokens) && peakContextTokens >= 0 ? { peakContextTokens } : {}),
+          ...(Number.isFinite(reportedCostUsd) && reportedCostUsd >= 0 ? { reportedCostUsd } : {}),
+        };
+      }
       if (typeof entry?.pluginCreator === 'boolean') thread.pluginCreator = entry.pluginCreator;
       this.applyThreadMetadata(thread);
       this.threads.set(id, thread);
@@ -481,6 +490,7 @@ export class HohHost {
       return [{
         id: thread.id, title: shell.title, projectId: thread.projectId, executor: thread.executor, model: thread.model, mode: thread.mode,
         createdAt: thread.createdAt, updatedAt: thread.updatedAt, archivedAt: thread.archivedAt,
+        homeProjectStats: thread.homeProjectStats,
         pluginCreator: thread.pluginCreator,
       }];
     });
@@ -608,12 +618,13 @@ export class HohHost {
     projectEntries: (): HomeEntry[] => [...this.threads.values()].flatMap(thread => {
       const shell = thread.shell();
       if (thread.archivedAt !== null || shell.latestUserMessageAt === null) return [];
-      return [this.homeEntry(thread) ?? {
+      const entry: HomeEntry = this.homeEntry(thread) ?? {
         id: thread.id, title: shell.title, projectId: thread.projectId, providerInstanceId: instanceOf(thread.executor),
         ...(thread.pluginCreator ? { pluginCreator: true } : {}),
         state: 'ended', turnOrdinal: 0, startedAt: thread.updatedAt, doneAt: null,
         steps: { done: 0, total: 0 }, agents: [],
-      }];
+      };
+      return [{ ...entry, projectStats: thread.homeProjectStats }];
     }),
     // This count is also consumed independently by the project view.
     projectCounts: (): Record<string, number> => {
@@ -1452,13 +1463,13 @@ export class HohHost {
     const todayThreads = candidates.filter(thread => new Date(thread.updatedAt).toDateString() === today)
       .sort((a, b) => b.updatedAt - a.updatedAt).slice(0, 12);
     const changedWhileAway = candidates.filter(thread => (this.homeObservedAt.get(thread.id) ?? 0) < thread.updatedAt);
-    // Backfill older sessions from their first prompt, including ones that have been renamed.
     const authoringEnabled = this.pluginAuthoringPrefixes.length > 0;
-    const unclassified = authoringEnabled ? candidates.filter(thread => thread.pluginCreator === undefined) : [];
     const recent = [...new Map([...changedWhileAway, ...candidates.filter(thread => waiting.has(thread.id)), ...todayThreads].map(thread => [thread.id, thread])).values()]
       .sort((a, b) => b.updatedAt - a.updatedAt);
     const recentIds = new Set(recent.map(thread => thread.id));
-    recent.push(...unclassified.filter(thread => !recentIds.has(thread.id)));
+    // Backfill older sessions from their journals, keeping the current Home work first.
+    recent.push(...candidates.filter(thread => !recentIds.has(thread.id)
+      && ((authoringEnabled && thread.pluginCreator === undefined) || (thread.archivedAt === null && !thread.homeProjectStats))));
     let dispositionChanged = false;
     let cursor = 0;
     const inspect = async (thread: ThreadModel) => {
@@ -1504,6 +1515,8 @@ export class HohHost {
         this.applyThreadMetadata(thread);
         thread.settleUnfinished(this.now());
         this.peeked.add(thread.id);
+        if (!thread.homeProjectStats) dispositionChanged = true;
+        thread.homeProjectStats = thread.projectStats();
         if (authoringEnabled) thread.pluginCreator ??= false;
         if (thread.pluginCreator !== previousPluginCreator) dispositionChanged = true;
         if (this.syncHomeDisposition(thread)) dispositionChanged = true;
@@ -1710,7 +1723,10 @@ export class HohHost {
     switch (notification.method) {
       case 'session.event': {
         const thread = this.threadFor(params.sessionId);
-        if (thread?.applyEvent(params.event)) this.changed(thread.id);
+        if (thread?.applyEvent(params.event)) {
+          if (!thread.loaded && !this.peeked.has(thread.id)) this.schedulePeekToday();
+          this.changed(thread.id);
+        }
         if (thread && params.event?.type === 'plugin:external-harness/folder-trust-changed') {
           this.projectTrustRevisions.set(thread.id, (this.projectTrustRevisions.get(thread.id) ?? 0) + 1);
           try { if (this.threadMetadata.get(thread.id).appliedProjectTrust) this.threadMetadata.update(thread.id, { appliedProjectTrust: null }); } catch { /* Storage is optional. */ }
@@ -1821,7 +1837,12 @@ export class HohHost {
     this.flushTimer = undefined;
     const ids = [...this.dirty]; this.dirty.clear();
     let dispositionChanged = false;
-    for (const id of ids) { const thread = this.threads.get(id); if (thread && this.syncHomeDisposition(thread)) dispositionChanged = true; }
+    for (const id of ids) {
+      const thread = this.threads.get(id);
+      if (!thread) continue;
+      if (thread.loaded || this.peeked.has(id)) thread.homeProjectStats = thread.projectStats();
+      if (this.syncHomeDisposition(thread)) dispositionChanged = true;
+    }
     if (ids.length || dispositionChanged) this.save();
     if (this.homeDirty) { this.homeDirty = false; this.homeVersion++; for (const listener of this.homeListeners) listener(); }
     for (const id of ids) {
@@ -2570,6 +2591,7 @@ ${message.slice(0, 8000)}`;
           const archivedAt = type === 'thread.archive' ? this.now() : null;
           this.threadMetadata.update(target.id, { archivedAt });
           target.archivedAt = archivedAt;
+          if (archivedAt === null && !target.homeProjectStats) this.schedulePeekToday();
           this.changed(target.id);
           break;
         }

@@ -111,6 +111,7 @@ export function visibleSubagentResult(value: unknown): string {
 export interface HomeEntry {
   id: string; title: string; projectId: string;
   providerInstanceId: string;
+  projectStats?: HomeProjectStats;
   pluginCreator?: boolean;
   state: 'working' | 'waiting' | 'done' | 'ended';
   /** Stable across replay: runs are rebuilt in the same order even when their message ids change after a restart. */
@@ -126,6 +127,12 @@ export interface HomeEntry {
   request?: { id: string; kind: 'approval' | 'question'; requestKind: string | null; text: string };
   /** Subagents of the run: Claude's Task (Agent) calls — name and kind from the call, state from its result. */
   agents: HomeAgent[];
+}
+
+export interface HomeProjectStats {
+  prompts: number;
+  peakContextTokens?: number;
+  reportedCostUsd?: number;
 }
 export interface HomeAgent {
   id: string; name: string; kind: string; state: 'working' | 'done' | 'failed';
@@ -166,6 +173,8 @@ export class ThreadModel {
   /** The actual interaction policy of the running process, independent of the next selection. */
   runningInteractionMode: T3InteractionMode | null = null;
   projectId: string;
+  /** Last complete journal projection, kept for Home while a cold chat is being read. */
+  homeProjectStats?: HomeProjectStats;
   pluginAuthoringPrefixes: readonly string[] = [];
   pluginCreator?: boolean;
   /** The folder the chat works in, as its history records it (`working-directory/change`); null until known. */
@@ -200,6 +209,8 @@ export class ThreadModel {
   /** Messages T3 sent that the engine has not echoed yet: T3's id is kept for the echo. */
   private readonly outgoing: { text: string; messageId: string; at: number }[] = [];
   private readonly echoed = new Map<string, string>();
+  private peakContextTokens?: number;
+  private readonly reportedCosts = new Map<number, { ledger: string; source: string; total: number }>();
   private ordinal = 0;
   private promptTimes: Record<string, number> = {};
   private stopTimes: Record<string, number> = {};
@@ -530,11 +541,48 @@ export class ThreadModel {
     const run = this.currentRun(); const usage = record(rawUsage);
     const count = (value: unknown) => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : null;
     const input = count(usage.inputTokens); const created = count(usage.cacheCreationInputTokens); const cached = count(usage.cacheReadInputTokens); const output = count(usage.outputTokens); const max = count(usage.maxTokens);
-    if (run && input !== null && created !== null && cached !== null && output !== null) {
-      const inputTokens = input + created + cached; const maxTokens = max !== null && max > 0 ? max : run.tokenUsage?.maxTokens;
-      run.cacheCreationTokens = created;
-      run.tokenUsage = { usedTokens: inputTokens + output, ...(maxTokens ? { maxTokens } : {}), inputTokens, cachedInputTokens: cached, outputTokens: output, reasoningOutputTokens: 0, updatedAt: iso(at) };
+    if (input !== null && created !== null && cached !== null && output !== null) {
+      const inputTokens = input + created + cached;
+      const usedTokens = inputTokens + output;
+      if (!Number.isSafeInteger(usedTokens)) return;
+      this.peakContextTokens = Math.max(this.peakContextTokens ?? 0, usedTokens);
+      if (run) {
+        const maxTokens = max !== null && max > 0 ? max : run.tokenUsage?.maxTokens;
+        run.cacheCreationTokens = created;
+        run.tokenUsage = { usedTokens, ...(maxTokens ? { maxTokens } : {}), inputTokens, cachedInputTokens: cached, outputTokens: output, reasoningOutputTokens: 0, updatedAt: iso(at) };
+      }
     }
+  }
+
+  private recordReportedCost(data: Record<string, unknown>, seq: number): boolean {
+    if (data.harness !== 'claude') return false;
+    const telemetry = record(data.record);
+    const payload = record(telemetry.payload);
+    const provenance = record(telemetry.provenance);
+    const total = payload.totalCostUsd;
+    const launchId = text(provenance.launchId);
+    const sessionId = text(provenance.nativeSessionId);
+    if (payload.kind !== 'result-usage' || !launchId || !sessionId
+      || typeof total !== 'number' || !Number.isFinite(total) || total < 0) return false;
+    this.reportedCosts.set(seq, { ledger: JSON.stringify([launchId, sessionId]), source: text(provenance.sourceId), total });
+    return true;
+  }
+
+  projectStats(): HomeProjectStats {
+    const ledgers = new Map<string, number>();
+    const sources = new Set<string>();
+    let reportedCostUsd: number | undefined;
+    // A live result can arrive before replay reaches older pages. Fold cumulative amounts
+    // in journal order, counting each provider result once and treating a drop as a reset.
+    for (const [, { ledger, source, total }] of [...this.reportedCosts].sort(([a], [b]) => a - b)) {
+      const key = JSON.stringify([ledger, source]);
+      if (source && sources.has(key)) continue;
+      if (source) sources.add(key);
+      const previous = ledgers.get(ledger) ?? 0;
+      reportedCostUsd = (reportedCostUsd ?? 0) + (total >= previous ? total - previous : total);
+      ledgers.set(ledger, total);
+    }
+    return { prompts: this.echoed.size, peakContextTokens: this.peakContextTokens, reportedCostUsd };
   }
 
   private endTurn(reason: string, at: number, error?: unknown, cause?: unknown, rawUsage?: unknown) {
@@ -655,6 +703,9 @@ export class ThreadModel {
       }
       case 'turn/usage':
       case 'plugin:hoh/context-usage': this.updateUsage(data.usage, at); break;
+      case 'plugin:hoh-external-harness/telemetry':
+        if (!this.recordReportedCost(data, event.seq as number)) return false;
+        break;
       case 'turn/end': {
         this.pendingTurnStart = null;
         const reason = record(data.reason);

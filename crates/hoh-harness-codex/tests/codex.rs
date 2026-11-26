@@ -915,6 +915,7 @@ async fn subagent_notifications_leave_the_parent_turn_and_its_output_intact() {
 
     let mut turns_started = 0;
     let mut text = String::new();
+    let mut usage = Vec::new();
     loop {
         match event(&mut started.events).await {
             HarnessEvent::TurnStarted { turn_id } => {
@@ -922,6 +923,19 @@ async fn subagent_notifications_leave_the_parent_turn_and_its_output_intact() {
                 turns_started += 1;
             }
             HarnessEvent::TextDelta { text: delta, .. } => text.push_str(&delta),
+            HarnessEvent::Usage {
+                input_tokens,
+                cache_creation_input_tokens,
+                cache_read_input_tokens,
+                output_tokens,
+                max_tokens,
+            } => usage.push((
+                input_tokens,
+                cache_creation_input_tokens,
+                cache_read_input_tokens,
+                output_tokens,
+                max_tokens,
+            )),
             HarnessEvent::TurnCompleted { turn_id } => {
                 assert_eq!(turn_id, "parent-turn");
                 break;
@@ -936,6 +950,7 @@ async fn subagent_notifications_leave_the_parent_turn_and_its_output_intact() {
     }
     assert_eq!(turns_started, 1);
     assert_eq!(text, "part done");
+    assert_eq!(usage, [(120, 0, 200, 30, Some(200_000))]);
 }
 
 #[tokio::test]

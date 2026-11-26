@@ -1390,6 +1390,35 @@ async fn handle_notification(inner: &Arc<Inner>, method: &str, params: Value) {
                 complete_item(inner, item, event_parent_item_id(&params)).await;
             }
         }
+        "thread/tokenUsage/updated" => {
+            // App-server sends both cumulative totals and the latest model request.
+            // Context uses the latter, and Codex includes cache reads in inputTokens.
+            if active_context(&lock(&inner.state), &params).is_err() {
+                return;
+            }
+            let Some(usage) = params.get("tokenUsage") else {
+                return;
+            };
+            let count = |field| usage.get("last")?.get(field)?.as_u64();
+            if let (Some(input), Some(cached), Some(output_tokens)) = (
+                count("inputTokens"),
+                count("cachedInputTokens"),
+                count("outputTokens"),
+            ) && let Some(input_tokens) = input.checked_sub(cached)
+            {
+                emit_event(
+                    inner,
+                    HarnessEvent::Usage {
+                        input_tokens,
+                        cache_creation_input_tokens: 0,
+                        cache_read_input_tokens: cached,
+                        output_tokens,
+                        max_tokens: usage.get("modelContextWindow").and_then(Value::as_u64),
+                    },
+                )
+                .await;
+            }
+        }
         "turn/completed" => complete_turn(inner, &params).await,
         "serverRequest/resolved" => {
             let raw = params.get("requestId").cloned();
