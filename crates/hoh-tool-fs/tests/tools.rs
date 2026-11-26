@@ -47,12 +47,7 @@ mod current_directory_resolution {
         let pipeline = hoh_tools::ToolExecutionPipeline::new(setup.ctx.clone()).unwrap();
         let exec = pipeline.prepare(input).await.unwrap().exec().clone();
         let options = session_resolve_options(&env, &exec).await.unwrap();
-        assert!(
-            options
-                .cwd
-                .as_deref()
-                .is_some_and(|cwd| cwd.ends_with("/work"))
-        );
+        assert_eq!(options.cwd.as_deref(), setup.workspace.path().to_str());
         assert!(options.signal.is_some());
         // A call without an agent leaves the directory to the provider.
         let bare = hoh_tools::ToolExecutionInput::new("c2".into(), "read", json!({}), signal);

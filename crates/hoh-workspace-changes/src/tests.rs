@@ -1204,6 +1204,16 @@ async fn plugin_records_real_git_turn_and_serves_its_snapshot_comparison() {
         .settled()
         .await
         .unwrap();
+    ctx.plugin::<hoh_system_prompt::SystemPrompt>(json!({}))
+        .unwrap()
+        .settled()
+        .await
+        .unwrap();
+    ctx.plugin::<hoh_tools::ToolRuntime>(json!({}))
+        .unwrap()
+        .settled()
+        .await
+        .unwrap();
     ctx.plugin::<hoh_fs_local::FsLocalPlugin>(json!({ "cwd": repo.path() }))
         .unwrap()
         .settled()
@@ -1218,9 +1228,46 @@ async fn plugin_records_real_git_turn_and_serves_its_snapshot_comparison() {
     subject
         .append("turn/start", json!({ "turn": 1 }), None)
         .unwrap();
-    // Production tool calls await the recorder through `tools/pre-execute`; this shell-only
-    // fixture has no ToolExecution, so wait for the queued baseline before mutating.
-    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    // Wait for the Git baseline through the same pre-execute gate a shell tool uses.
+    // The direct write below has no filesystem actor, so only Git can report the change.
+    let agent = Arc::new(TestAgent {
+        key: ScopeKey::new(),
+        session: subject.clone(),
+        ctx: ctx.clone(),
+        options: AgentOptions::default(),
+    });
+    let definition = Arc::new(
+        define_tool(DefineToolOptions::new(
+            "workspace-changes-shell",
+            "simulate a command that changes the worktree",
+            json!({}),
+            DefineToolOutput {
+                schema: json!({ "type": "null" }),
+                render: Arc::new(|_, _| Vec::new()),
+                presentation_meta: None,
+            },
+            |_, _| Box::pin(async { Ok(serde_json::Value::Null) }),
+        ))
+        .unwrap(),
+    );
+    let source = hoh_tools::ToolExecutionSource {
+        get: Some(Arc::new(move |name, _, _| {
+            (name == "workspace-changes-shell").then(|| definition.clone())
+        })),
+        reject: None,
+    };
+    let pipeline = ToolExecutionPipeline::with_source(ctx.clone(), source).unwrap();
+    let mut input = ToolExecutionInput::new(
+        "shell-edit".into(),
+        "workspace-changes-shell",
+        json!({}),
+        AbortController::new().signal(),
+    );
+    input.agent = Some(agent);
+    assert!(matches!(
+        pipeline.prepare(input).await.unwrap(),
+        ScheduledToolPreparation::Dispatch(_)
+    ));
     tokio::fs::write(repo.path().join("a.txt"), "one\nTWO\nthree\n")
         .await
         .unwrap();

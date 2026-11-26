@@ -282,7 +282,7 @@ impl<W: Write> Engine<W> {
                             "stdio",
                             "--allow-dangerously-skip-permissions"
                         ]),
-                        "Полный доступ: Помощник сам удаляет и меняет файлы в любых папках, куда есть доступ у вас, запускает программы и выходит в интернет, не спрашивая. Сделанное нельзя отменить.",
+                        "Full access: Claude runs commands without asking",
                     )
                 } else {
                     // CEO 23.11 00:07: the two modes between confirm and full are Claude's own
@@ -290,15 +290,15 @@ impl<W: Write> Engine<W> {
                     let (permission_mode, text) = match shown {
                         "acceptEdits" => (
                             "acceptEdits",
-                            "Правки без вопросов: файлы в папке разговора Claude меняет сам, команды и сеть — после вашего подтверждения",
+                            "Accept edits: Claude edits files in the conversation folder without asking; commands and network access require your approval",
                         ),
                         "auto" => (
                             "auto",
-                            "Автоматически: что безопасно, Claude решает и выполняет сам, остальное — после вашего подтверждения",
+                            "Auto: Claude decides what is safe and does it without asking; other actions require your approval",
                         ),
                         _ => (
                             "default",
-                            "С подтверждением: команды, правки файлов и сеть Claude выполняет после вашего подтверждения",
+                            "Supervised: Claude asks before running commands, editing files, or using the network",
                         ),
                     };
                     (

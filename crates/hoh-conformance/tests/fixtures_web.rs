@@ -130,5 +130,9 @@ async fn unloading_the_fixture_closes_a_connection_that_sent_no_request() {
     let read = tokio::time::timeout(std::time::Duration::from_secs(5), idle.read(&mut buffer))
         .await
         .expect("the connection must be closed on unload");
-    assert_eq!(read.unwrap(), 0);
+    match read {
+        Ok(bytes) => assert_eq!(bytes, 0),
+        // Shutdown can close the listening socket before it accepts the connection.
+        Err(error) => assert_eq!(error.kind(), std::io::ErrorKind::ConnectionReset),
+    }
 }

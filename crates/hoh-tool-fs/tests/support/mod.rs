@@ -44,9 +44,6 @@ pub fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
-/// The directory every agent's Session falls back to.
-pub const DEFAULT_DIRECTORY: &str = "/work";
-
 /// Mutable state of the in-memory provider.
 #[derive(Default)]
 pub struct FakeState {
@@ -636,6 +633,7 @@ pub struct Setup {
     pub fs: Arc<FakeFs>,
     pub tools: hoh_kernel::Service<Tools>,
     pub tool_fs: Fiber,
+    pub workspace: tempfile::TempDir,
 }
 
 impl Setup {
@@ -690,9 +688,10 @@ pub async fn try_setup_with(
     let kernel = Kernel::start();
     let ctx = kernel.root();
     let fs = Arc::new(FakeFs::default());
+    let workspace = tempfile::tempdir().expect("create a directory for the test sessions");
     lock(&fs.state)
         .directories
-        .insert(format!("key:{DEFAULT_DIRECTORY}"));
+        .insert(format!("key:{}", workspace.path().display()));
     lock(&fs.state).confining = options.confining;
     let provided = fs.clone();
     ctx.inject(move |ctx, (): ()| {
@@ -717,7 +716,7 @@ pub async fn try_setup_with(
     ctx.plugin::<NativeToolExecutorPlugin>(json!({}))?
         .settled()
         .await?;
-    ctx.plugin::<WorkingDirectory>(json!({ "defaultDirectory": DEFAULT_DIRECTORY }))?
+    ctx.plugin::<WorkingDirectory>(json!({ "defaultDirectory": workspace.path() }))?
         .settled()
         .await?;
     mount_policy(&ctx).await;
@@ -746,6 +745,7 @@ pub async fn try_setup_with(
         fs,
         tools,
         tool_fs,
+        workspace,
     })
 }
 

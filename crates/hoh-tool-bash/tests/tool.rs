@@ -886,29 +886,20 @@ async fn pwd_in(h: &Harness, workdir: Option<&str>, agent: Option<Arc<dyn Agent>
     text(&h.call("bash", args, agent).await).trim().to_owned()
 }
 
-// tool-bash/index.ts:533 -> working-directory/index.ts:223: the agent is told when its selected
-// directory is gone and the command runs in the original project.
+// A missing conversation folder requires a new explicit selection before running the command.
 #[tokio::test]
-async fn tells_the_agent_when_the_selected_working_directory_is_unavailable() {
+async fn refuses_to_run_when_the_selected_working_directory_is_unavailable() {
     let h = setup().await;
     let project = h.fx.root_text.clone();
     let owner = h.fx.create("cwd-recovery", Some(&project)).await;
     let child = h.fx.path(&["tmp"]);
     std::fs::create_dir(&child).unwrap();
     h.fx.service.set(&owner.agent, &child, None).await.unwrap();
-    owner.claim();
     std::fs::remove_dir_all(&child).unwrap();
-    let agent = owner.agent.clone();
-    assert_eq!(pwd_in(&h, None, Some(agent)).await, project);
-    let delivered = owner.claim();
-    assert_eq!(
-        wd::texts(&delivered),
-        [format!(
-            "The working directory {} is unavailable. The working directory is now {}.",
-            serde_json::to_string(&child).unwrap(),
-            serde_json::to_string(&project).unwrap()
-        )]
-    );
+    let reply = pwd_in(&h, None, Some(owner.agent.clone())).await;
+    assert!(reply.contains(child.to_str().unwrap()), "{reply}");
+    assert!(reply.contains("is unavailable"), "{reply}");
+    assert!(lock(&h.shell.requests).is_empty());
 }
 
 #[tokio::test]
