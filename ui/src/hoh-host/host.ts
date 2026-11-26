@@ -1715,7 +1715,13 @@ export class HohHost {
         // The list row learns what the history knows (a title from the first message, the last answer).
         this.changed(threadId);
         return thread;
-      })().finally(() => { if (this.loading.get(threadId) === pending) this.loading.delete(threadId); });
+      })().catch(error => {
+        if (this.stopped || this.threads.get(threadId) !== thread || journal.generation === this.accessProcessGeneration
+          || hostFailure(error).code !== 'connecting') throw error;
+        // The replacement engine is starting. Keep this reader attached to the current load.
+        if (this.loading.get(threadId) === pending) this.loading.delete(threadId);
+        return this.loaded(threadId);
+      }).finally(() => { if (this.loading.get(threadId) === pending) this.loading.delete(threadId); });
       this.loading.set(threadId, pending);
     }
     return pending;

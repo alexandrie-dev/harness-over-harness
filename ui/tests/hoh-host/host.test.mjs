@@ -258,6 +258,36 @@ function connectColdHistory(engine, threadId, options) {
   return connect(engine, { ...options, storage });
 }
 
+test('cold history follows the same chat across an engine restart', async () => {
+  const id = 'history-restart';
+  const engine = new FakeEngine();
+  engine.seed(id, 'Saved chat', [[
+    'user/message', {
+      id: 'saved-message', source: { kind: 'user' }, content: [{ type: 'text', text: 'Saved history' }],
+    },
+  ]]);
+  const request = engine.request.bind(engine);
+  let resumes = 0;
+  engine.request = async (method, params) => {
+    if (method === 'session/resume' && params.sessionId === id && ++resumes === 1) {
+      engine.setStatus('restarting');
+      throw { code: 'connecting' };
+    }
+    return request(method, params);
+  };
+  const { client, host } = connectColdHistory(engine, id, { loadRetryMs: 5 });
+  try {
+    const stream = await client.stream('orchestration.subscribeThread', { threadId: id, requestCompletionMarker: true });
+    await stream.until(value => value.kind === 'synchronized' || stream.exit !== undefined);
+    assert.equal(stream.exit, undefined, JSON.stringify(stream.exit));
+    assert.deepEqual(lastSnapshot(stream).projection.messages.map(message => message.text), ['Saved history']);
+    assert.equal(resumes, 2, 'the chat is resumed once in the replacement process');
+  } finally {
+    host.stop();
+    client.close();
+  }
+});
+
 test('cold history retries temporary bridge failures and deduplicates replayed events and approvals', async () => {
   const id = 'history-overload';
   const engine = new FakeEngine();
