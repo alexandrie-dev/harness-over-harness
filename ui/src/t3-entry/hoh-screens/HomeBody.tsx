@@ -143,12 +143,12 @@ export function waitingLabel(entry: Pick<Entry, 'stopped' | 'interrupted' | 'can
   return entry.stopped ? 'Stopped' : entry.interrupted ? 'Interrupted' : entry.canComplete ? 'Ready for review' : 'Waiting for your answer';
 }
 type Complete = (entry: Entry, event: MouseEvent<HTMLButtonElement>) => void;
-const CREATOR_STATES = { working: 'Working', done: 'Done', ended: 'Inactive' };
+const CREATOR_STATES = { working: 'Working', ended: 'Inactive' };
 
 function EntryCard({ entry, view, complete, grouped }: { entry: Entry; view: View; complete: Complete; grouped: boolean }) {
   const waiting = entry.state === 'waiting';
   const project = waiting && !grouped && !entry.pluginCreator ? projectLabel(entry.projectId, view.where(entry)) : null;
-  const label = waiting ? waitingLabel(entry) : entry.pluginCreator && CREATOR_STATES[entry.state];
+  const label = waiting ? waitingLabel(entry) : entry.pluginCreator && entry.state !== 'done' && CREATOR_STATES[entry.state];
   return (
     <article className={entry.pluginCreator ? 'hoh-card hoh-card--plugin-creator' : 'hoh-card'} data-state={entry.state} data-thread-id={entry.id}>
       <button type="button" className="hoh-card__open" aria-label={`Open ${entry.title}`} title={waiting ? undefined : entry.title} onClick={() => view.open(entry.id)} />
@@ -161,7 +161,6 @@ function EntryCard({ entry, view, complete, grouped }: { entry: Entry; view: Vie
           <b>{label}</b>
           {entry.canComplete ? <Button className="hoh-card__complete" variant="ghost-muted" size="micro" onClick={(event) => complete(entry, event)}><CheckIcon aria-hidden />Mark done</Button> : null}
           {waiting || entry.state === 'working' ? <span className="hoh-card__elapsed">{elapsed(entry.startedAt, view.now)}</span> : null}
-          {entry.state === 'done' && entry.doneAt !== null ? <span className="hoh-card__time">{clock(entry.doneAt)}</span> : null}
         </span>
       ) : null}
       {waiting || (entry.pluginCreator && entry.state === 'working') ? <Steps entry={entry} /> : null}
@@ -198,18 +197,23 @@ function AgentClusters({ entries, view, projectId = null, pluginCreator = false 
     const source = event.currentTarget;
     const card = source.closest<HTMLElement>('.hoh-card');
     if (!view.host || !card || pending.current.has(entry.id)) return;
-    const animate = !matchMedia('(prefers-reduced-motion: reduce)').matches && typeof card.animate === 'function';
+    const restoreFocus = event.detail === 0;
+    const homeRoot = pluginCreator && restoreFocus ? card.closest<HTMLElement>('[data-hoh-home-body]') : null;
+    const animate = !pluginCreator && !matchMedia('(prefers-reduced-motion: reduce)').matches && typeof card.animate === 'function';
     const completion = {
       turnOrdinal: entry.turnOrdinal,
       from: card.getBoundingClientRect(),
       source,
-      restoreFocus: event.detail === 0,
+      restoreFocus,
       preview: animate ? card.cloneNode(true) as HTMLElement : null,
     };
     pending.current.set(entry.id, completion);
     void view.host.complete(entry.id, entry.turnOrdinal).then((marked) => {
       // A stale click can be ignored by the host while the thread is loading.
       if (!marked && pending.current.get(entry.id) === completion) pending.current.delete(entry.id);
+      if (marked && homeRoot && (document.activeElement === document.body || document.activeElement === source)) {
+        homeRoot.focus({ preventScroll: true });
+      }
     }, (error: unknown) => {
       if (pending.current.get(entry.id) === completion) pending.current.delete(entry.id);
       console.error('Could not mark the chat done', error);
@@ -622,14 +626,17 @@ export function HomeBody() {
     }),
   };
   const projectEntries = grouped ? (host?.projectEntries() ?? []).map(withRunner) : [];
-  const creators = (grouped ? projectEntries : visible).filter((entry) => entry.pluginCreator).sort((a, b) => b.startedAt - a.startedAt);
+  const creators = (grouped ? projectEntries : visible)
+    .filter((entry) => entry.pluginCreator && entry.state !== 'done')
+    .sort((a, b) => b.startedAt - a.startedAt);
   const lists = {
     entries: visible.filter((entry) => !entry.pluginCreator),
     asking, creators, view,
     projectEntries: projectEntries.filter((entry) => !entry.pluginCreator),
   };
+  const busy = lists.entries.length + asking.length + creators.length + lists.projectEntries.length > 0;
   return (
-    <div className="hoh-home" data-hoh-home-body="" data-busy={visible.length + asking.length + projectEntries.length > 0 || undefined}>
+    <div className="hoh-home" data-hoh-home-body="" data-busy={busy || undefined} tabIndex={-1}>
       {grouped ? <GroupedCards {...lists} /> : <Cards {...lists} />}
       <QuickViewDialog />
     </div>
