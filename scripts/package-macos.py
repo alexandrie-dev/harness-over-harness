@@ -54,6 +54,7 @@ def main():
             installed.chmod(0o755)
         resources = contents / "Resources"
         resources.mkdir()
+        (resources / ".hoh-release").write_text(config["version"] + "\n", encoding="utf-8")
         icons = []
         for code, dimension in [(b"ic08", 256), (b"ic09", 512)]:
             png = (desktop / f"icons/{dimension}x{dimension}.png").read_bytes()

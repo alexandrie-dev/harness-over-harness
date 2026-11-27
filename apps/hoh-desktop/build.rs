@@ -1,9 +1,14 @@
 fn main() {
     // The production engine path is baked in with option_env!; rebuild when it changes.
     println!("cargo:rerun-if-env-changed=HOH_ENGINE_PATH");
+    println!("cargo:rerun-if-env-changed=HOH_RELEASE_REPOSITORY");
     #[cfg(feature = "desktop")]
     tauri_build::try_build(tauri_build::Attributes::new().app_manifest(
         tauri_build::AppManifest::new().commands(&[
+            "auto_update",
+            "check_for_update",
+            "desktop_ui_ready",
+            "open_update_releases",
             "engine_request",
             "environment_platform",
             "subscribe_engine_notifications",

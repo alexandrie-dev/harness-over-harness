@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { ChatScreen } from './screens/chat/ChatScreen';
 import { FirstRun } from './screens/firstrun/FirstRun';
+import { useDesktopUiReady } from './t3-entry/desktop-ready';
 import './styles/tokens.css';
 
 const FIRST_RUN_DONE = 'hoh:first-run:done';
@@ -11,6 +12,7 @@ function needsFirstRun() {
 }
 function App() {
   const [firstRun, setFirstRun] = useState(needsFirstRun);
+  useDesktopUiReady(true, true);
   function finish() {
     // Only a non-sensitive UI completion hint persists here. Rights and model
     // settings remain host-owned; this flag grants no permissions.

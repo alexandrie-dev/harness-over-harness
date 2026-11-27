@@ -195,10 +195,22 @@
           "markdownDescription": "Enables the approval_history command without any pre-configured scope."
         },
         {
+          "description": "Enables the auto_update command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-auto-update",
+          "markdownDescription": "Enables the auto_update command without any pre-configured scope."
+        },
+        {
           "description": "Enables the browse_folders command without any pre-configured scope.",
           "type": "string",
           "const": "allow-browse-folders",
           "markdownDescription": "Enables the browse_folders command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the check_for_update command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-check-for-update",
+          "markdownDescription": "Enables the check_for_update command without any pre-configured scope."
         },
         {
           "description": "Enables the confirm_external_image command without any pre-configured scope.",
@@ -211,6 +223,12 @@
           "type": "string",
           "const": "allow-copy-file-path",
           "markdownDescription": "Enables the copy_file_path command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the desktop_ui_ready command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-desktop-ui-ready",
+          "markdownDescription": "Enables the desktop_ui_ready command without any pre-configured scope."
         },
         {
           "description": "Enables the engine_request command without any pre-configured scope.",
@@ -253,6 +271,12 @@
           "type": "string",
           "const": "allow-open-link",
           "markdownDescription": "Enables the open_link command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the open_update_releases command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-open-update-releases",
+          "markdownDescription": "Enables the open_update_releases command without any pre-configured scope."
         },
         {
           "description": "Enables the pick_folder command without any pre-configured scope.",
@@ -363,10 +387,22 @@
           "markdownDescription": "Denies the approval_history command without any pre-configured scope."
         },
         {
+          "description": "Denies the auto_update command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-auto-update",
+          "markdownDescription": "Denies the auto_update command without any pre-configured scope."
+        },
+        {
           "description": "Denies the browse_folders command without any pre-configured scope.",
           "type": "string",
           "const": "deny-browse-folders",
           "markdownDescription": "Denies the browse_folders command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the check_for_update command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-check-for-update",
+          "markdownDescription": "Denies the check_for_update command without any pre-configured scope."
         },
         {
           "description": "Denies the confirm_external_image command without any pre-configured scope.",
@@ -379,6 +415,12 @@
           "type": "string",
           "const": "deny-copy-file-path",
           "markdownDescription": "Denies the copy_file_path command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the desktop_ui_ready command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-desktop-ui-ready",
+          "markdownDescription": "Denies the desktop_ui_ready command without any pre-configured scope."
         },
         {
           "description": "Denies the engine_request command without any pre-configured scope.",
@@ -421,6 +463,12 @@
           "type": "string",
           "const": "deny-open-link",
           "markdownDescription": "Denies the open_link command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the open_update_releases command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-open-update-releases",
+          "markdownDescription": "Denies the open_update_releases command without any pre-configured scope."
         },
         {
           "description": "Denies the pick_folder command without any pre-configured scope.",

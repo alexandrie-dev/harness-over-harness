@@ -1,4 +1,6 @@
 pub mod approval;
+#[cfg(all(feature = "desktop", any(target_os = "linux", target_os = "macos")))]
+pub mod auto_update;
 pub mod bridge;
 pub mod chat_secrets;
 pub mod engine;

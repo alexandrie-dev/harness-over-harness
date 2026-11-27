@@ -117,7 +117,7 @@ export const HIDDEN_AREAS: readonly HiddenArea[] = [
   { id: 'diff', title: 'панель изменений (diff)', how: ['host', 'route', 'nav'] },
   { id: 'office', title: 'офисные форматы', how: ['host'] },
   { id: 'diagnostics', title: 'телеметрия, диагностика процессов и ресурсы', how: ['host', 'route', 'nav', 'css'] },
-  { id: 'updates', title: 'обновления приложения', how: ['host'] },
+  { id: 'updates', title: 'обновления приложения через хост T3', how: ['host'] },
   { id: 'providers-install', title: 'ACP-реестр и управляемая установка поставщиков моделей T3', how: ['host'] },
   { id: 'secrets', title: 'настройки внешних хранилищ секретов, включая 1Password', how: ['host', 'route', 'nav'] },
   { id: 'github-star', title: 'GitHub-звезда/конфетти', how: ['host'] },
