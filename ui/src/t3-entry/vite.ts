@@ -252,7 +252,8 @@ function chatIndexHome(code: string): string {
     window.dispatchEvent(new CustomEvent("hoh-project-new-chat", { detail: null }));
     void handleNewThread(projectRef, { replace: true })`,
     ], NATIVE_TITLEBAR,
-  ], TAURI_IMPORT + pageStore);
+    ['  return bootstrapped ? <NoProjectsHero /> : null;', '  return bootstrapped ? <><NoProjectsHero /><DesktopUpdateReady /></> : null;'],
+  ], TAURI_IMPORT + pageStore + DESKTOP_UPDATE_READY);
 }
 export function chatViewHome(code: string): string {
   return anchorPatch('ChatView.tsx', code, [
@@ -262,7 +263,8 @@ export function chatViewHome(code: string): string {
     ['                                  showGitControls={isGitRepo}', '                                  showGitControls={false}'],
     ['"pointer-events-none absolute inset-0 z-20 flex items-center [@media(max-height:34rem)]:items-end"', '"hoh-draft-hero pointer-events-none absolute inset-0 z-20 flex flex-col justify-end"'],
     ['              <div ref={draftHeroTransitionGroupRef} className="chat-composer-lane w-full">', '              {isDraftHeroState ? <HohHomeBody /> : null}\n              <div ref={draftHeroTransitionGroupRef} className="chat-composer-lane w-full">'],
-  ], `import { HomeBody as HohHomeBody } from ${JSON.stringify(HOME_BODY)};\n`);
+    ['              <WorkspaceMutationIdContext value={workspaceMutationId}>\n                <ThreadTimeline', '              {!embedded && !backgroundThread && !threadDetailLoading ? <DesktopUpdateReady /> : null}\n              <WorkspaceMutationIdContext value={workspaceMutationId}>\n                <ThreadTimeline'],
+  ], DESKTOP_UPDATE_READY + `import { HomeBody as HohHomeBody } from ${JSON.stringify(HOME_BODY)};\n`);
 }
 
 function timelineMessageEdit(code: string): string {
@@ -333,6 +335,7 @@ function sidebarLayout(code: string): string {
 }
 
 export function sidebarChrome(code: string): string {
+  const update = resolve(import.meta.dirname, 'hoh-screens/SidebarUpdateButton.tsx');
   return anchorPatch('SidebarChrome.tsx', code, [
     ['  SidebarTrigger,\n', ''],
     ['aria-label={gt("T3 Code home")}', 'aria-label={gt("HoH home")}'],
@@ -381,6 +384,20 @@ export function sidebarChrome(code: string): string {
 }`],
     ['<SidebarMenuButton aria-label={label} onClick={onClick} size="icon">\n              {icon}\n            </SidebarMenuButton>', '<SidebarMenuButton className="hoh-side__action" aria-label={label} onClick={onClick}>\n              {icon}\n              <span data-hoh-rail-label="">{label}</span>\n            </SidebarMenuButton>'],
     ['<SidebarMenu className="flex-row items-center">', '<SidebarMenu className="hoh-sidebar-utilities flex-row flex-wrap items-center">'],
+    [`          <SidebarUtilityItem
+            icon={<SettingsIcon />}
+            label={gt("Settings")}
+            onClick={handleSettingsClick}
+          />`, `          <SidebarMenuItem className="w-full">
+            <SidebarMenu className="hoh-sidebar-settings-row flex-row items-center">
+              <SidebarUtilityItem
+                icon={<SettingsIcon />}
+                label={gt("Settings")}
+                onClick={handleSettingsClick}
+              />
+              <HohSidebarUpdateButton />
+            </SidebarMenu>
+          </SidebarMenuItem>`],
     ['<SidebarMenuButton onClick={handleBackClick}>', '<SidebarMenuButton className="hoh-side__action" aria-label={gt("Back")} tooltip={gt("Back")} onClick={handleBackClick}>'],
     ['            <span>\n              <T>Back</T>', '            <span data-hoh-rail-label="">\n              <T>Back</T>'],
     [`      <SidebarProviderUpdatePill />
@@ -390,6 +407,7 @@ export function sidebarChrome(code: string): string {
       </div>`],
   ], `import { SidebarToggle as HohSidebarToggle } from ${JSON.stringify(SIDEBAR_TOGGLE)};
 import { pages as hohSidebarPages } from ${JSON.stringify(SIDEBAR_PAGES)};
+import { SidebarUpdateButton as HohSidebarUpdateButton } from ${JSON.stringify(update)};
 `);
 }
 
@@ -802,6 +820,7 @@ const COMPONENT_PREFIX = '\0hoh-hidden-component:';
 const PALETTE_MODULE = '\0hoh-palette-filter';
 const VIRTUAL_HOST = 'virtual:hoh-host';
 const VIRTUAL_BOOTSTRAP = 'virtual:t3-bootstrap';
+const DESKTOP_UPDATE_READY = `import { DesktopUpdateReady } from ${JSON.stringify(resolve(UI, 'src/t3-entry/DesktopUpdateReady.tsx'))};\n`;
 
 function hohT3(): Plugin {
   let routerStoragePatched = false;
@@ -929,12 +948,20 @@ function hohT3(): Plugin {
       if (id === resolve(T3_WEB, 'routes/_chat.index.tsx')) return { code: chatIndexHome(code), map: null };
       if (id === resolve(T3_WEB, 'components/ChatView.tsx')) return { code: chatViewHome(code), map: null };
       if (id === resolve(T3_WEB, 'components/onboarding/WelcomePage.tsx')) return {
-        code: anchorPatch('WelcomePage.tsx', welcomeProviderActions(code), [NATIVE_TITLEBAR], TAURI_IMPORT), map: null,
+        code: anchorPatch('WelcomePage.tsx', welcomeProviderActions(code), [
+          NATIVE_TITLEBAR,
+          ['            <TelemetryNotice environmentId={environmentId} />', '            <TelemetryNotice environmentId={environmentId} />\n            <DesktopUpdateReady />'],
+        ], TAURI_IMPORT + DESKTOP_UPDATE_READY), map: null,
       };
       if (id === resolve(T3_WEB, 'components/WorkspacePageHeader.tsx')) return {
         code: anchorPatch('WorkspacePageHeader.tsx', code, [
           ['    <header\n', '    <header\n      data-tauri-drag-region="deep"\n'],
         ]), map: null,
+      };
+      if (id === resolve(T3_WEB, 'components/AppRouteModal.tsx')) return {
+        code: anchorPatch('AppRouteModal.tsx', code, [
+          ['            <GlobalVoiceInputIndicator />', '            {open ? <DesktopUpdateReady /> : null}\n            <GlobalVoiceInputIndicator />'],
+        ], DESKTOP_UPDATE_READY), map: null,
       };
       if (id === resolve(T3_WEB, 'routes/_chat.settings.tsx')) return {
         code: anchorPatch('_chat.settings.tsx', code, [
@@ -1045,7 +1072,7 @@ const T3_ENV = [
   'VITE_DEV_SERVER_URL', 'T3CODE_DESKTOP_UPDATE_REPOSITORY', 'T3CODE_FEATURE_SECRETS',
 ];
 /** Версия программы в окне T3 (их APP_VERSION) — версия окна HoH. */
-const APP_VERSION = JSON.parse(readFileSync(resolve(UI, 'package.json'), 'utf8')).version as string;
+const APP_VERSION = JSON.parse(readFileSync(resolve(UI, '../apps/hoh-desktop/tauri.conf.json'), 'utf8')).version as string;
 
 /** Скрытые маршруты сверяются с файлами T3: тот же id в createFileRoute, иначе сборка останавливается. */
 export function checkHiddenRoutes(web: string): void {

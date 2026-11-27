@@ -1,6 +1,6 @@
 [package]
 name = "hoh-desktop"
-version = "0.1.0"
+version = "0.0.1"
 edition = "2024"
 rust-version = "1.97"
 publish = false
@@ -11,7 +11,7 @@ resolver = "3"
 
 [features]
 default = ["desktop"]
-desktop = ["dep:tauri", "dep:webkit2gtk", "dep:gtk", "dep:javascriptcore-rs", "dep:soup3", "dep:tauri-build", "dep:objc2", "dep:objc2-app-kit", "dep:objc2-foundation"]
+desktop = ["dep:tauri", "dep:webkit2gtk", "dep:gtk", "dep:javascriptcore-rs", "dep:soup3", "dep:tauri-build", "dep:tempfile", "dep:objc2", "dep:objc2-app-kit", "dep:objc2-foundation"]
 probe = ["desktop"]
 
 [[bin]]
@@ -28,13 +28,14 @@ hoh-protocol = { path = "../../crates/hoh-protocol" }
 serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = { version = "=1.0.154", features = ["preserve_order"] }
 libc = "=0.2.191"
+semver = { version = "=1.0.28", features = ["serde"] }
+sha2 = "=0.11.1"
+tempfile = { version = "=3.27.0", optional = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 base64 = "=0.23.1"
 gtk = { version = "=0.18.2", optional = true }
 javascriptcore-rs = { version = "=1.1.2", optional = true }
-semver = "=1.0.28"
-sha2 = "=0.11.1"
 soup3 = { version = "=0.5.0", optional = true }
 webkit2gtk = { version = "=2.0.2", default-features = false, features = ["v2_40"], optional = true }
 

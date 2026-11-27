@@ -3,7 +3,7 @@ use crate::{
     approval::{ApprovalView, Begun, Broker, OpenApproval, Resolution, now_ms},
     bridge,
     chat_secrets::ChatSecrets,
-    engine::{Engine, HostEvent, ProcessConfig},
+    engine::{Connector, Engine, HostEvent, ProcessConfig},
     questions::QuestionBroker,
     workspace,
 };
@@ -144,6 +144,49 @@ fn engine_launch(engine_home: &std::path::Path) -> Result<EngineLaunch, String> 
     )
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub(crate) fn staged_engine_config(
+    executable: PathBuf,
+    home: &std::path::Path,
+) -> Result<ProcessConfig, String> {
+    let launch = select_engine_launch(
+        None,
+        Some(executable.into_os_string()),
+        std::env::var_os("HOH_WINDOW_PROFILE").as_deref(),
+        home,
+    )?;
+    Ok(ProcessConfig {
+        path: launch.path,
+        args: launch.args,
+        env: launch.env,
+        stderr_file: None,
+        cwd: home.to_path_buf(),
+        provider: launch.provider.into(),
+        model: launch.model.into(),
+    })
+}
+
+pub(crate) fn engine_approval_key() -> std::io::Result<[u8; 32]> {
+    use std::io::Read;
+    let mut key = [0_u8; 32];
+    std::fs::File::open("/dev/urandom")?.read_exact(&mut key)?;
+    Ok(key)
+}
+
+pub(crate) fn engine_initialize(
+    cwd: &std::path::Path,
+    config: &ProcessConfig,
+    key: &[u8; 32],
+) -> Value {
+    json!({
+        "cwd": cwd,
+        "provider": config.provider,
+        "model": config.model,
+        "capabilities": {"approvals": "host", "userQuestions": true},
+        "hoh": {"protocolVersion": 1, "approvalKey": hoh_protocol::approval::hex(key)}
+    })
+}
+
 #[tauri::command]
 pub fn environment_platform(window: tauri::WebviewWindow) -> Result<Value, String> {
     if window.label() != "main" {
@@ -205,9 +248,7 @@ pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     // shell keeps the separate approval window.
     let in_chat = !legacy;
     let data_dir = app.path().app_data_dir()?;
-    let mut key = [0_u8; 32];
-    use std::io::Read;
-    std::fs::File::open("/dev/urandom")?.read_exact(&mut key)?;
+    let key = engine_approval_key()?;
     let approvals = Arc::new(Broker::new(key)?.with_audit_file(data_dir.join("approvals.log")));
     let questions = Arc::new(QuestionBroker::default());
     let ready = Arc::new(AtomicBool::new(false));
@@ -290,9 +331,19 @@ pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     let event_ready = ready.clone();
     let notifications = EngineNotifications::default();
     let event_notifications = notifications.clone();
-    let init = json!({"cwd":session_folder,"provider":config.provider,"model":config.model,"capabilities":{"approvals":"host","userQuestions":true},"hoh":{"protocolVersion":1,"approvalKey":hoh_protocol::approval::hex(&key)}});
-    let engine = Engine::start(
-        Arc::new(config),
+    let init = engine_initialize(&session_folder, &config, &key);
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    let (connector, ready_handler): (Arc<dyn Connector>, _) =
+        if let Some(installation) = handle.try_state::<crate::auto_update::Installation>() {
+            let connector = installation.engine_connector(config)?;
+            (connector, installation.engine_ready_handler())
+        } else {
+            (Arc::new(config), None)
+        };
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    let (connector, ready_handler): (Arc<dyn Connector>, _) = (Arc::new(config), None);
+    let engine = Engine::start_with_ready_handler(
+        connector,
         init,
         Arc::new(move |event| {
             handle_event(
@@ -305,6 +356,7 @@ pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
                 event,
             )
         }),
+        ready_handler,
     );
     app.manage(Host {
         engine,
@@ -792,22 +844,29 @@ pub fn main_security_plugin<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin<R
             }
             allowed
         });
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    let builder = builder.on_page_load(|webview, payload| {
+        if webview.label() != "main" {
+            return;
+        }
+        if matches!(payload.event(), tauri::webview::PageLoadEvent::Started)
+            && let Some(installation) = webview.try_state::<crate::auto_update::Installation>()
+        {
+            installation.ui_loading();
+        }
+        #[cfg(all(feature = "probe", target_os = "linux"))]
+        crate::probe::trace(format!(
+            "main:page-load:{:?}:{}",
+            payload.event(),
+            payload.url().path()
+        ));
+    });
     #[cfg(all(feature = "probe", target_os = "linux"))]
-    let builder = builder
-        .on_page_load(|webview, payload| {
-            if webview.label() == "main" {
-                crate::probe::trace(format!(
-                    "main:page-load:{:?}:{}",
-                    payload.event(),
-                    payload.url().path()
-                ));
-            }
-        })
-        .on_window_ready(|window| {
-            if window.label() == "main" {
-                crate::probe::trace("main:window-ready");
-            }
-        });
+    let builder = builder.on_window_ready(|window| {
+        if window.label() == "main" {
+            crate::probe::trace("main:window-ready");
+        }
+    });
     #[cfg(target_os = "linux")]
     let builder = builder.on_webview_ready(|webview| {
         if webview.label() == "main" {
@@ -1250,14 +1309,15 @@ pub fn approval_decide(
     decision.command_result
 }
 
-pub fn shutdown(handle: &tauri::AppHandle, host: &Host) {
+pub fn shutdown(handle: &tauri::AppHandle, host: &Host) -> bool {
     host.questions.clear();
     for (label, resolution) in host.approvals.cancel_all() {
         dispatch_resolution(handle, resolution);
         destroy_window(handle, &label);
     }
-    host.engine.stop();
+    let stopped = host.engine.stop_confirmed();
     host.chat_secrets.close();
+    stopped
 }
 
 /// The executor that runs a conversation, as the engine reports it (`hoh/executor/access/get`):

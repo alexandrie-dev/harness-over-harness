@@ -7,6 +7,7 @@ import pluginAuthoringSkill from './skills/hoh-plugin-authoring/SKILL.md?raw';
 import type { HohEngineLike } from './host';
 import { HIDDEN_SELECTORS } from './features';
 import { createHohLocalSettings } from './local-settings';
+import { startUpdateChecks } from './desktop-update';
 import './brand.css';
 import './hoh-screens/sidebar.css';
 import './grid/tokens.css';
@@ -38,6 +39,7 @@ installHohHost({
   pluginAuthoringGuide,
   ...(testEngine ? { onRequest: (method: string, payload: unknown) => window.__HOH_T3_TEST_REQUESTS__?.push({ method, payload }) } : {}),
 });
+startUpdateChecks();
 // Элементы, которые T3 рисует без условия (features.ts, HIDDEN_SELECTORS), скрываются стилем входа.
 const hidden = document.createElement('style');
 hidden.textContent = HIDDEN_SELECTORS.map((selector) => `${selector} { display: none !important; }`).join('\n');
