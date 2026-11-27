@@ -50,6 +50,14 @@
         chrome: "#141414",
       },
     },
+    "midnight-prism": {
+      dark: {
+        background: "#080809",
+        foreground: "#f2f3f5",
+        accent: "#4dacf6",
+        chrome: "#080809",
+      },
+    },
     "t3-chat": {
       light: {
         background: "oklch(0.982446 0.010114 325.653)",
@@ -132,6 +140,7 @@
     "light",
     "dark",
     "hoh",
+    "midnight-prism",
     "t3-chat",
     "grove",
     "ocean",

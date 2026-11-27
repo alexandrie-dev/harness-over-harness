@@ -8,7 +8,7 @@ import { basename, resolve } from 'node:path';
 import type { Plugin, UserConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
-import { HOH_THEME_COLORS } from './hoh-theme';
+import { HOH_THEME_COLORS, MIDNIGHT_PRISM_COLORS } from './hoh-theme';
 import { HIDDEN_COMPONENTS, HIDDEN_PALETTE_ITEMS, HIDDEN_ROUTES, VISIBLE_PROVIDER_DRIVERS, VISIBLE_SETTINGS, VISIBLE_SETTINGS_ITEMS } from './features';
 import { deferRouterScrollStorage } from './router-scroll';
 
@@ -183,16 +183,16 @@ function keybindingSettings(code: string): string {
 export function themeCards(code: string): string {
   return anchorPatch('ThemePreviewCircles.tsx', code, [['label: "T3 Code",', 'label: "Default",']]);
 }
-/** Карточка «HoH» первой среди тем в Appearance → Themes. */
+/** Добавляет темы HoH в Appearance → Themes. */
 export function themeSettings(code: string): string {
   return anchorPatch('ThemeSettings.tsx', code, [
-    ['const MAINTAINER_THEMES: ReadonlyArray<ThemeDefinition> = [\n', 'const MAINTAINER_THEMES: ReadonlyArray<ThemeDefinition> = [\n  HOH_THEME,\n'],
+    ['const MAINTAINER_THEMES: ReadonlyArray<ThemeDefinition> = [\n', 'const MAINTAINER_THEMES: ReadonlyArray<ThemeDefinition> = [\n  HOH_THEME,\n  MIDNIGHT_PRISM_THEME,\n'],
     ['    <div className="space-y-3">\n', '    <div className="space-y-3">\n      <HohProjectGroupingSetting />\n'],
     ['          {/* HoH (ui/T3-MAP.md): импорт тем VS Code / Open VSX выключен — кнопки «Add theme» нет. */}', `          <Button size="xs" variant="outline" onClick={() => onImportOpenChange(true)}>
             <PlusIcon />
             <T>Import theme</T>
           </Button>`],
-  ], 'import { HOH_THEME } from "@t3tools/shared/themePalettes";\nimport { ProjectGroupingSetting as HohProjectGroupingSetting } from ' + JSON.stringify(PROJECT_GROUPING_SETTING) + ';\n');
+  ], 'import { HOH_THEME, MIDNIGHT_PRISM_THEME } from "@t3tools/shared/themePalettes";\nimport { ProjectGroupingSetting as HohProjectGroupingSetting } from ' + JSON.stringify(PROJECT_GROUPING_SETTING) + ';\n');
 }
 function themeImportDialog(code: string): string {
   const searchAnchor = '      <ThemeSearchSection\n';
@@ -208,11 +208,12 @@ function themeImportDialog(code: string): string {
   ]);
 }
 export function themePalettes(code: string): string {
-  const theme = `export const HOH_THEME: ThemeDefinition = { id: "hoh", label: "HoH", appearance: "dark", colors: ${JSON.stringify(HOH_THEME_COLORS)} };\n`;
+  const themes = `export const HOH_THEME: ThemeDefinition = { id: "hoh", label: "HoH", appearance: "dark", colors: ${JSON.stringify(HOH_THEME_COLORS)} };\n`
+    + `export const MIDNIGHT_PRISM_THEME: ThemeDefinition = { id: "midnight-prism", label: "Midnight Prism", appearance: "dark", colors: ${JSON.stringify(MIDNIGHT_PRISM_COLORS)} };\n`;
   return anchorPatch('themePalettes.ts', code, [
     ['label: "T3 Chat",', 'label: "Chat",'],
-    ['export const BUILT_IN_THEME_IDS = ["t3-chat",', 'export const BUILT_IN_THEME_IDS = ["hoh", "t3-chat",'],
-    ['export const BUILT_IN_THEMES: ReadonlyArray<ThemeDefinition> = [\n', theme + 'export const BUILT_IN_THEMES: ReadonlyArray<ThemeDefinition> = [\n  HOH_THEME,\n'],
+    ['export const BUILT_IN_THEME_IDS = ["t3-chat",', 'export const BUILT_IN_THEME_IDS = ["hoh", "midnight-prism", "t3-chat",'],
+    ['export const BUILT_IN_THEMES: ReadonlyArray<ThemeDefinition> = [\n', themes + 'export const BUILT_IN_THEMES: ReadonlyArray<ThemeDefinition> = [\n  HOH_THEME,\n  MIDNIGHT_PRISM_THEME,\n'],
   ]);
 }
 
