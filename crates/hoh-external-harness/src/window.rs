@@ -13,22 +13,28 @@
 //! to the engine's profile ([`CHOICES_FILE`]), never in a working folder, and every engine run on
 //! that profile starts with it ([`restore_choices`], from the `ExternalHarness` plugin).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 use std::path::{Component, Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, Weak};
 use std::time::{Duration, Instant};
 
+use futures_util::StreamExt;
 use hoh_agent::{
     Agent, AgentRegistry, AgentStatus, Agents, ExecutorSelection, stored_executor_binding,
 };
 use hoh_error::BoxError;
 use hoh_kernel::{Cfg, Context, Inject, Logger, NoConfig, Plugin, Service};
+use hoh_llm::{
+    BlockAssembler, ContentBlock, GenerateOptions, Llm, MessageSource, NewUserMessage,
+    RequestMessage, create_user_message,
+};
 use hoh_loader::ProfileContextKey;
 use hoh_protocol::{
     ExecutorAccessGetParams, ExecutorAccessGetResult, ExecutorAccessMode, ExecutorAccessSetParams,
     ExecutorAccessSetResult, ExecutorCommand, ExecutorCommandsParams, ExecutorCommandsResult,
     ExecutorEffectiveAccess, ExecutorLimitsResult, ExecutorLimitsState, ExecutorParams,
-    ExecutorRuntimeMode, ExecutorSelectParams, ExecutorSessionAccess, ExecutorTitleGenerateParams,
+    ExecutorRuntimeMode, ExecutorSelectParams, ExecutorSessionAccess, ExecutorTitleCancelParams,
+    ExecutorTitleCancelResult, ExecutorTitleGenerateParams, ExecutorTitleGenerateResult,
     ExecutorTrustGetParams, ExecutorTrustResult, ExecutorTrustSetParams, SessionInteractionMode,
     WorkingDirectoryRootIdentity, WorkspaceAddParams, WorkspaceAddResult, WorkspaceEntriesParams,
     WorkspaceEntriesResult, WorkspaceResolveParams, WorkspaceResolveResult,
@@ -39,13 +45,16 @@ use hoh_working_directory::WorkingDirectoryKey;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use tokio_util::sync::CancellationToken;
 
 use crate::agent::access_text;
 use crate::contract::{
     AccessMode, Discovery, HarnessCommand, HarnessCommands, InteractionMode, VersionStatus,
 };
 use crate::redact::{redact, redact_value};
-use crate::{Choices, ExternalHarnesses, ExternalHarnessesService};
+use crate::{
+    Choices, ExternalHarnesses, ExternalHarnessesService, TitleRequest, TitleWorkspace, code,
+};
 
 /// The file in the engine's profile folder that keeps the window's choices.
 pub const CHOICES_FILE: &str = "external-harness.json";
@@ -76,6 +85,44 @@ const ADD: &str = "hoh/workspace/add";
 const RESOLVE: &str = "hoh/workspace/resolve";
 const FOLDER_CACHE_TTL: Duration = Duration::from_secs(30);
 const TITLE_GENERATE: &str = "hoh/executor/title/generate";
+const TITLE_ROUTE_UNAVAILABLE: &str =
+    "CHAT_TITLE_ROUTE_UNAVAILABLE: The chat's native title route could not be verified.";
+const TITLE_CANCEL: &str = "hoh/executor/title/cancel";
+const RECENT_TITLE_CANCELLATIONS: usize = 256;
+
+#[derive(Default)]
+struct TitleCancellations {
+    active: BTreeMap<String, Weak<CancellationToken>>,
+    cancelled: VecDeque<String>,
+}
+
+impl TitleCancellations {
+    fn token(&mut self, id: &str) -> Arc<CancellationToken> {
+        self.active.retain(|_, token| token.strong_count() != 0);
+        if let Some(token) = self.active.get(id).and_then(Weak::upgrade) {
+            return token;
+        }
+        let token = Arc::new(CancellationToken::new());
+        if self.cancelled.iter().any(|cancelled| cancelled == id) {
+            token.cancel();
+        } else {
+            self.active.insert(id.to_owned(), Arc::downgrade(&token));
+        }
+        token
+    }
+
+    fn cancel(&mut self, id: String) {
+        if let Some(token) = self.active.remove(&id).and_then(|token| token.upgrade()) {
+            token.cancel();
+        }
+        if !self.cancelled.contains(&id) {
+            if self.cancelled.len() == RECENT_TITLE_CANCELLATIONS {
+                self.cancelled.pop_front();
+            }
+            self.cancelled.push_back(id);
+        }
+    }
+}
 
 /// Keep input blocked until folder trust has been changed and its old processes stopped.
 #[derive(Default)]
@@ -98,7 +145,7 @@ impl Drop for TrustReservations {
         }
     }
 }
-const METHODS: [&str; 12] = [
+const METHODS: [&str; 13] = [
     DISCOVER,
     LIMITS,
     SELECT,
@@ -111,6 +158,7 @@ const METHODS: [&str; 12] = [
     TRUST_GET,
     TRUST_SET,
     TITLE_GENERATE,
+    TITLE_CANCEL,
 ];
 
 /// The saved choices.
@@ -219,6 +267,7 @@ impl Plugin for ExternalHarnessWindowPlugin {
             default_folder,
             saving: tokio::sync::Mutex::new(()),
             folder_calls: std::sync::Mutex::new(BTreeMap::new()),
+            title_cancellations: Mutex::default(),
         });
         for method in METHODS {
             let window = window.clone();
@@ -297,6 +346,7 @@ struct Window {
     saving: tokio::sync::Mutex<()>,
     /// Expensive composer calls, serialized and briefly cached by canonical folder.
     folder_calls: std::sync::Mutex<BTreeMap<PathBuf, Arc<tokio::sync::Mutex<FolderCalls>>>>,
+    title_cancellations: Mutex<TitleCancellations>,
 }
 
 #[derive(Default)]
@@ -329,6 +379,46 @@ impl<T: Clone> Cached<T> {
 struct EntriesKey {
     query: String,
     limit: u32,
+}
+
+async fn builtin_title(agent: &dyn Agent, prompt: String) -> Result<String, BoxError> {
+    let route = agent
+        .model()
+        .current()
+        .ok_or("The chat's model is unavailable.")?;
+    let ctx = agent.ctx();
+    let llm = ctx.get::<Llm>().ok_or("The chat's model is unavailable.")?;
+    let deadline = hoh_timeout::deadline(None, 20_000.0, "CHAT_TITLE_TIMEOUT")?;
+    let mut stream = llm.stream(
+        ctx,
+        GenerateOptions {
+            provider: route.provider,
+            model: route.model,
+            messages: vec![RequestMessage::from(create_user_message(NewUserMessage {
+                source: MessageSource::new("hoh-chat-title"),
+                content: vec![ContentBlock::text(prompt)],
+            }))],
+            signal: Some(deadline.signal.clone()),
+            max_tokens: Some(512),
+            session_id: Some(agent.id().clone()),
+            purpose: Some("session-title".into()),
+            ..Default::default()
+        },
+    );
+    let mut assembler = BlockAssembler::new();
+    while let Some(chunk) = stream.next().await {
+        assembler.push(chunk?);
+    }
+    deadline.signal.throw_if_aborted()?;
+    if assembler.finish().kind != "stop" {
+        return Err("The title request did not complete.".into());
+    }
+    let blocks = assembler.blocks()?;
+    let response = blocks
+        .iter()
+        .filter_map(|block| block.text_value().filter(|_| block.r#type == "text"))
+        .collect::<String>();
+    Ok(serde_json::from_str::<ExecutorTitleGenerateResult>(&response)?.title)
 }
 
 impl Window {
@@ -446,14 +536,114 @@ impl Window {
             )?),
             TITLE_GENERATE => {
                 let params: ExecutorTitleGenerateParams = parse(method, params)?;
-                let harness = self
-                    .service()
-                    .get(&params.executor)
-                    .ok_or_else(|| format!("no external harness named {:?}", params.executor))?;
-                Ok(json!({ "title": harness.generate_title(params.prompt).await? }))
+                let token = params.cancellation_id.as_deref().map(|id| {
+                    self.title_cancellations
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .token(id)
+                });
+                let title = if let Some(token) = token {
+                    tokio::select! {
+                        biased;
+                        _ = token.cancelled() => return Err("The title request was cancelled.".into()),
+                        title = self.generate_title(params) => title?,
+                    }
+                } else {
+                    self.generate_title(params).await?
+                };
+                Ok(json!({ "title": title }))
+            }
+            TITLE_CANCEL => {
+                let params: ExecutorTitleCancelParams = parse(method, params)?;
+                self.title_cancellations
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .cancel(params.cancellation_id);
+                Ok(serde_json::to_value(ExecutorTitleCancelResult {
+                    cancelled: true,
+                })?)
             }
             _ => Err(format!("external harness window does not serve {method}").into()),
         }
+    }
+
+    async fn generate_title(
+        &self,
+        params: ExecutorTitleGenerateParams,
+    ) -> Result<String, BoxError> {
+        let mut request = TitleRequest {
+            prompt: params.prompt,
+            ..TitleRequest::default()
+        };
+        if let Some(id) = params.session_id {
+            let agent = self
+                .agents
+                .get(&SessionId::from(id.as_str()))
+                .ok_or(TITLE_ROUTE_UNAVAILABLE)?;
+            let route = agent.model().current().ok_or(TITLE_ROUTE_UNAVAILABLE)?;
+            if params.executor == "builtin" {
+                if self.session_access(&id).await?.builtin != Some(true) {
+                    return Err("The chat is not bound to the built-in agent.".into());
+                }
+                return builtin_title(agent.as_ref(), request.prompt).await;
+            }
+            if route.provider != params.executor {
+                return Err("The chat is bound to a different harness.".into());
+            }
+            request.model = Some(route.model);
+            if matches!(params.executor.as_str(), "codex" | "pi") {
+                let shared = self
+                    .service()
+                    .shared(&params.executor)
+                    .ok_or(TITLE_ROUTE_UNAVAILABLE)?;
+                let native = tokio::time::timeout(Duration::from_secs(12), async {
+                    loop {
+                        if let Some(native) = shared.running_session(&id) {
+                            return Ok(native);
+                        }
+                        if agent.status() == AgentStatus::Idle {
+                            return Err(TITLE_ROUTE_UNAVAILABLE);
+                        }
+                        tokio::time::sleep(Duration::from_millis(100)).await;
+                    }
+                })
+                .await
+                .map_err(|_| TITLE_ROUTE_UNAVAILABLE)??;
+                if params.executor == "codex" {
+                    let directories = self
+                        .ctx
+                        .get::<WorkingDirectoryKey>()
+                        .ok_or(TITLE_ROUTE_UNAVAILABLE)?;
+                    let (cwd, identity) = directories
+                        .verify_for_read(agent.session())
+                        .map_err(|_| TITLE_ROUTE_UNAVAILABLE)?;
+                    let profile = self
+                        .ctx
+                        .get::<ProfileContextKey>()
+                        .ok_or(TITLE_ROUTE_UNAVAILABLE)?;
+                    request.workspace = Some(TitleWorkspace::new(
+                        PathBuf::from(cwd),
+                        identity,
+                        profile.dir.clone(),
+                    ));
+                }
+                return native.generate_title(request).await.map_err(|error| {
+                    if error.code == code::POLICY_UNAVAILABLE {
+                        TITLE_ROUTE_UNAVAILABLE.into()
+                    } else {
+                        Box::new(error) as BoxError
+                    }
+                });
+            }
+        }
+        if matches!(params.executor.as_str(), "codex" | "pi") {
+            return Err(TITLE_ROUTE_UNAVAILABLE.into());
+        }
+        let harness = self
+            .service()
+            .get(&params.executor)
+            .ok_or_else(|| format!("no external harness named {:?}", params.executor))?;
+        Ok(harness.generate_title(request).await?)
     }
 
     /// The folder `cwd` names, when the engine knows it (HOH-41) and it is not the engine's own
@@ -1541,13 +1731,29 @@ async fn write(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::{
-        Window, build_15_mode, darwin_protected_folder, protected_folder, saved_folder_match,
+        TitleCancellations, Window, build_15_mode, darwin_protected_folder, protected_folder,
+        saved_folder_match,
     };
     use crate::contract::{
         AuthState, Discovery, DiscoveryFailure, DiscoveryOperation, VersionStatus,
     };
     use serde_json::json;
     use std::path::Path;
+
+    #[test]
+    fn title_cancellation_is_shared_and_applies_to_late_requests() {
+        let mut jobs = TitleCancellations::default();
+        let running = jobs.token("automatic");
+        let queued = jobs.token("automatic");
+        let manual = jobs.token("manual");
+        jobs.cancel("automatic".into());
+
+        assert!(running.is_cancelled());
+        assert!(queued.is_cancelled());
+        assert!(jobs.token("automatic").is_cancelled());
+        assert!(!manual.is_cancelled());
+        assert!(!jobs.token("new-automatic").is_cancelled());
+    }
 
     #[test]
     fn saved_session_modes_are_readable_by_build_15_without_losing_confirm() {

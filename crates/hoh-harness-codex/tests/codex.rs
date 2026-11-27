@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 use hoh_external_harness::{
     AccessMode, ApprovalDecision, AuthState, ExternalHarness, HarnessEvent, HarnessPolicy,
     HarnessResponse, InteractionMode, PromptImage, PromptParams, QuestionAnswer, RespondParams,
-    StartParams, VersionStatus,
+    StartParams, TitleRequest, TitleWorkspace, VersionStatus,
 };
 use hoh_harness_codex::{CodexConfig, CodexHarness};
 use serde_json::Value;
@@ -18,7 +18,7 @@ fn stub() -> PathBuf {
 fn harness(temp: &TempDir, scenario: &str) -> (CodexHarness, PathBuf) {
     let log = temp.path().join(format!("{scenario}.jsonl"));
     let release = log.with_extension("release");
-    let config = CodexConfig {
+    let mut config = CodexConfig {
         executable: stub(),
         request_timeout: Duration::from_secs(3),
         extra_env: vec![
@@ -31,7 +31,36 @@ fn harness(temp: &TempDir, scenario: &str) -> (CodexHarness, PathBuf) {
         ],
         ..CodexConfig::default()
     };
+    if scenario == "title-credential-override" {
+        config
+            .extra_env
+            .push(("CODEX_API_KEY".into(), "stub-override".into()));
+    }
     (CodexHarness::new(config), log)
+}
+
+#[tokio::test]
+async fn codex_title_refuses_exec_only_credential_overrides() {
+    let temp = TempDir::new().unwrap();
+    let (harness, log) = harness(&temp, "title-credential-override");
+    let started = harness
+        .start_with_access(start_params(&temp, None), AccessMode::Confirm)
+        .await
+        .unwrap();
+    assert_eq!(
+        started
+            .session
+            .generate_title(title_request(&temp))
+            .await
+            .unwrap_err()
+            .code,
+        hoh_external_harness::code::POLICY_UNAVAILABLE,
+    );
+    assert!(
+        !lines(&log)
+            .iter()
+            .any(|entry| entry["stubEvent"] == "title-exec")
+    );
 }
 
 #[tokio::test]
@@ -105,6 +134,237 @@ fn start_params(temp: &TempDir, resume: Option<String>) -> StartParams {
         policy: HarnessPolicy::default(),
         resume: resume.map(Into::into),
     }
+}
+
+fn title_request(temp: &TempDir) -> TitleRequest {
+    use std::os::unix::fs::MetadataExt;
+
+    let cwd = temp.path().canonicalize().unwrap();
+    let metadata = cwd.metadata().unwrap();
+    TitleRequest {
+        prompt: "Generate a short title for: У CEO не открывается кабинет\n".into(),
+        model: Some("gpt-stub".into()),
+        workspace: Some(TitleWorkspace::new(
+            cwd,
+            [metadata.dev(), metadata.ino()],
+            temp.path().to_owned(),
+        )),
+    }
+}
+
+#[tokio::test]
+async fn codex_title_uses_the_verified_thread_route_and_isolated_json_output() {
+    let temp = TempDir::new().unwrap();
+    let (harness, log) = harness(&temp, "title-default");
+    let started = harness
+        .start_or_resume(start_params(&temp, None))
+        .await
+        .unwrap();
+    let request = title_request(&temp);
+    let prompt = request.prompt.clone();
+    assert_eq!(
+        started.session.generate_title(request).await.unwrap(),
+        "Доступ к кабинету CEO"
+    );
+    let requests = lines(&log);
+    let methods: Vec<_> = requests
+        .iter()
+        .filter_map(|entry| entry["method"].as_str())
+        .collect();
+    assert_eq!(
+        methods,
+        [
+            "initialize",
+            "initialized",
+            "config/read",
+            "configRequirements/read",
+            "thread/start",
+            "initialize",
+            "initialized",
+            "config/read",
+            "configRequirements/read",
+            "account/read",
+            "account/read"
+        ]
+    );
+    let start = requests
+        .iter()
+        .find(|entry| entry["method"] == "thread/start")
+        .unwrap();
+    assert_eq!(start["params"]["config"]["openai_base_url"], "");
+    assert_eq!(
+        start["params"]["config"]["cli_auth_credentials_store"],
+        "file"
+    );
+    let exec = requests
+        .iter()
+        .find(|entry| entry["stubEvent"] == "title-exec")
+        .unwrap();
+    assert_eq!(exec["prompt"], prompt);
+    let cwd = Path::new(exec["cwd"].as_str().unwrap());
+    assert_ne!(cwd, temp.path());
+    assert!(!cwd.exists());
+    let args: Vec<_> = exec["args"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|arg| arg.as_str().unwrap())
+        .collect();
+    for required in [
+        "--ephemeral",
+        "--ignore-user-config",
+        "--output-schema",
+        "--model=gpt-stub",
+        "cli_auth_credentials_store=\"file\"",
+        "openai_base_url=\"\"",
+        "chatgpt_base_url=\"https://chatgpt.com/backend-api/\"",
+        "shell_tool",
+        "hooks",
+        "read-only",
+    ] {
+        assert!(args.contains(&required), "missing {required}: {args:?}");
+    }
+    assert!(!args.iter().any(|arg| arg.contains(prompt.as_str())));
+}
+
+#[tokio::test]
+async fn codex_title_requires_a_matching_workspace_identity() {
+    let temp = TempDir::new().unwrap();
+    let (harness, log) = harness(&temp, "title-default");
+    let started = harness
+        .start_or_resume(start_params(&temp, None))
+        .await
+        .unwrap();
+    let mut request = title_request(&temp);
+    request.workspace = Some(TitleWorkspace::new(
+        temp.path().canonicalize().unwrap(),
+        [0, 0],
+        temp.path().to_owned(),
+    ));
+
+    let before = lines(&log);
+    let error = started.session.generate_title(request).await.unwrap_err();
+    assert!(error.message.contains("conversation folder has changed"));
+    assert_eq!(lines(&log), before);
+}
+
+#[tokio::test]
+async fn codex_title_refuses_custom_routes_and_non_schema_responses() {
+    let temp = TempDir::new().unwrap();
+    for scenario in [
+        "title-custom-config",
+        "title-custom-thread",
+        "title-managed",
+        "title-keyring",
+        "title-auto-store",
+    ] {
+        let (harness, log) = harness(&temp, scenario);
+        let started = harness
+            .start_or_resume(start_params(&temp, None))
+            .await
+            .unwrap();
+        let error = started
+            .session
+            .generate_title(title_request(&temp))
+            .await
+            .unwrap_err();
+        assert_eq!(error.code, hoh_external_harness::code::POLICY_UNAVAILABLE);
+        assert!(
+            !lines(&log)
+                .iter()
+                .any(|entry| entry["stubEvent"] == "title-exec")
+        );
+    }
+    let (harness, _) = harness(&temp, "title-invalid-output");
+    let started = harness
+        .start_or_resume(start_params(&temp, None))
+        .await
+        .unwrap();
+    let error = started
+        .session
+        .generate_title(title_request(&temp))
+        .await
+        .unwrap_err();
+    assert_eq!(error.code, hoh_external_harness::code::PROTOCOL);
+}
+
+#[tokio::test]
+async fn codex_title_refuses_route_changes_after_start_or_resume() {
+    for resume in [None, Some("thread-stub".to_owned())] {
+        let temp = TempDir::new().unwrap();
+        let (harness, log) = harness(&temp, "title-changing-route");
+        let marker = temp.path().join("custom-route");
+        let initially_custom = resume.is_some();
+        if initially_custom {
+            fs::write(&marker, "").unwrap();
+        }
+        let started = harness
+            .start_or_resume(start_params(&temp, resume))
+            .await
+            .unwrap();
+        if initially_custom {
+            fs::remove_file(&marker).unwrap();
+        } else {
+            fs::write(&marker, "").unwrap();
+        }
+        let error = started
+            .session
+            .generate_title(title_request(&temp))
+            .await
+            .unwrap_err();
+        assert_eq!(error.code, hoh_external_harness::code::POLICY_UNAVAILABLE);
+        assert!(
+            !lines(&log)
+                .iter()
+                .any(|entry| entry["stubEvent"] == "title-exec")
+        );
+    }
+}
+
+#[tokio::test]
+async fn codex_title_requires_the_current_account_to_match_the_live_thread() {
+    let temp = TempDir::new().unwrap();
+    let (harness, log) = harness(&temp, "title-changing-account");
+    let started = harness
+        .start_or_resume(start_params(&temp, None))
+        .await
+        .unwrap();
+    fs::write(temp.path().join("changed-account"), "").unwrap();
+
+    let error = started
+        .session
+        .generate_title(title_request(&temp))
+        .await
+        .unwrap_err();
+    assert_eq!(error.code, hoh_external_harness::code::POLICY_UNAVAILABLE);
+    assert!(
+        !lines(&log)
+            .iter()
+            .any(|entry| entry["stubEvent"] == "title-exec")
+    );
+}
+
+#[tokio::test]
+async fn codex_title_requires_the_probe_version_to_match_the_live_server() {
+    let temp = TempDir::new().unwrap();
+    let (harness, log) = harness(&temp, "title-changing-version");
+    let started = harness
+        .start_or_resume(start_params(&temp, None))
+        .await
+        .unwrap();
+    fs::write(temp.path().join("changed-version"), "").unwrap();
+
+    let error = started
+        .session
+        .generate_title(title_request(&temp))
+        .await
+        .unwrap_err();
+    assert_eq!(error.code, hoh_external_harness::code::POLICY_UNAVAILABLE);
+    assert!(
+        !lines(&log)
+            .iter()
+            .any(|entry| entry["stubEvent"] == "title-exec")
+    );
 }
 
 fn lines(path: &Path) -> Vec<Value> {

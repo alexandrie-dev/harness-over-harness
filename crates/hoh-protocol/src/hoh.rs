@@ -635,6 +635,24 @@ fn title_prompt<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Str
     Ok(prompt)
 }
 
+fn title_cancellation_id<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<String, D::Error> {
+    let id = String::deserialize(deserializer)?;
+    if !(1..=128).contains(&id.chars().count()) {
+        return Err(serde::de::Error::custom(
+            "invalid title cancellation ID length",
+        ));
+    }
+    Ok(id)
+}
+
+fn optional_title_cancellation_id<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<String>, D::Error> {
+    title_cancellation_id(deserializer).map(Some)
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ExecutorTitleGenerateParams {
@@ -642,8 +660,30 @@ pub struct ExecutorTitleGenerateParams {
     #[serde(deserialize_with = "title_prompt")]
     #[schemars(length(max = 16384))]
     pub prompt: String,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::present"
+    )]
+    #[schemars(with = "String")]
+    pub session_id: Option<String>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "optional_title_cancellation_id"
+    )]
+    #[schemars(with = "String", length(min = 1, max = 128))]
+    pub cancellation_id: Option<String>,
 }
 object!(ExecutorTitleGenerateResult { title: String });
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ExecutorTitleCancelParams {
+    #[serde(deserialize_with = "title_cancellation_id")]
+    #[schemars(length(min = 1, max = 128))]
+    pub cancellation_id: String,
+}
+object!(ExecutorTitleCancelResult { cancelled: bool });
 optional!(ExecutorAccessSetParams {
     executor: String,
     mode: ExecutorAccessMode,

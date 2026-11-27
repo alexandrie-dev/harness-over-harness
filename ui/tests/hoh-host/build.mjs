@@ -10,12 +10,13 @@ const ts = require('../../node_modules/typescript');
 const SOURCE = fileURLToPath(new URL('../../src/hoh-host/', import.meta.url));
 const UI = resolve(SOURCE, '../..');
 const SEARCH_SOURCE = 'thread-search.ts';
+const TITLE_SOURCE = 'chat-title.ts';
 
 export async function buildHost(extraEntries = {}) {
   const out = await mkdtemp(join(process.env.TMPDIR || '/dev/shm/hoh', 'hoh-host-'));
   await writeFile(join(out, 'package.json'), '{"type":"module"}');
   for (const name of await readdir(SOURCE)) {
-    if (!name.endsWith('.ts') || name === 'tauri.ts' || name === SEARCH_SOURCE) continue;
+    if (!name.endsWith('.ts') || name === 'tauri.ts' || name === SEARCH_SOURCE || name === TITLE_SOURCE) continue;
     const source = await readFile(join(SOURCE, name), 'utf8');
     const { outputText, diagnostics } = ts.transpileModule(source, {
       fileName: name,
@@ -43,6 +44,7 @@ export async function buildHost(extraEntries = {}) {
       rolldownOptions: {
         input: {
           'thread-search': join(SOURCE, SEARCH_SOURCE),
+          'chat-title': join(SOURCE, TITLE_SOURCE),
           ...Object.fromEntries(Object.entries(extraEntries).map(([key, path]) => [key, resolve(UI, path)])),
         },
         output: { entryFileNames: '[name].js' },

@@ -19,7 +19,14 @@ use hoh_session_title_first_prompt_llm::{Config, NAME, SessionTitleFirstPromptLl
 use schemars::schema_for;
 use serde_json::{Value, json};
 
-const SYSTEM: &str = "Create a concise title for an AI coding-assistant session from the supplied human messages.\nReturn only the title on one line, **in plain text of natural language**, with no quotes, prefix, explanation, Markdown, XML, or terminal control codes. No code is allowed.\nUse the language of the messages.\nAim for about 5 words in non-CJK languages or 10 CJK characters.\nIf the messages give little to name, still return a short best-effort title, such as Greeting, instead of explaining.";
+const SYSTEM: &str = concat!(
+    "Create a concise title for an AI coding-assistant session from the supplied human messages.\n",
+    "Return only the title on one line, **in plain text of natural language**, with no quotes, prefix, explanation, Markdown, XML, or terminal control codes. No code is allowed.\n",
+    "Use the language of the messages.\n",
+    "Name the specific subject or intended outcome so the user can recognize the session later. Prefer a compact noun phrase or action phrase. Leave out greetings, workflow details, and claims that work is complete.\n",
+    "Aim for about 5 words in non-CJK languages or 10 CJK characters.\n",
+    "If the messages give little to name, still return a short best-effort title, such as Greeting, instead of explaining."
+);
 
 fn first_title_script() -> Vec<StreamChunk> {
     vec![
@@ -107,6 +114,7 @@ async fn setup(script: Vec<StreamChunk>, efforts: &[&str]) -> Env {
         Some(("title-route", "title-model")),
         "title-route",
         32,
+        None,
     )
     .await
 }
@@ -117,6 +125,7 @@ async fn setup_with_route(
     route_override: Option<(&str, &str)>,
     adapter_provider: &str,
     max_output_tokens: u64,
+    max_words: Option<u64>,
 ) -> Env {
     let kernel = Kernel::start();
     let ctx = kernel.root();
@@ -141,8 +150,8 @@ async fn setup_with_route(
         .await
         .unwrap();
     ctx.plugin::<SessionTitlePlugin>(json!({
-        "fallbackMaxWords": 5,
-        "fallbackMaxBytes": 40,
+        "fallbackMaxWords": max_words.unwrap_or(5),
+        "fallbackMaxBytes": if max_words.is_some() { 80 } else { 40 },
         "maxTitleBytes": 80
     }))
     .unwrap()
@@ -155,7 +164,7 @@ async fn setup_with_route(
         .register_adapter(&ctx, vec![adapter_provider.into()], adapter.clone())
         .unwrap();
     let mut provider_config = json!({
-        "targetWords": 5,
+        "targetWords": max_words.unwrap_or(5),
         "targetCjkCharacters": 10,
         "maxInputBytes": 1000,
         "maxOutputTokens": max_output_tokens,
@@ -164,6 +173,9 @@ async fn setup_with_route(
     if let Some((provider, model)) = route_override {
         provider_config["provider"] = provider.into();
         provider_config["model"] = model.into();
+    }
+    if let Some(max_words) = max_words {
+        provider_config["maxWords"] = json!(max_words);
     }
     ctx.plugin::<SessionTitleFirstPromptLlm>(provider_config)
         .unwrap()
@@ -187,6 +199,7 @@ async fn inherits_the_logged_route_but_selects_its_own_reasoning_floor() {
         None,
         "main-route",
         64,
+        None,
     )
     .await;
     let session = session(&env, "inherited-route");
@@ -529,6 +542,111 @@ async fn takes_the_title_from_the_first_nonempty_output_line() {
         assert_eq!(title.title, *expected);
         env.shutdown().await;
     }
+}
+
+#[tokio::test]
+async fn keeps_natural_connectors_within_the_content_word_limit() {
+    for (prompt, expected) in [
+        ("У CEO не открывается кабинет", "Доступ к кабинету CEO"),
+        (
+            "Le tableau du PDG ne s’ouvre plus",
+            "Accès au tableau du PDG",
+        ),
+        (
+            "Δεν ανοίγει ο πίνακας του διευθυντή",
+            "Πρόσβαση στον πίνακα του διευθυντή",
+        ),
+        (
+            "Arregla el acceso a la oficina del director",
+            "Acceso a la oficina del director",
+        ),
+    ] {
+        let env = setup_with_route(
+            chunks([
+                json!({"type":"text-delta","index":0,"text":expected}),
+                json!({"type":"finish","reason":{"kind":"stop"}}),
+            ]),
+            &[],
+            Some(("title-route", "title-model")),
+            "title-route",
+            32,
+            Some(3),
+        )
+        .await;
+        let session = session(&env, "title-with-connector");
+        append_human(&session, prompt);
+
+        let title = env.titles.refresh(&session, None).await.unwrap().unwrap();
+        assert_eq!(title.title, expected);
+        env.shutdown().await;
+    }
+}
+
+#[tokio::test]
+async fn keeps_the_three_word_fallback_when_the_model_exceeds_the_configured_limit() {
+    let env = setup_with_route(
+        chunks([
+            json!({"type":"text-delta","index":0,"text":"Проверка автоматических названий чатов"}),
+            json!({"type":"finish","reason":{"kind":"stop"}}),
+        ]),
+        &[],
+        Some(("title-route", "title-model")),
+        "title-route",
+        32,
+        Some(3),
+    )
+    .await;
+    let session = session(&env, "overlong-title");
+    append_human(&session, "Сократи названия чатов до трёх слов");
+
+    assert_eq!(
+        env.titles
+            .refresh(&session, None)
+            .await
+            .unwrap_err()
+            .to_string(),
+        "session-title-llm: title output exceeds 3 content words"
+    );
+    let title = env.titles.get(&session).unwrap();
+    assert_eq!(title.title, "Сократи названия чатов");
+    assert!(matches!(title.source, SessionTitleSource::Fallback));
+    let system = env.adapter.requests.lock().unwrap()[0]
+        .system
+        .clone()
+        .unwrap();
+    assert!(system.contains("maximum of 3 content words"));
+    env.shutdown().await;
+}
+
+#[tokio::test]
+async fn rejects_overlong_english_titles_without_connectors() {
+    let env = setup_with_route(
+        chunks([
+            json!({"type":"text-delta","index":0,"text":"Search Index Cache Updates"}),
+            json!({"type":"finish","reason":{"kind":"stop"}}),
+        ]),
+        &[],
+        Some(("title-route", "title-model")),
+        "title-route",
+        32,
+        Some(3),
+    )
+    .await;
+    let session = session(&env, "overlong-english-title");
+    append_human(&session, "Fix search indexing");
+
+    assert_eq!(
+        env.titles
+            .refresh(&session, None)
+            .await
+            .unwrap_err()
+            .to_string(),
+        "session-title-llm: title output exceeds 3 content words"
+    );
+    let title = env.titles.get(&session).unwrap();
+    assert_eq!(title.title, "Fix search indexing");
+    assert!(matches!(title.source, SessionTitleSource::Fallback));
+    env.shutdown().await;
 }
 
 #[tokio::test]

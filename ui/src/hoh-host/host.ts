@@ -22,6 +22,7 @@ import {
   isAccessMode, KEYBINDINGS_LOCATION, presentProvider, type EnvironmentPlatform, type T3InteractionMode,
 } from './config.ts';
 import { usagePricing, usageSummary, type UsageSummaryInput } from './usage.ts';
+import { explicitTitlesFromPrompt, fallbackTitleSeed, isAttachmentBootstrapTitle, shortGeneratedTitle, shortTitleFromPrompt, titleGenerationPrompt, titleSource } from './chat-title.ts';
 import type { EngineNotification, EngineQuestion, EngineQuestionAnswer, HohEngine, LocalImageAsset } from './engine.ts';
 import { base64Of, readUploads, searchAnswer, skillsAsCommands, stripAttachedImageReferences, UPLOAD_PATH, UPLOAD_TTL_MS, uploadSlot, workspaceSnapshot, type KeptImage, type UploadSlot } from './composer.ts';
 import { englishError, hostFailure } from './errors.ts';
@@ -85,6 +86,8 @@ const interactionModeOf = (value: unknown): T3InteractionMode => {
 };
 
 export const STORAGE_KEY = 'hoh-host.projects.v1';
+export const CHAT_TITLE_SETTINGS_KEY = 'hoh-host.chat-titles.enabled.v1';
+const SIDE_CHAT_PLACEHOLDER = 'Side chat';
 const PLACEHOLDER_ROOT = '~/Documents/HoH';
 const LOCAL_IMAGE_BYTES = 20 * 1024 * 1024;
 const LOCAL_IMAGE_TYPES = new Set(['image/gif', 'image/jpeg', 'image/png', 'image/webp']);
@@ -361,6 +364,11 @@ export class HohHost {
   private accessProcessGeneration = 0;
   private settingsOverrides: Record<string, unknown> = {};
   private readonly localSettings?: ReturnType<CreateHohLocalSettings>;
+  private autoTitlesEnabled = true;
+  private readonly titleSettingListeners = new Set<() => void>();
+  private automaticTitleCancellationId?: string;
+  private automaticTitleCancellation?: Promise<void>;
+  private readonly titleRequests = new Map<string, { automatic: boolean; cancellationId: string; result: Promise<string> }>();
   private workspaceRoot: string;
   private workspaceKnown = false;
   private availableEditors: Awaited<ReturnType<NonNullable<HohEngine['availableProjectEditors']>>> = [];
@@ -408,7 +416,6 @@ export class HohHost {
   private readonly interactions = new Map<string, T3InteractionMode>();
   /** Generated or manually edited titles that supersede the engine's first-message fallback. */
   private readonly titles = new Map<string, string>();
-  private readonly titleRequests = new Map<string, string>();
   /** A completed Claude turn waits for the person until they explicitly mark that exact turn done. */
   private readonly deletedThreads = new Set<string>();
   private readonly deletingThreads = new Set<string>();
@@ -452,6 +459,13 @@ export class HohHost {
   // ---- projects kept between runs ----
 
   private restore() {
+    try {
+      const setting = JSON.parse(this.storage?.getItem(CHAT_TITLE_SETTINGS_KEY) ?? 'true');
+      this.autoTitlesEnabled = setting !== false && setting?.enabled !== false;
+      if (!this.autoTitlesEnabled && typeof setting?.cancellationId === 'string') {
+        this.automaticTitleCancellationId = setting.cancellationId || undefined;
+      }
+    } catch { /* Keep the default. */ }
     let saved: any = null;
     try { saved = JSON.parse(this.storage?.getItem(STORAGE_KEY) ?? 'null'); } catch { saved = null; }
     for (const entry of Array.isArray(saved?.projects) ? saved.projects : []) {
@@ -504,6 +518,7 @@ export class HohHost {
       const thread = new ThreadModel({
         id,
         title: this.titles.get(id) ?? title,
+        automaticTitle: entry?.automaticTitlePending === true ? true : undefined,
         createdAt,
         updatedAt,
         model,
@@ -540,14 +555,50 @@ export class HohHost {
     return { parentSessionId, seedEndSeq };
   }
 
+  readonly chatTitles = {
+    getEnabled: () => this.autoTitlesEnabled,
+    getCancellationPending: () => !this.autoTitlesEnabled && this.automaticTitleCancellationId !== undefined,
+    setEnabled: async (enabled: boolean) => {
+      if (enabled === this.autoTitlesEnabled) {
+        if (!enabled) await this.cancelAutomaticTitleRequests();
+        return;
+      }
+      if (!this.storage) throw new Error('Chat settings could not be saved on this device.');
+      if (enabled) await this.cancelAutomaticTitleRequests();
+      const cancellationId = this.automaticTitleCancellationId;
+      this.storage.setItem(CHAT_TITLE_SETTINGS_KEY, !enabled && cancellationId
+        ? JSON.stringify({ enabled: false, cancellationId }) : String(enabled));
+      this.autoTitlesEnabled = enabled;
+      const cancellation = enabled ? undefined : this.cancelAutomaticTitleRequests();
+      for (const listener of this.titleSettingListeners) listener();
+      await cancellation;
+    },
+    subscribe: (listener: () => void) => {
+      this.titleSettingListeners.add(listener);
+      return () => { this.titleSettingListeners.delete(listener); };
+    },
+    rename: async (threadId: string): Promise<string> => {
+      await this.start();
+      const thread = this.threads.get(threadId);
+      if (!thread) throw new Error('This chat is unavailable for title generation.');
+      return this.armTitleRegeneration(thread);
+    },
+  };
+
   private applyThreadMetadata(thread: ThreadModel) {
     thread.pluginAuthoringPrefixes = this.pluginAuthoringPrefixes;
     const metadata = this.threadMetadata.get(thread.id);
     thread.sideChat ??= this.readSideChat(metadata.sideChat);
+    if (thread.sideChat && thread.title === SIDE_CHAT_PLACEHOLDER && !this.titles.has(thread.id)) {
+      thread.automaticTitlePending = true;
+    }
     thread.restorePromptTimes(metadata.promptTimes);
     thread.restoreStopTimes(metadata.stopTimes);
     thread.applyOrganization(metadata);
-    if (typeof metadata.title === 'string' && metadata.title.trim()) thread.title = metadata.title;
+    if (typeof metadata.title === 'string' && metadata.title.trim()) {
+      thread.title = metadata.title;
+      thread.automaticTitlePending = false;
+    }
     if (typeof metadata.pinnedAt === 'number' || metadata.pinnedAt === null) thread.pinnedAt = metadata.pinnedAt;
     if (typeof metadata.pinOrderKey === 'string' || metadata.pinOrderKey === null) thread.pinOrderKey = metadata.pinOrderKey;
     if (typeof metadata.archivedAt === 'number' || metadata.archivedAt === null) thread.archivedAt = metadata.archivedAt;
@@ -563,6 +614,7 @@ export class HohHost {
         createdAt: thread.createdAt, updatedAt: thread.updatedAt, archivedAt: thread.archivedAt,
         homeProjectStats: thread.homeProjectStats,
         pluginCreator: thread.pluginCreator,
+        ...(thread.automaticTitlePending ? { automaticTitlePending: true } : {}),
       }];
     });
     const value = {
@@ -843,6 +895,8 @@ export class HohHost {
 
   stop() {
     this.stopped = true;
+    void this.cancelAutomaticTitleRequests().catch(() => {});
+    for (const id of this.titleRequests.keys()) this.discardTitleRequest(id);
     this.git.stop();
     for (const off of this.unsubscribers) off();
     this.unsubscribers = [];
@@ -1549,7 +1603,9 @@ export class HohHost {
         if (this.restored.delete(session.id)) {
           // The cache is only continuity for the first snapshot. Once this session is visible on
           // disk, let its current list entry and history replace stale presentation metadata.
-          existing.title = this.titles.get(session.id) ?? (typeof session.title === 'string' ? session.title : '');
+          const listedTitle = typeof session.title === 'string' ? session.title : '';
+          const preservePending = existing.automaticTitlePending && (!listedTitle || isAttachmentBootstrapTitle(listedTitle));
+          existing.title = this.titles.get(session.id) ?? (preservePending ? existing.title : listedTitle);
           existing.sideChat = this.readSideChat(session.sideChat) ?? existing.sideChat;
           this.applyThreadMetadata(existing);
           existing.updatedAt = Math.max(existing.updatedAt, at);
@@ -1771,7 +1827,8 @@ export class HohHost {
           while (journal.watermarks[journal.watermark]?.seq <= event.seq) {
             this.deliverJournalNotifications(journal, journal.watermarks[journal.watermark++].index + 1);
           }
-          thread.applyEvent(event);
+          const acceptEngineTitle = event.type === 'session/title' && this.autoTitlesEnabled && thread.builtin && !this.titles.has(thread.id) && this.canApplyAutomaticTitle(thread);
+          thread.applyEvent(event, acceptEngineTitle);
         }
         journal.afterSeq = nextSeq;
         if (events.length === PAGE) continue;
@@ -2001,7 +2058,9 @@ export class HohHost {
     switch (notification.method) {
       case 'session.event': {
         const thread = this.threadFor(params.sessionId);
-        if (thread?.applyEvent(params.event)) {
+        const acceptEngineTitle = eventType === 'session/title' && this.autoTitlesEnabled && thread?.builtin && !this.titles.has(thread.id) && this.canApplyAutomaticTitle(thread);
+        if (thread?.applyEvent(params.event, acceptEngineTitle)) {
+          if (acceptEngineTitle) this.save();
           if (!replaying && !thread.loaded && !this.peeked.has(thread.id)) this.schedulePeekToday();
           this.changed(thread.id);
         }
@@ -2403,6 +2462,7 @@ export class HohHost {
     projectId?: unknown,
     providerInstanceId?: unknown,
     interactionMode?: unknown,
+    automaticTitle?: boolean,
   ) {
     const interaction = interactionModeOf(interactionMode);
     await this.requireAccess();
@@ -2456,6 +2516,7 @@ export class HohHost {
         const secretary = this.secretaryContexts.has(threadId);
         const thread = new ThreadModel({
           id: threadId, title: secretary ? SECRETARY_TITLE : title,
+          automaticTitle: secretary ? false : automaticTitle,
           createdAt: this.now(), model: chosenModel, mode: this.defaultMode, executor,
           projectId: folder?.id ?? HOH_PROJECT_ID,
         });
@@ -2796,13 +2857,12 @@ export class HohHost {
    * One message to the engine: its pictures first (the bytes kept from T3's upload or `assets.persistChatAttachments`; the engine's
    * attachment store checks and copies them), then the text in the syntax supported by the selected harness.
    */
-  private async send(thread: ThreadModel, messageId: string, text: string, attachments: unknown = [], interactionMode?: T3InteractionMode, context?: { records?: unknown }, edit?: { blocks: unknown[]; shown: ShownAttachment[]; authoringPrefix?: string }) {
+  private async send(thread: ThreadModel, messageId: string, text: string, attachments: unknown = [], interactionMode?: T3InteractionMode, context?: { records?: unknown }, edit?: { blocks: unknown[]; shown: ShownAttachment[]; authoringPrefix?: string }, titleSeed?: string) {
     if (!thread.builtin) await this.requireAccess();
     if (!this.sessionAccessKnown.has(thread.id)) await this.notificationAccess.get(thread.id);
     if (this.deletingThreads.has(thread.id) || this.deletedThreads.has(thread.id) || this.threads.get(thread.id) !== thread)
       throw new Error('This chat is being deleted or was deleted.');
     if (!thread.bindingKnown && !thread.builtin) throw new Error('Conversation executor and access mode are unavailable.');
-    const firstMessage = thread.userMessageCount() === 0;
     const images = this.keptImages(attachments);
     // T3 releases the completed upload immediately after send. Promote its process-local preview
     // first, so the timeline can keep rendering it without retaining upload bytes or opening CSP.
@@ -2810,9 +2870,12 @@ export class HohHost {
       this.previewUrl(image);
       this.sentPreviewIds.add(image.id);
     }
+    const userText = stripAttachedImageReferences(text, images.map(image => image.id), context);
+    const titleInput = !edit && thread.automaticTitlePending && !this.titles.has(thread.id)
+      && this.canApplyAutomaticTitle(thread) ? titleSource(userText) : '';
     const commandFolder = folderPath(thread.cwd) || (thread.projectId === HOH_PROJECT_ID ? this.workspaceRoot : '');
     const prompt = (edit?.authoringPrefix ?? this.secretaryContexts.get(thread.id)?.prefix ?? '') + skillsAsCommands(
-      stripAttachedImageReferences(text, images.map(image => image.id), context),
+      userText,
       this.skillsByFolder.get(`${thread.executor}\0${commandFolder}`) ?? new Set(),
       thread.executor,
     );
@@ -2863,8 +2926,18 @@ export class HohHost {
           } catch { /* the engine history remains usable if window storage is unavailable */ }
         }
       }
-      if (firstMessage && !edit && !thread.builtin && !isSecretaryThreadId(thread.id) && thread.executor === 'claude') {
-        void this.generateTitle(thread, text);
+      if (titleInput && !this.titles.has(thread.id) && !this.titleRequests.has(thread.id) && this.canApplyAutomaticTitle(thread)) {
+        if (this.autoTitlesEnabled) {
+          const fallbackTitle = shortTitleFromPrompt(titleInput) || fallbackTitleSeed(titleInput, titleSeed);
+          if (fallbackTitle) this.setAutomaticTitle(thread, fallbackTitle);
+          else this.save();
+          void this.generateTitle(thread, titleInput, true).catch(() => { /* Keep the local title. */ });
+        } else {
+          const title = thread.title.trim() || titleInput.split('\n', 1)[0].slice(0, 80);
+          this.setAutomaticTitle(thread, title);
+        }
+      } else if (thread.automaticTitlePending) {
+        this.save();
       }
     } catch (error) {
       this.homePrompts.delete(thread.id);
@@ -2964,94 +3037,138 @@ export class HohHost {
     }
   }
 
-  private async requestTitle(message: string, currentTitle?: string) {
-    const prompt = `Generate a title that will help the user recognize this HoH chat weeks later.
-Return JSON with key title.
-
-Editorial rules:
-- 3-8 words, fewer than 40 characters.
-- Use a compact noun phrase or clear action phrase.
-- Title the durable subject and desired outcome, not the plan, model, tools, tests, or workflow.
-- Do not claim the work is complete, copy and truncate the message, use quotes, filler, or trailing punctuation.
-
-USER MESSAGES:
-${message.slice(0, 8000)}`;
-    const result = await this.engine.request('hoh/executor/title/generate', {
-      executor: 'claude',
-      prompt: currentTitle ? `${prompt}\n\nCURRENT TITLE:\n${currentTitle}\nKeep it if it already fits.` : prompt,
-    });
-    const title = typeof result?.title === 'string' ? result.title.trim() : '';
-    if (!title || title.length > 120) throw new Error('Claude returned an invalid chat title.');
-    return title;
+  private titleThreadAvailable(thread: ThreadModel) {
+    return !this.stopped && this.threads.get(thread.id) === thread && !this.deletingThreads.has(thread.id)
+      && thread.archivedAt === null && !isSecretaryThreadId(thread.id);
   }
 
-  private isCurrentTitleRequest(thread: ThreadModel, requestId: string) {
-    return !this.stopped && this.threads.get(thread.id) === thread && this.titleRequests.get(thread.id) === requestId;
+  private canApplyAutomaticTitle(thread: ThreadModel) {
+    return this.titleThreadAvailable(thread) && !thread.titleRegeneration && !this.threadMetadata.get(thread.id).title;
   }
 
-  private async generateTitle(thread: ThreadModel, message: string) {
-    // A title explicitly saved by the person takes precedence over automatic naming.
-    if (thread.titleRegeneration || this.threadMetadata.get(thread.id).title) return;
-    const baseline = thread.title;
-    const requestId = globalThis.crypto?.randomUUID?.() ?? `${this.now()}-${Math.random()}`;
-    this.titleRequests.set(thread.id, requestId);
-    try {
-      const title = await this.requestTitle(message);
-      if (!this.isCurrentTitleRequest(thread, requestId) || thread.title !== baseline || thread.archivedAt !== null) return;
-      thread.title = title;
-      this.titles.set(thread.id, title);
-      this.save(); this.changed(thread.id); this.flush();
-    } catch { /* A title is optional: the first-message fallback stays. */ }
-    finally { if (this.isCurrentTitleRequest(thread, requestId)) this.titleRequests.delete(thread.id); }
-  }
-
-  private armTitleRegeneration(thread: ThreadModel, requestId: string) {
-    if (!requestId.trim()) throw new Error('Invalid chat title request.');
-    if (thread.archivedAt !== null) throw new Error('This chat is archived.');
-    if (thread.lastTitleRegeneration?.requestId === requestId || thread.titleRegeneration?.requestId === requestId) return;
-    if (thread.titleRegeneration) throw new Error('A title request is already running for this chat.');
-    this.titleRequests.set(thread.id, requestId);
-    thread.titleRegeneration = { requestId, startedAt: this.iso() };
+  private setAutomaticTitle(thread: ThreadModel, title: string) {
+    thread.automaticTitlePending = false;
+    thread.title = title;
+    this.titles.set(thread.id, title);
+    this.save();
     this.changed(thread.id);
-    void this.regenerateTitle(thread, requestId);
   }
 
-  private async regenerateTitle(thread: ThreadModel, requestId: string) {
+  private setManualTitle(thread: ThreadModel, title: string) {
+    this.threadMetadata.update(thread.id, { title });
+    this.discardTitleRequest(thread.id);
+    thread.titleRegeneration = null;
+    this.setAutomaticTitle(thread, title);
+  }
+
+  private async cancelExecutorTitle(cancellationId: string) {
+    const response = await this.engine.request('hoh/executor/title/cancel', { cancellationId });
+    if (response?.cancelled !== true) throw new Error('The title cancellation was not confirmed.');
+  }
+
+  private discardTitleRequest(threadId: string) {
+    const request = this.titleRequests.get(threadId);
+    this.titleRequests.delete(threadId);
+    if (request && !request.automatic) void this.cancelExecutorTitle(request.cancellationId).catch(() => {});
+  }
+
+  private async cancelAutomaticTitleRequests() {
+    if (this.automaticTitleCancellation) return this.automaticTitleCancellation;
+    const cancellationId = this.automaticTitleCancellationId;
+    if (!cancellationId) return;
+    for (const [id, request] of this.titleRequests) if (request.automatic) this.titleRequests.delete(id);
+    const cancellation = this.cancelExecutorTitle(cancellationId).then(() => {
+      if (!this.autoTitlesEnabled) this.storage?.setItem(CHAT_TITLE_SETTINGS_KEY, 'false');
+      this.automaticTitleCancellationId = undefined;
+      if (!this.autoTitlesEnabled) for (const listener of this.titleSettingListeners) listener();
+    }).finally(() => { this.automaticTitleCancellation = undefined; });
+    this.automaticTitleCancellation = cancellation;
+    return cancellation;
+  }
+
+  private armTitleRegeneration(thread: ThreadModel, requestId?: string): Promise<string> {
+    if (requestId !== undefined && !requestId.trim()) throw new Error('Invalid chat title request.');
+    if (thread.archivedAt !== null) throw new Error('This chat is archived.');
+    if (!this.titleThreadAvailable(thread)) throw new Error('This chat is unavailable for title generation.');
+    if (requestId !== undefined && thread.lastTitleRegeneration?.requestId === requestId) {
+      return Promise.resolve(thread.titleText());
+    }
+    const pending = this.titleRequests.get(thread.id);
+    if (pending && !pending.automatic) {
+      if (requestId !== undefined && thread.titleRegeneration?.requestId !== requestId) {
+        throw new Error('A title request is already running for this chat.');
+      }
+      return pending.result;
+    }
+    thread.titleRegeneration = {
+      requestId: requestId ?? (globalThis.crypto?.randomUUID?.() ?? `${this.now()}-${Math.random()}`),
+      startedAt: this.iso(),
+    };
+    this.changed(thread.id);
+    return this.generateTitle(thread, undefined, false);
+  }
+
+  private generateTitle(thread: ThreadModel, firstMessage: string | undefined, automatic: boolean): Promise<string> {
+    const pending = this.titleRequests.get(thread.id);
+    if (pending && (automatic || !pending.automatic)) return pending.result;
+    const newCancellationId = () => globalThis.crypto?.randomUUID?.() ?? `${this.now()}-${Math.random()}`;
+    const cancellationId = automatic ? this.automaticTitleCancellationId ??= newCancellationId() : newCancellationId();
+    const regeneration = automatic ? null : thread.titleRegeneration;
+    const current = (): boolean => this.titleRequests.get(thread.id) === request && this.titleThreadAvailable(thread);
     let status: 'renamed' | 'unchanged' | 'failed' = 'unchanged';
     let message: string | undefined;
-    try {
-      await this.loaded(thread.id);
-      if (!this.isCurrentTitleRequest(thread, requestId)) return;
-      if (!thread.bindingKnown || thread.builtin || thread.executor !== 'claude') {
-        throw new Error('Select a Claude chat to generate its title.');
+    const result: Promise<string> = Promise.resolve().then(async () => {
+      if (!automatic) await this.loaded(thread.id);
+      if (!current()) throw new Error('The title request was superseded.');
+      if (!thread.bindingKnown && !thread.builtin) throw new Error('This chat is unavailable for title generation.');
+      const prompts = firstMessage === undefined ? thread.recentTitlePrompts() : [firstMessage];
+      const latest = prompts.at(-1);
+      if (!latest) throw new Error('Send a message describing the work before generating a title.');
+      const baseline = thread.titleText();
+      const response = await this.engine.request('hoh/executor/title/generate', {
+        executor: thread.builtin ? 'builtin' : thread.executor,
+        sessionId: thread.id,
+        prompt: titleGenerationPrompt(prompts, automatic ? undefined : baseline),
+        cancellationId,
+      }).catch(error => {
+        if (!automatic && hostFailure(error).code === 'chat-title-route-unavailable') return null;
+        throw error;
+      });
+      const latestNames = explicitTitlesFromPrompt(latest);
+      const otherNames = prompts.slice(0, -1).flatMap(explicitTitlesFromPrompt);
+      const generated = response === null
+        ? shortTitleFromPrompt(latest)
+        : shortGeneratedTitle(response?.title, [...otherNames, ...latestNames], latest);
+      if (!generated) throw new Error('The model did not return a valid chat title.');
+      if (!current() || (automatic && (!this.autoTitlesEnabled || !this.canApplyAutomaticTitle(thread)))) {
+        throw new Error('The title request was superseded.');
       }
-      const prompts: string[] = [];
-      for (const item of thread.searchableMessages()) {
-        if (item.role !== 'user' || !item.text.trim()) continue;
-        prompts.push(item.text.slice(0, 1200));
-        if (prompts.length === 6) break;
-      }
-      if (!prompts.length) throw new Error('Send a message before generating a title.');
-      let title: string;
-      try { title = await this.requestTitle(prompts.reverse().join('\n\n'), thread.titleText()); }
-      catch { throw new Error('Claude could not generate a title. Try again.'); }
-      if (!this.isCurrentTitleRequest(thread, requestId)) return;
-      if (title !== thread.titleText()) {
-        this.threadMetadata.update(thread.id, { title });
-        this.titles.set(thread.id, title);
-        thread.title = title;
+      const title = latestNames.length === 1 ? latestNames[0] : generated;
+      if (title !== baseline) {
+        if (!automatic) this.threadMetadata.update(thread.id, { title });
+        this.setAutomaticTitle(thread, title);
         status = 'renamed';
+      } else if (automatic && thread.automaticTitlePending) {
+        this.setAutomaticTitle(thread, title);
       }
-    } catch (error) {
+      return title;
+    }).catch(error => {
       status = 'failed';
       message = errorText(error);
-    }
-    if (!this.isCurrentTitleRequest(thread, requestId)) return;
-    this.titleRequests.delete(thread.id);
-    thread.titleRegeneration = null;
-    thread.lastTitleRegeneration = { requestId, status, completedAt: this.iso(), ...(message ? { message } : {}) };
-    this.changed(thread.id);
-    this.flush();
+      throw error;
+    }).finally(() => {
+      if (this.titleRequests.get(thread.id) !== request) return;
+      this.titleRequests.delete(thread.id);
+      if (regeneration) {
+        thread.titleRegeneration = null;
+        thread.lastTitleRegeneration = { requestId: regeneration.requestId, status, completedAt: this.iso(), ...(message ? { message } : {}) };
+        this.changed(thread.id);
+      }
+      this.flush();
+    });
+    const request = { automatic, cancellationId, result };
+    this.titleRequests.set(thread.id, request);
+    return result;
   }
 
   /** «Стоп»: the same cancel as the current window; the engine ends Claude and its commands. */
@@ -3118,8 +3235,9 @@ ${message.slice(0, 8000)}`;
       const sideChat = this.readSideChat({ parentSessionId: source.id, seedEndSeq: result?.seedEndSeq });
       if (!created || !sideChat) throw new Error('The engine did not confirm the side chat.');
 
+      const title = typeof command.title === 'string' ? command.title : SIDE_CHAT_PLACEHOLDER;
       const child = new ThreadModel({
-        id: targetId, title: typeof command.title === 'string' ? command.title : 'Side chat',
+        id: targetId, title, automaticTitle: title === SIDE_CHAT_PLACEHOLDER ? true : undefined,
         createdAt: this.now(), model: source.model, executor: source.executor, mode: 'confirm', projectId: source.projectId,
       });
       child.sideChat = sideChat;
@@ -3396,17 +3514,11 @@ ${message.slice(0, 8000)}`;
         case 'thread.metadata.update': {
           const target = needThread();
           if (typeof command.title === 'string' && command.title.trim()) {
-            const title = command.title.trim();
-            this.threadMetadata.update(target.id, { title });
-            this.titles.set(target.id, title);
-            this.titleRequests.delete(target.id);
-            target.titleRegeneration = null;
-            target.title = title;
-            this.changed(target.id);
+            this.setManualTitle(target, command.title.trim());
           } else if (command.regenerateTitle === true) {
-            this.armTitleRegeneration(target, String(command.commandId ?? ''));
+            void this.armTitleRegeneration(target, String(command.commandId ?? '')).catch(() => { /* The shell reports the outcome. */ });
           } else if (command.regenerateTitle === false && target.titleRegeneration) {
-            this.titleRequests.delete(target.id);
+            this.discardTitleRequest(target.id);
             target.titleRegeneration = null;
             this.changed(target.id);
           }
@@ -3447,7 +3559,7 @@ ${message.slice(0, 8000)}`;
           this.deletingThreads.delete(target.id);
           this.threads.delete(target.id);
           this.secretaryContexts.delete(target.id);
-          this.titleRequests.delete(target.id);
+          this.discardTitleRequest(target.id);
           this.wakeLocalImageReaders();
           this.dirty.delete(target.id);
           this.streamChanges.delete(target.id);
@@ -3466,7 +3578,7 @@ ${message.slice(0, 8000)}`;
           this.threadMetadata.update(target.id, { archivedAt });
           target.archivedAt = archivedAt;
           if (archivedAt !== null) {
-            this.titleRequests.delete(target.id);
+            this.discardTitleRequest(target.id);
             target.titleRegeneration = null;
           }
           if (archivedAt === null && !target.homeProjectStats) this.schedulePeekToday();
@@ -3497,16 +3609,20 @@ ${message.slice(0, 8000)}`;
       requireInteraction(requestedExecutor, interactionMode);
       if (existing && requestedExecutor !== existing.executor) throw new Error('A conversation cannot change its executor. Start a new chat.');
       const launchProject = existing ? this.validateLaunchProject(existing, input.projectId) : null;
-      const thread = existing ?? await this.createThread(threadId, input.title, input.modelSelection?.model, input.runtimeMode, input.projectId, input.modelSelection?.instanceId, interactionMode);
+      const message = input.initialMessage;
+      const automaticTitle = input.generateTitle === true ? true : undefined;
+      const hasImage = Array.isArray(message?.attachments) && message.attachments.some((attachment: any) => attachment?.type === 'image');
+      const title = automaticTitle && this.autoTitlesEnabled && !hasImage ? undefined : input.title;
+      const thread = existing ?? await this.createThread(threadId, title, input.modelSelection?.model, input.runtimeMode, input.projectId, input.modelSelection?.instanceId, interactionMode, automaticTitle);
       if (existing) await this.selectLaunchProject(existing, launchProject);
       if (existing && interactionMode !== undefined) { thread.setInteractionMode(interactionMode); this.interactions.set(thread.id, interactionMode); this.save(); }
-      const message = input.initialMessage;
       if (message && typeof message.text === 'string') {
         const messageId = typeof message.messageId === 'string' && message.messageId ? message.messageId : 'msg-' + String(input.commandId);
         this.setLevel(thread, input.modelSelection?.options);
         await this.withSelectionMutation(async () => {
           if (existing) await this.applyMode(existing, input.runtimeMode);
-          await this.send(thread, messageId, message.text, message.attachments, interactionMode, message.context);
+          const titleSeed = automaticTitle && !hasImage && typeof input.title === 'string' ? input.title : undefined;
+          await this.send(thread, messageId, message.text, message.attachments, interactionMode, message.context, undefined, titleSeed);
         });
       } else if (existing) {
         await this.withSelectionMutation(() => this.applyMode(existing, input.runtimeMode));

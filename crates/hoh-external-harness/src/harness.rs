@@ -1,7 +1,7 @@
 //! The in-process face of the contract: what a harness package implements and registers.
 
-use std::sync::Arc;
 use std::time::Duration;
+use std::{path::PathBuf, sync::Arc};
 
 use futures_util::future::BoxFuture;
 use tokio::sync::mpsc;
@@ -10,8 +10,57 @@ use crate::contract::{
     AccessMode, Discovery, HarnessCommands, HarnessEvent, HarnessFailure, HarnessPolicy,
     PromptParams, RespondParams, StartParams, StartResult, VersionStatus, code,
 };
+use crate::{ProcessSpec, Supervisor, SupervisorLimits};
 
 pub type HarnessResult<T> = Result<T, HarnessFailure>;
+
+#[derive(Default)]
+pub struct TitleRequest {
+    pub prompt: String,
+    pub model: Option<String>,
+    pub workspace: Option<TitleWorkspace>,
+}
+
+pub struct TitleWorkspace {
+    cwd: PathBuf,
+    identity: [u64; 2],
+    profile: PathBuf,
+}
+
+impl TitleWorkspace {
+    pub fn new(cwd: PathBuf, identity: [u64; 2], profile: PathBuf) -> Self {
+        Self {
+            cwd,
+            identity,
+            profile,
+        }
+    }
+
+    pub fn path(&self) -> &std::path::Path {
+        &self.cwd
+    }
+
+    pub async fn spawn_probe(
+        &self,
+        limits: SupervisorLimits,
+        spec: impl FnOnce(&std::path::Path, bool) -> ProcessSpec,
+    ) -> HarnessResult<(Supervisor, bool)> {
+        crate::trust::with_status(&self.profile, &self.cwd, |trusted, changed| {
+            if changed {
+                return Err(HarnessFailure::new(
+                    code::POLICY_UNAVAILABLE,
+                    "The chat's directory trust changed before naming.",
+                ));
+            }
+            let mut spec = spec(&self.cwd, trusted);
+            spec.cwd = Some(self.cwd.clone());
+            spec.cwd_identity = Some(self.identity);
+            Ok((Supervisor::spawn(&spec, limits, None)?, trusted))
+        })
+        .await
+        .map_err(|_| HarnessFailure::new(code::IO, "The chat's directory trust is unavailable."))?
+    }
+}
 
 /// One kind of external harness (a CLI and its protocol), registered under a name through
 /// [`crate::ExternalHarnessesService::register`].
@@ -136,8 +185,7 @@ pub trait ExternalHarness: Send + Sync + 'static {
     }
 
     /// One isolated, no-tools title request. The default harness does not provide it.
-    fn generate_title(&self, prompt: String) -> BoxFuture<'static, HarnessResult<String>> {
-        let _ = prompt;
+    fn generate_title(&self, _request: TitleRequest) -> BoxFuture<'static, HarnessResult<String>> {
         Box::pin(std::future::ready(Err(HarnessFailure::new(
             code::HARNESS,
             "this harness cannot generate conversation titles",
@@ -166,6 +214,12 @@ pub struct Started {
 /// Control of one running native session.
 pub trait HarnessSession: Send + Sync + 'static {
     fn prompt(&self, params: PromptParams) -> BoxFuture<'static, HarnessResult<()>>;
+    fn generate_title(&self, _request: TitleRequest) -> BoxFuture<'static, HarnessResult<String>> {
+        Box::pin(std::future::ready(Err(HarnessFailure::new(
+            code::POLICY_UNAVAILABLE,
+            "This native session cannot generate conversation titles.",
+        ))))
+    }
     /// `history_prefix_len` marks the inherited context before the current turn's input.
     fn prompt_with_history_prefix(
         &self,

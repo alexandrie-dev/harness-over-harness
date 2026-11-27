@@ -6,7 +6,7 @@ use futures_util::future::BoxFuture;
 use hoh_external_harness::{
     EndReason, FileChange, FileChangeKind, Frame, HarnessAction, HarnessEvent, HarnessFailure,
     HarnessResult, HarnessSession, ItemOutcome, ProcessSpec, PromptParams, RespondParams,
-    Supervisor, SupervisorLimits, code, redact::redact,
+    Supervisor, SupervisorLimits, TitleRequest, code, redact::redact,
 };
 use serde_json::{Value, json};
 use tokio::sync::{mpsc, oneshot};
@@ -26,6 +26,7 @@ pub(crate) struct PiSession {
     supervisor: Arc<Supervisor>,
     calls: mpsc::Sender<Call>,
     worker: JoinHandle<()>,
+    pub(crate) title_route: Option<crate::PiTitleRoute>,
 }
 
 impl PiSession {
@@ -48,6 +49,7 @@ impl PiSession {
                 supervisor,
                 calls,
                 worker,
+                title_route: None,
             },
             stream,
         ))
@@ -100,6 +102,17 @@ impl Drop for PiSession {
 }
 
 impl HarnessSession for PiSession {
+    fn generate_title(&self, request: TitleRequest) -> BoxFuture<'static, HarnessResult<String>> {
+        let route = self.title_route.clone();
+        let state = self.call(json!({"type":"get_state"}));
+        Box::pin(async move {
+            route
+                .ok_or_else(crate::title_route_unavailable)?
+                .title(request, state)
+                .await
+        })
+    }
+
     fn prompt(&self, params: PromptParams) -> BoxFuture<'static, HarnessResult<()>> {
         if params
             .images

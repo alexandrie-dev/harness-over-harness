@@ -1,12 +1,12 @@
 //! The installed `codex app-server` as a HoH external harness (HOH-18).
 //!
-//! Authentication remains entirely inside the Codex executable. HoH neither locates nor reads
-//! Codex configuration files; it speaks the documented newline-delimited app-server protocol on
-//! stdio and persists only the thread id returned by that process.
+//! Authentication remains entirely inside the Codex executable. HoH uses the app-server protocol
+//! for sessions and a separate ephemeral command for an optional title.
 
 mod harness;
 mod installation;
 mod session;
+mod title;
 pub mod version;
 
 use std::path::PathBuf;

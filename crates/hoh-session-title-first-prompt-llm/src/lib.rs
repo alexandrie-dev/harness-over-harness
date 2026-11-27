@@ -1,6 +1,6 @@
 //! First-human-message LLM provider for session titles.
 
-use std::sync::Arc;
+use std::{num::NonZeroUsize, sync::Arc};
 
 use futures_util::future::BoxFuture;
 use hoh_error::BoxError;
@@ -31,6 +31,9 @@ pub const NAME: &str = "session-title-first-prompt-llm";
 pub struct Config {
     #[schemars(range(min = 1), extend("multipleOf" = 1))]
     pub target_words: f64,
+    /// Optional content-word ceiling for titles written with spaces between words.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_words: Option<NonZeroUsize>,
     #[schemars(range(min = 1), extend("multipleOf" = 1))]
     pub target_cjk_characters: f64,
     #[serde(flatten)]
@@ -64,21 +67,17 @@ fn resolve_config_value(value: &Value) -> Result<Config, BoxError> {
     let mut execution = object.clone();
     execution.shift_remove("targetWords");
     execution.shift_remove("targetCjkCharacters");
-    resolve_session_title_llm_config_value(&Value::Object(execution))?;
+    let max_words = execution.shift_remove("maxWords");
+    let execution = Value::Object(execution);
+    resolve_session_title_llm_config_value(&execution)?;
     let target_words = assert_target("targetWords", number(object, "targetWords"))?;
     let target_cjk_characters =
         assert_target("targetCjkCharacters", number(object, "targetCjkCharacters"))?;
-    let execution: SessionTitleLlmConfig = serde_json::from_value(Value::Object(
-        object
-            .iter()
-            .filter(|(key, _)| !matches!(key.as_str(), "targetWords" | "targetCjkCharacters"))
-            .map(|(key, value)| (key.clone(), value.clone()))
-            .collect(),
-    ))?;
     Ok(Config {
         target_words,
+        max_words: serde_json::from_value(max_words.unwrap_or(Value::Null))?,
         target_cjk_characters,
-        execution,
+        execution: serde_json::from_value(execution)?,
     })
 }
 
@@ -86,6 +85,7 @@ fn resolve_config_value(value: &Value) -> Result<Config, BoxError> {
 struct ResolvedConfig {
     execution: ResolvedSessionTitleLlmConfig,
     target_words: f64,
+    max_words: Option<NonZeroUsize>,
     target_cjk_characters: f64,
 }
 
@@ -94,6 +94,7 @@ impl ResolvedConfig {
         Ok(Self {
             execution: resolve_session_title_llm_config(&config.execution)?,
             target_words: assert_target("targetWords", config.target_words)?,
+            max_words: config.max_words,
             target_cjk_characters: assert_target(
                 "targetCjkCharacters",
                 config.target_cjk_characters,
@@ -112,13 +113,24 @@ fn select_reasoning_effort(model: &LlmResolvedModelInfo) -> Option<ReasoningEffo
 }
 
 fn system_prompt(config: &ResolvedConfig) -> String {
+    let word_limit = match config.max_words {
+        Some(max_words) => format!(" with a maximum of {max_words} content words"),
+        None => String::new(),
+    };
+    let connectors = if config.max_words.is_some() {
+        " Keep necessary connecting words."
+    } else {
+        ""
+    };
     [
         "Create a concise title for an AI coding-assistant session from the supplied human messages.".into(),
         "Return only the title on one line, **in plain text of natural language**, with no quotes, prefix, explanation, Markdown, XML, or terminal control codes. No code is allowed.".into(),
         "Use the language of the messages.".into(),
+        "Name the specific subject or intended outcome so the user can recognize the session later. Prefer a compact noun phrase or action phrase. Leave out greetings, workflow details, and claims that work is complete.".into(),
         format!(
-            "Aim for about {} words in non-CJK languages or {} CJK characters.",
+            "Aim for about {} words in non-CJK languages{} or {} CJK characters.{connectors}",
             js_number_string(config.target_words),
+            word_limit,
             js_number_string(config.target_cjk_characters)
         ),
         "If the messages give little to name, still return a short best-effort title, such as Greeting, instead of explaining.".into(),
@@ -174,7 +186,149 @@ fn title_from_output(text: &str) -> String {
     emphasis_inner(line).unwrap_or(line).into()
 }
 
-fn title_from_response(response: &SessionTitleLlmResponse) -> Result<String, BoxError> {
+fn is_title_connector(word: &str) -> bool {
+    matches!(
+        word.to_lowercase().as_str(),
+        "a" | "an"
+            | "the"
+            | "and"
+            | "or"
+            | "of"
+            | "to"
+            | "for"
+            | "with"
+            | "in"
+            | "on"
+            | "at"
+            | "from"
+            | "by"
+            | "about"
+            | "before"
+            | "after"
+            | "during"
+            | "à"
+            | "au"
+            | "aux"
+            | "avec"
+            | "chez"
+            | "dans"
+            | "de"
+            | "des"
+            | "du"
+            | "en"
+            | "et"
+            | "la"
+            | "le"
+            | "les"
+            | "par"
+            | "pour"
+            | "sans"
+            | "sous"
+            | "sur"
+            | "un"
+            | "une"
+            | "в"
+            | "во"
+            | "на"
+            | "и"
+            | "или"
+            | "с"
+            | "со"
+            | "к"
+            | "ко"
+            | "по"
+            | "из"
+            | "для"
+            | "без"
+            | "от"
+            | "про"
+            | "при"
+            | "о"
+            | "об"
+            | "обо"
+            | "у"
+            | "за"
+            | "до"
+            | "через"
+            | "после"
+            | "перед"
+            | "между"
+            | "над"
+            | "под"
+    )
+}
+
+fn is_english_language_hint(word: &str) -> bool {
+    matches!(
+        word,
+        "the" | "and" | "with" | "from" | "about" | "before" | "after" | "during" | "very"
+    )
+}
+
+fn has_supported_source_hint(text: &str) -> bool {
+    let mut words = text
+        .split(|character: char| !character.is_alphabetic())
+        .filter(|word| !word.is_empty())
+        .map(str::to_lowercase);
+    let Some(first) = words.next() else {
+        return false;
+    };
+    matches!(
+        first.as_str(),
+        "add"
+            | "build"
+            | "change"
+            | "check"
+            | "create"
+            | "explain"
+            | "fix"
+            | "improve"
+            | "implement"
+            | "please"
+            | "refactor"
+            | "remove"
+            | "rename"
+            | "update"
+            | "добавь"
+            | "исправь"
+            | "настрой"
+            | "обнови"
+            | "проверь"
+            | "сделай"
+            | "создай"
+            | "ускорь"
+    ) || is_english_language_hint(&first)
+        || words.any(|word| is_english_language_hint(&word))
+}
+
+fn has_supported_connector_language(word: &str) -> bool {
+    let word = word.to_lowercase();
+    is_english_language_hint(&word)
+        || matches!(
+            word.as_str(),
+            "au" | "aux"
+                | "avec"
+                | "chez"
+                | "du"
+                | "pour"
+                | "sans"
+                | "sous"
+                | "или"
+                | "для"
+                | "через"
+                | "после"
+                | "перед"
+                | "между"
+        )
+        || (word.chars().all(|ch| matches!(ch, 'а'..='я' | 'ё'))
+            && (word.contains("ческих") || word.contains(['ё', 'ы', 'э'])))
+}
+
+fn title_from_response(
+    response: &SessionTitleLlmResponse,
+    max_words: Option<NonZeroUsize>,
+    source: &str,
+) -> Result<String, BoxError> {
     match &response.finish {
         SessionTitleLlmFinish::Stop(_) => {}
         SessionTitleLlmFinish::ToolCalls(_) => {
@@ -202,6 +356,29 @@ fn title_from_response(response: &SessionTitleLlmResponse) -> Result<String, Box
         normalize_session_title(&title_from_output(&text), usize::MAX).map_err(BoxError::from)?;
     if title.is_empty() {
         return Err("session-title-llm: title model produced no text".into());
+    }
+    if let Some(max_words) = max_words {
+        if title.chars().count() > 48
+            || title.split_whitespace().count() > max_words.get().saturating_mul(2)
+        {
+            return Err("session-title-llm: title output exceeds the short title limit".into());
+        }
+        let supported = title
+            .split_whitespace()
+            .any(has_supported_connector_language)
+            || has_supported_source_hint(source);
+        if supported
+            && title
+                .split_whitespace()
+                .filter(|word| !is_title_connector(word))
+                .count()
+                > max_words.get()
+        {
+            return Err(format!(
+                "session-title-llm: title output exceeds {max_words} content words"
+            )
+            .into());
+        }
     }
     Ok(title)
 }
@@ -246,7 +423,7 @@ impl SessionTitleProvider for FirstPromptProvider {
             )
             .await?;
             Ok(SessionTitleProviderResult {
-                title: title_from_response(&response)?,
+                title: title_from_response(&response, config.max_words, &first.text)?,
                 message_seqs: vec![first.seq],
                 model: Some(response.model),
             })
@@ -298,6 +475,7 @@ mod tests {
             id: NAME.into(),
             config: ResolvedConfig::new(&Config {
                 target_words: 5.0,
+                max_words: None,
                 target_cjk_characters: 10.0,
                 execution: SessionTitleLlmConfig {
                     max_input_bytes: 1_000.0,
@@ -331,6 +509,7 @@ mod tests {
     fn typed_provider_policy_preserves_the_source_validation_error() {
         let result = ResolvedConfig::new(&Config {
             target_words: 0.0,
+            max_words: None,
             target_cjk_characters: 10.0,
             execution: SessionTitleLlmConfig {
                 max_input_bytes: 1_000.0,

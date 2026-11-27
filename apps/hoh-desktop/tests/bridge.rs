@@ -78,6 +78,19 @@ impl Connector for MemoryConnector {
 impl Transport for MemoryTransport {
     fn send(&mut self, frame: Value) -> Result<(), String> {
         self.frames.lock().unwrap().push(frame.clone());
+        if frame["method"] == "hoh/executor/title/generate" {
+            if frame["params"]["sessionId"] == "cold" {
+                let error = framing::error(
+                    frame["id"].clone(),
+                    -32000,
+                    "CHAT_TITLE_ROUTE_UNAVAILABLE: private engine detail /secret",
+                );
+                self.inbox
+                    .send(Message::Incoming(self.generation, classify(error).unwrap()))
+                    .unwrap();
+            }
+            return Ok(());
+        }
         if frame["method"] == "hoh/test/missing" {
             self.inbox
                 .send(Message::Incoming(
@@ -136,6 +149,8 @@ impl Transport for MemoryTransport {
             json!({"serverInfo":{"name":"deepseek-harness-sdk-runtime","version":"legacy"}})
         } else if frame["method"] == "hoh/executor/access/set" {
             frame["params"].clone()
+        } else if frame["method"] == "hoh/executor/title/cancel" {
+            json!({"cancelled": true})
         } else {
             json!({})
         };
@@ -162,6 +177,66 @@ fn wait_memory_ready(events: &mpsc::Receiver<HostEvent>) {
             return;
         }
     }
+}
+
+#[test]
+fn title_cancellation_is_acknowledged_with_all_ordinary_request_slots_full() {
+    let frames = Arc::new(Mutex::new(Vec::new()));
+    let (controls, control_rx) = mpsc::channel();
+    let (events, event_rx) = mpsc::channel();
+    let engine = Engine::start(
+        Arc::new(MemoryConnector {
+            host: true,
+            frames: frames.clone(),
+            launches: Arc::default(),
+            controls,
+        }),
+        json!({}),
+        Arc::new(move |event| {
+            let _ = events.send(event);
+        }),
+    );
+    let (_, inbox) = control_rx.recv_timeout(Duration::from_secs(3)).unwrap();
+    wait_memory_ready(&event_rx);
+    let mut replies = Vec::new();
+    for _ in 0..65 {
+        let (reply, response) = mpsc::channel();
+        inbox.send(Message::Request {
+            method: "hoh/executor/title/generate".into(),
+            params: json!({"executor":"pi","sessionId":"s","prompt":"Title this","cancellationId":"auto"}),
+            reply,
+            on_send: None,
+        }).unwrap();
+        replies.push(response);
+    }
+    assert!(
+        replies
+            .last()
+            .unwrap()
+            .recv_timeout(Duration::from_secs(3))
+            .unwrap()
+            .is_err()
+    );
+    assert_eq!(
+        bridge::request(
+            &engine,
+            "main",
+            "hoh/executor/title/cancel",
+            json!({"cancellationId":"auto"})
+        )
+        .unwrap(),
+        json!({"cancelled": true})
+    );
+    let wire = frames.lock().unwrap();
+    assert_eq!(
+        wire.iter()
+            .filter(|frame| frame["method"] == "hoh/executor/title/generate")
+            .count(),
+        64
+    );
+    assert_eq!(wire.last().unwrap()["method"], "hoh/executor/title/cancel");
+    drop(wire);
+    engine.stop();
 }
 
 #[test]
@@ -269,6 +344,18 @@ fn the_window_gets_codes_for_the_engine_and_host_refusals() {
         json!({"code":"chat-delete-busy","message":"chat-delete-busy"})
     );
     assert!(!busy.to_string().contains("secret"));
+    let title_route = sent(
+        engine
+            .request(
+                "hoh/executor/title/generate",
+                json!({"executor":"codex","sessionId":"cold","prompt":"Name the chat"}),
+            )
+            .unwrap_err(),
+    );
+    assert_eq!(
+        title_route,
+        json!({"code":"chat-title-route-unavailable","message":"chat-title-route-unavailable"})
+    );
     // The bridge's own refusals of the confirmation (what `native.rs` returns for «Отклонить» and for a timeout).
     for (message, code) in [
         (hoh_desktop::errors::REJECTED, "rejected"),
@@ -584,7 +671,7 @@ fn real_stub_child_accepts_host_handshake_serves_settings_and_stops() {
 }
 
 #[test]
-fn window_may_call_exactly_the_nine_executor_methods_and_no_new_ones() {
+fn window_may_call_exactly_the_ten_executor_methods_and_no_new_ones() {
     let mut executor: Vec<&str> = bridge::WINDOW_METHODS
         .iter()
         .copied()
@@ -600,15 +687,19 @@ fn window_may_call_exactly_the_nine_executor_methods_and_no_new_ones() {
             "hoh/executor/discover",
             "hoh/executor/limits",
             "hoh/executor/select",
+            "hoh/executor/title/cancel",
             "hoh/executor/title/generate",
             "hoh/executor/trust/get",
             "hoh/executor/trust/set"
         ]
     );
-    // 47 methods before the executor ones, the nine executor ones, `hoh/workspace/entries` and
+    // 47 methods before the executor ones, the ten executor ones, `hoh/workspace/entries` and
     // `hoh/workspace/add` (HOH-41), delete, two folder-rebinding methods, plugin inventory,
     // dictation and side-chat forks.
-    assert_eq!(bridge::WINDOW_METHODS.len(), 47 + 9 + 2 + 1 + 2 + 2 + 1 + 1);
+    assert_eq!(
+        bridge::WINDOW_METHODS.len(),
+        47 + 10 + 2 + 1 + 2 + 2 + 1 + 1
+    );
     assert!(bridge::WINDOW_METHODS.contains(&"session/fork-side-chat"));
     assert!(bridge::WINDOW_METHODS.contains(&"session/working-directory/status"));
     assert!(bridge::WINDOW_METHODS.contains(&"session/working-directory/rebind"));
@@ -620,6 +711,7 @@ fn window_may_call_exactly_the_nine_executor_methods_and_no_new_ones() {
         "hoh/executor/access/get",
         "hoh/executor/discover",
         "hoh/executor/limits",
+        "hoh/executor/title/cancel",
         "hoh/executor/title/generate",
         "hoh/executor/trust/get",
     ] {

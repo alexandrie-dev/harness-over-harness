@@ -428,12 +428,13 @@ function composerSecret(code: string): string {
                     {speechInput.available ? (`,
   ]], `import { ChatSecretAction as HohChatSecretAction } from ${JSON.stringify(action)};\n`);
 }
-function chatSettingsWhisper(code: string): string {
+function chatSettings(code: string): string {
+  const titleSetting = resolve(import.meta.dirname, 'hoh-screens/ChatTitles.tsx');
   const setting = resolve(import.meta.dirname, 'hoh-screens/whisper/WhisperSetting.tsx');
   return anchorPatch('SettingsPanels.tsx', code, [[
     '    <SettingsPageContainer>\n      <SettingsSection id="composer"',
-    '    <SettingsPageContainer>\n      <HohWhisperSetting />\n      <SettingsSection id="composer"',
-  ]], `import { WhisperSettingsLink as HohWhisperSetting } from ${JSON.stringify(setting)};\n`);
+    '    <SettingsPageContainer>\n      <HohChatTitleSetting />\n      <HohWhisperSetting />\n      <SettingsSection id="composer"',
+  ]], `import { ChatTitleSetting as HohChatTitleSetting } from ${JSON.stringify(titleSetting)};\nimport { WhisperSettingsLink as HohWhisperSetting } from ${JSON.stringify(setting)};\n`);
 }
 
 function localSettingsRoute(code: string, panel: string, original: string, replacement: string): string {
@@ -719,7 +720,7 @@ function hohT3(): Plugin {
         map: null,
       };
       if (id === resolve(T3_WEB, 'components/chat/ChatComposer.tsx')) return { code: composerSecret(composerWhisper(composerPaste(code))), map: null };
-      if (id === resolve(T3_WEB, 'components/settings/SettingsPanels.tsx')) return { code: chatSettingsWhisper(code), map: null };
+      if (id === resolve(T3_WEB, 'components/settings/SettingsPanels.tsx')) return { code: chatSettings(code), map: null };
       if (id === resolve(T3_WEB, 'components/ComposerPromptEditorTiptap.tsx')) return { code: editorPaste(code), map: null };
       if (id === resolve(T3_WEB, 'components/ChatMarkdown.tsx')) return { code: markdownHtml(code), map: null };
       if (id === resolve(T3_WEB, 'components/chat/MarkdownFileLink.tsx')) return { code: markdownHtmlFileLink(code), map: null };

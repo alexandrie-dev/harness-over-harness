@@ -123,6 +123,13 @@ impl Shared {
             })
     }
 
+    pub(crate) fn running_session(&self, session: &str) -> Option<Arc<dyn HarnessSession>> {
+        lock(&self.launched)
+            .iter()
+            .find(|(id, _)| id == session)
+            .and_then(|(_, launched)| launched.session.upgrade())
+    }
+
     /// Conversation `session` has worked in its folder: its native session is recorded, or its
     /// process runs. Until then (a new chat) its folder may still change.
     pub(crate) fn started_in_folder(&self, session: &Session) -> bool {
@@ -253,7 +260,7 @@ impl SessionExecutor for ExternalExecutor {
 }
 
 /// The last native id the log records.
-fn recorded_native(events: &[Arc<SessionEvent>]) -> Option<NativeSessionId> {
+pub(crate) fn recorded_native(events: &[Arc<SessionEvent>]) -> Option<NativeSessionId> {
     events
         .iter()
         .rev()

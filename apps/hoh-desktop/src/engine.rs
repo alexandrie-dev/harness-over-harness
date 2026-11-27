@@ -17,6 +17,9 @@ use std::{
 
 /// Marker the window checks to tell "engine has no such method" from other failures.
 pub const METHOD_UNAVAILABLE: &str = "method-unavailable";
+const MAX_PENDING_REQUESTS: usize = 64;
+const MAX_PENDING_TITLE_CANCELLATIONS: usize = MAX_PENDING_REQUESTS;
+const TITLE_CANCEL: &str = "hoh/executor/title/cancel";
 
 /// The machine-readable code an engine error names, when it is a plain upper-case word. The engine puts it in front of
 /// its text (`CODE: words`, the JSON-RPC error carries nothing else); `data.code` is the fallback. The error's own text
@@ -143,7 +146,8 @@ impl Connector for ProcessConfig {
             .map_err(|error| spawn_problem(error.kind()))?;
         let stdout = child.stdout.take().ok_or("Нет связи с Помощником")?;
         let stdin = child.stdin.take().ok_or("Нет связи с Помощником")?;
-        let (tx, rx) = mpsc::sync_channel::<Value>(64);
+        let (tx, rx) =
+            mpsc::sync_channel::<Value>(MAX_PENDING_REQUESTS + MAX_PENDING_TITLE_CANCELLATIONS);
         let errors = inbox.clone();
         let writer = thread::spawn(move || {
             let mut writer = FrameWriter::new(stdin);
@@ -406,7 +410,16 @@ fn supervise(
                         let _ = reply.send(Err(crate::errors::CONNECTING.into()));
                         continue;
                     }
-                    if pending.len() >= 64 {
+                    let cancellations = pending
+                        .values()
+                        .filter(|p| p.method == TITLE_CANCEL)
+                        .count();
+                    let at_capacity = if method == TITLE_CANCEL {
+                        cancellations >= MAX_PENDING_TITLE_CANCELLATIONS
+                    } else {
+                        pending.len() - cancellations >= MAX_PENDING_REQUESTS
+                    };
+                    if at_capacity {
                         let _ = reply.send(Err("Помощник занят. Повторите запрос позже".into()));
                         continue;
                     }
@@ -468,6 +481,10 @@ fn supervise(
                                     && error_code(&error) == Some("CHAT_DELETE_BUSY")
                                 {
                                     crate::errors::CHAT_DELETE_BUSY.into()
+                                } else if p.method == "hoh/executor/title/generate"
+                                    && error_code(&error) == Some("CHAT_TITLE_ROUTE_UNAVAILABLE")
+                                {
+                                    crate::errors::CHAT_TITLE_ROUTE_UNAVAILABLE.into()
                                 } else if error_code(&error) == Some("EXECUTOR_FOLDER_FIXED") {
                                     // A closed list of codes may pass on (no text): the window explains this one.
                                     crate::errors::FOLDER_FIXED.into()
