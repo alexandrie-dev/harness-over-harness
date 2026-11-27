@@ -35,14 +35,6 @@ fn main() {
                 std::process::exit(1);
             }
         };
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
-    let builder = builder.on_page_load(|webview, payload| {
-        if webview.label() == "main" && payload.event() == tauri::webview::PageLoadEvent::Finished {
-            webview
-                .state::<hoh_desktop::auto_update::Installation>()
-                .page_loaded();
-        }
-    });
     #[cfg(target_os = "linux")]
     let builder = builder.manage(hoh_desktop::clipboard_image::ImagePasteGesture::default());
     builder
@@ -56,6 +48,8 @@ fn main() {
             hoh_desktop::auto_update::check_for_update,
             #[cfg(any(target_os = "linux", target_os = "macos"))]
             hoh_desktop::auto_update::open_update_releases,
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            hoh_desktop::auto_update::desktop_ui_ready,
             hoh_desktop::native::engine_request,
             hoh_desktop::native::environment_platform,
             hoh_desktop::native::subscribe_engine_notifications,

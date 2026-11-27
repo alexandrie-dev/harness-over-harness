@@ -7,6 +7,7 @@ fn main() {
         tauri_build::AppManifest::new().commands(&[
             "auto_update",
             "check_for_update",
+            "desktop_ui_ready",
             "open_update_releases",
             "engine_request",
             "environment_platform",

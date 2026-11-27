@@ -1,4 +1,7 @@
-use super::{Package, instance::InstanceLock, package_for, swap_directories};
+use super::{
+    Package, instance::InstanceLock, package_for,
+    recovery::{Recovery, is_backup, sibling_path},
+};
 use semver::Version;
 use std::{
     ffi::{OsStr, OsString},
@@ -6,14 +9,11 @@ use std::{
     io::{self, Read},
     os::{
         fd::{AsFd, AsRawFd, OwnedFd},
-        unix::{ffi::OsStrExt, net::UnixStream},
+        unix::{ffi::OsStrExt, fs::MetadataExt, net::UnixStream},
     },
     path::{Path, PathBuf},
     process::{Child, Stdio},
-    sync::{
-        Mutex,
-        atomic::{AtomicBool, Ordering},
-    },
+    sync::Mutex,
     thread,
     time::{Duration, Instant},
 };
@@ -23,7 +23,6 @@ const WORKER: &str = "--hoh-update-worker";
 const CANDIDATE: &str = "--hoh-update-candidate";
 const RECOVERED: &str = "--hoh-update-recovered";
 const START_TIMEOUT: Duration = Duration::from_secs(45);
-const READY_FILE: &str = "ready";
 const WAIT_STEP: Duration = Duration::from_millis(75);
 
 #[derive(Default)]
@@ -41,24 +40,38 @@ pub struct Installation {
     instance: InstanceLock,
     lease: Option<File>,
     job: Mutex<Job>,
-    ready: Option<PathBuf>,
-    engine_ready: AtomicBool,
-    page_loaded: AtomicBool,
+    readiness: Option<Mutex<CandidateReadiness>>,
     recovered: Mutex<bool>,
 }
 
-fn read_lock(installed: &Path, kind: &str) -> io::Result<File> {
-    use sha2::{Digest, Sha256};
-    let name = installed.file_name().ok_or(io::ErrorKind::InvalidInput)?;
-    let key = Sha256::digest(name.as_bytes());
-    let key = hoh_protocol::approval::hex(&key[..12]);
-    let parent = installed.parent().ok_or(io::ErrorKind::InvalidInput)?;
-    OpenOptions::new()
+struct CandidateReadiness {
+    marker: PathBuf,
+    engine: bool,
+    ui: bool,
+}
+
+fn update_gate(installed: &Path) -> io::Result<File> {
+    let gate = OpenOptions::new()
         .read(true)
         .write(true)
         .create(true)
         .truncate(false)
-        .open(parent.join(format!(".hoh-{key}-{kind}.lock")))
+        .open(sibling_path(installed, "-update.lock")?)?;
+    gate.try_lock()?;
+    Ok(gate)
+}
+
+fn check_lease(installed: &Path, lease: &File) -> io::Result<()> {
+    let active = fs::metadata(installed)?;
+    let held = lease.metadata()?;
+    if (active.dev(), active.ino()) == (held.dev(), held.ino()) {
+        Ok(())
+    } else {
+        Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "the installation changed while acquiring its lease",
+        ))
+    }
 }
 
 impl Installation {
@@ -103,31 +116,41 @@ impl Installation {
             instance,
             lease: None,
             job: Mutex::default(),
-            ready: None,
-            engine_ready: AtomicBool::default(),
-            page_loaded: AtomicBool::default(),
+            readiness: None,
             recovered: Mutex::new(recovered),
         };
         let Some((package, installed)) = package.zip(installed) else {
             return Ok(Some(installation));
         };
-        if candidate {
-            installation.ready = Some(PathBuf::from(
-                args.next().ok_or("Missing update readiness path.")?,
-            ));
+        if is_backup(installed) {
+            return Err(
+                "Restore the HoH backup to its installation path before launching it.".into(),
+            );
         }
-        installation.lease = if candidate || recovered {
-            Some(inherited_lease().map_err(|error| error.to_string())?)
-        } else if let Ok(lease) = read_lock(installed, "running") {
-            lease.try_lock_shared().map_err(|error| {
-                format!(
-                    "HoH is applying an update. Open it again when the update finishes ({error})."
-                )
-            })?;
-            Some(lease)
+        if candidate {
+            installation.readiness = Some(Mutex::new(CandidateReadiness {
+                marker: PathBuf::from(args.next().ok_or("Missing update readiness path.")?),
+                engine: false,
+                ui: false,
+            }));
+        }
+        let lease_error = |error| format!("Could not lock the HoH installation ({error}).");
+        let lease = if candidate || recovered {
+            inherited_lease().map_err(lease_error)?
         } else {
-            None
+            let lease = File::open(installed).map_err(lease_error)?;
+            lease.try_lock_shared().map_err(|error| {
+                format!("HoH is applying an update. Open it again when the update finishes ({error}).")
+            })?;
+            check_lease(installed, &lease).map_err(lease_error)?;
+            if recover_pending(package, installed, &lease, &installation.instance)
+                .map_err(|error| format!("Could not recover the interrupted HoH update ({error})."))?
+            {
+                return Ok(None);
+            }
+            lease
         };
+        check_lease(installed, &lease).map_err(lease_error)?;
         let marker = fs::read_to_string(installed.join(package.version_file))
             .map_err(|error| format!("Could not read the HoH installation version ({error})."))?;
         if marker.trim() != version.to_string() {
@@ -136,6 +159,7 @@ impl Installation {
                     .into(),
             );
         }
+        installation.lease = Some(lease);
         Ok(Some(installation))
     }
 
@@ -201,9 +225,13 @@ impl Installation {
             .ok_or("The HoH installation is read-only.")?;
         let error_message = |error| format!("Could not prepare the HoH restart ({error}).");
         // Serialize upgrades to exclusive mode. On some systems try_lock releases the old shared lock.
-        let gate = read_lock(installed, "update").map_err(error_message)?;
-        gate.try_lock()
+        let _gate = update_gate(installed)
             .map_err(|_| "Another HoH process is applying an update.")?;
+        if Recovery::open(installed).map_err(error_message)?.is_some() {
+            return Err(
+                "An earlier HoH update is still pending. Restart HoH before trying again.".into(),
+            );
+        }
         if lease.try_lock().is_err() {
             lease.lock_shared().map_err(error_message)?;
             return Err(
@@ -237,23 +265,21 @@ impl Installation {
         result.map_err(error_message)
     }
 
-    pub fn engine_ready(app: &tauri::AppHandle) {
-        let installation = app.state::<Self>();
-        installation.engine_ready.store(true, Ordering::SeqCst);
-        installation.mark_ready();
+    pub fn engine_status(app: &tauri::AppHandle, ready: bool) {
+        app.state::<Self>().report_readiness(|state| state.engine = ready);
     }
 
-    pub fn page_loaded(&self) {
-        self.page_loaded.store(true, Ordering::SeqCst);
-        self.mark_ready();
+    pub(super) fn ui_ready(&self) {
+        self.report_readiness(|state| state.ui = true);
     }
 
-    fn mark_ready(&self) {
-        if self.engine_ready.load(Ordering::SeqCst)
-            && self.page_loaded.load(Ordering::SeqCst)
-            && let Some(ready) = self.ready.as_deref()
-        {
-            let _ = File::create_new(ready);
+    fn report_readiness(&self, update: impl FnOnce(&mut CandidateReadiness)) {
+        if let Some(readiness) = &self.readiness {
+            let mut state = readiness.lock().unwrap_or_else(|error| error.into_inner());
+            update(&mut state);
+            if state.engine && state.ui {
+                let _ = File::create_new(&state.marker);
+            }
         }
     }
 }
@@ -309,6 +335,49 @@ fn await_ready(child: &mut Child, ready: &Path) -> io::Result<bool> {
     Ok(false)
 }
 
+fn recover_pending(
+    package: Package,
+    installed: &Path,
+    active: &File,
+    instance: &InstanceLock,
+) -> io::Result<bool> {
+    let Some(recovery) = Recovery::open(installed)? else {
+        return Ok(false);
+    };
+    let _gate = update_gate(installed)?;
+    active.try_lock()?;
+    check_lease(installed, active)?;
+    let backup = File::open(recovery.backup(package))?;
+    backup.try_lock()?;
+    let restored = recovery.is_swapped(active, &backup)?;
+    if restored {
+        recovery.exchange(installed, package)?;
+    }
+    recovery.sync_exchange(installed)?;
+    if let Err(error) = recovery.finish() {
+        eprintln!("HoH could not clean up the interrupted update: {error}");
+    }
+    if restored {
+        restart_previous(package, installed, &current_launch_args(), instance, &backup)?;
+    } else {
+        active.lock_shared()?;
+    }
+    Ok(restored)
+}
+
+fn restart_previous(
+    package: Package,
+    installed: &Path,
+    args: &[OsString],
+    instance: &InstanceLock,
+    lease: &File,
+) -> io::Result<()> {
+    let executable = installed.join(package.binary_dir).join("hoh-desktop");
+    lease.lock_shared()?;
+    launch(instance, &executable, RECOVERED, None, args, lease)?;
+    Ok(())
+}
+
 fn worker(
     package: Package,
     installed: &Path,
@@ -324,6 +393,7 @@ fn worker(
         return Err(io::ErrorKind::InvalidInput.into());
     }
     let lease = inherited_lease()?;
+    check_lease(installed, &lease)?;
     // This socket closes only after the previous process has shut down its engine and exited.
     let mut parent = UnixStream::from(std::io::stdout().as_fd().try_clone_to_owned()?);
     parent.set_read_timeout(Some(START_TIMEOUT))?;
@@ -336,28 +406,37 @@ fn worker(
                 .unwrap_or_else(|| io::ErrorKind::InvalidData.into()));
         }
     }
-    let staged = package.staged_in(&staging.join("unpacked"));
-    let ready = staging.join(READY_FILE);
+    let (recovery, candidate) = match Recovery::publish(installed, staging, package, &lease) {
+        Ok(prepared) => prepared,
+        Err(error) => {
+            eprintln!("HoH could not prepare the update recovery directory: {error}");
+            let _ = fs::remove_dir_all(staging);
+            return restart_previous(package, installed, args, instance, &lease);
+        }
+    };
+    let ready = recovery.ready_path();
     let executable = installed.join(package.binary_dir).join("hoh-desktop");
-    if let Err(error) = swap_directories(installed, &staged) {
+    if let Err(error) = recovery.exchange(installed, package) {
         eprintln!("HoH could not replace the installation: {error}");
-        lease.lock_shared()?;
-        launch(instance, &executable, RECOVERED, None, args, &lease)?;
-        return fs::remove_dir_all(staging);
+        let _ = recovery.finish();
+        return restart_previous(package, installed, args, instance, &lease);
     }
-    if let Ok(mut child) = launch(instance, &executable, CANDIDATE, Some(&ready), args, &lease) {
+    if recovery.sync_exchange(installed).is_ok()
+        && let Ok(mut child) =
+            launch(instance, &executable, CANDIDATE, Some(&ready), args, &candidate)
+    {
         if await_ready(&mut child, &ready).unwrap_or(false) {
-            lease.lock_shared()?;
-            return fs::remove_dir_all(staging);
+            let result = recovery.finish();
+            candidate.lock_shared()?;
+            return result;
         }
         let _ = child.kill();
         child.wait()?;
     }
-    // Keep the staging directory if the reverse swap fails. It contains the previous copy.
-    swap_directories(installed, &staged)?;
-    lease.lock_shared()?;
-    launch(instance, &executable, RECOVERED, None, args, &lease)?;
-    fs::remove_dir_all(staging)
+    recovery.exchange(installed, package)?;
+    let result = recovery.sync_exchange(installed).and_then(|()| recovery.finish());
+    restart_previous(package, installed, args, instance, &lease)?;
+    result
 }
 
 pub(super) fn wait_for_child(

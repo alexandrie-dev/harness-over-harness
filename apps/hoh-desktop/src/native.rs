@@ -392,9 +392,7 @@ fn handle_event(
             });
             ready.store(is_ready, Ordering::Release);
             #[cfg(any(target_os = "linux", target_os = "macos"))]
-            if is_ready {
-                crate::auto_update::Installation::engine_ready(handle);
-            }
+            crate::auto_update::Installation::engine_status(handle, is_ready);
             if !is_ready {
                 questions.clear();
                 if let Some(host) = handle.try_state::<Host>() {

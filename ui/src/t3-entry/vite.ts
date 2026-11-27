@@ -617,6 +617,7 @@ const COMPONENT_PREFIX = '\0hoh-hidden-component:';
 const PALETTE_MODULE = '\0hoh-palette-filter';
 const VIRTUAL_HOST = 'virtual:hoh-host';
 const VIRTUAL_BOOTSTRAP = 'virtual:t3-bootstrap';
+const DESKTOP_UPDATE_READY = `import { DesktopUpdateReady } from ${JSON.stringify(resolve(UI, 'src/t3-entry/DesktopUpdateReady.tsx'))};\n`;
 
 function hohT3(): Plugin {
   let routerStoragePatched = false;
@@ -742,8 +743,17 @@ function hohT3(): Plugin {
       if (id === resolve(T3_BASE, 'shared/markdownPipeline.ts')) return { code: markdownHtmlMarker(code), map: null };
       if (id === resolve(T3_WEB, 'routes/_chat.index.tsx')) return { code: chatIndexHome(code), map: null };
       if (id === resolve(T3_WEB, 'components/ChatView.tsx')) return { code: chatViewHome(code), map: null };
+      if (id === resolve(T3_WEB, 'routes/__root.tsx')) return {
+        code: anchorPatch('__root.tsx', code, [[
+          '      <AppSidebarLayout showSidebar={!isWelcome}>\n        <Outlet />',
+          '      <AppSidebarLayout showSidebar={!isWelcome}>\n        <Outlet />\n        {primaryEnvironmentAuthenticated && !isWelcome ? <DesktopUpdateReady /> : null}',
+        ]], DESKTOP_UPDATE_READY), map: null,
+      };
       if (id === resolve(T3_WEB, 'components/onboarding/WelcomePage.tsx')) return {
-        code: anchorPatch('WelcomePage.tsx', welcomeProviderActions(code), [NATIVE_TITLEBAR], TAURI_IMPORT), map: null,
+        code: anchorPatch('WelcomePage.tsx', welcomeProviderActions(code), [
+          NATIVE_TITLEBAR,
+          ['            <TelemetryNotice environmentId={environmentId} />', '            <TelemetryNotice environmentId={environmentId} />\n            <DesktopUpdateReady />'],
+        ], TAURI_IMPORT + DESKTOP_UPDATE_READY), map: null,
       };
       if (id === resolve(T3_WEB, 'components/WorkspacePageHeader.tsx')) return {
         code: anchorPatch('WorkspacePageHeader.tsx', code, [

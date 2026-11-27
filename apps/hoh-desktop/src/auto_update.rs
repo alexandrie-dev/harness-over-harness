@@ -1,5 +1,7 @@
+mod extract;
 mod install;
 mod instance;
+mod recovery;
 pub use install::Installation;
 
 use semver::Version;
@@ -9,7 +11,7 @@ use std::{
     ffi::{CString, OsStr},
     fs::{self, File},
     io::{self, BufRead, BufReader, Read, Write},
-    os::unix::{ffi::OsStrExt, fs::PermissionsExt, process::CommandExt},
+    os::unix::{ffi::OsStrExt, fs::PermissionsExt},
     path::{Path, PathBuf},
     process::{Command, Stdio},
     time::{Duration, Instant},
@@ -357,31 +359,15 @@ impl Asset {
     }
 }
 
-fn extract(archive: &Path, staging: &Path, cancelled: impl Fn() -> bool) -> Result<(), String> {
-    let mut child = Command::new("/usr/bin/tar")
-        .process_group(0)
-        .arg("-xf")
-        .arg(archive)
-        .arg("-C")
-        .arg(staging)
-        .args(["--no-same-owner", "--no-same-permissions"])
-        .env_remove("TAR_OPTIONS")
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .map_err(|error| format!("Could not start the package extractor ({error})."))?;
-    let status = install::wait_for_group(&mut child, cancelled)
-        .map_err(|error| format!("Could not complete package extraction ({error})."))?;
-    if !status.success() {
-        return Err(
-            "Could not unpack the HoH release. On Linux, make sure zstd is installed.".into(),
-        );
+fn validate_bundle(
+    bundle: &Path,
+    package: Package,
+    version: &Version,
+    cancelled: impl Fn() -> bool,
+) -> Result<(), String> {
+    if cancelled() {
+        return Err("The update was cancelled.".into());
     }
-    Ok(())
-}
-
-fn validate_bundle(bundle: &Path, package: Package, version: &Version) -> Result<(), String> {
     let invalid = || "The package does not contain a complete HoH installation for this release.";
     let version_marker =
         fs::read_to_string(bundle.join(package.version_file)).map_err(|_| invalid())?;
@@ -398,15 +384,24 @@ fn validate_bundle(bundle: &Path, package: Package, version: &Version) -> Result
         }
     }
     #[cfg(target_os = "macos")]
-    if !Command::new("/usr/bin/codesign")
-        .args(["--verify", "--deep", "--strict"])
-        .arg(bundle)
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .is_ok_and(|status| status.success())
     {
-        return Err("macOS could not verify the signature of the new HoH.app.".into());
+        let error =
+            |error| format!("macOS could not verify the signature of the new HoH.app ({error}).");
+        let mut child = Command::new("/usr/bin/codesign")
+            .args(["--verify", "--deep", "--strict"])
+            .arg(bundle)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .map_err(error)?;
+        let deadline = Instant::now() + Duration::from_secs(45);
+        let status =
+            install::wait_for_child(&mut child, || cancelled() || Instant::now() >= deadline)
+                .map_err(error)?;
+        if !status.success() {
+            return Err("macOS could not verify the signature of the new HoH.app.".into());
+        }
     }
     Ok(())
 }
@@ -518,8 +513,8 @@ fn update(
     let unpacked = staging.path().join("unpacked");
     fs::create_dir(&unpacked)
         .map_err(|error| format!("Could not prepare the package extractor ({error})."))?;
-    extract(&archive, &unpacked, cancelled)?;
-    validate_bundle(&package.staged_in(&unpacked), package, &version)?;
+    extract::extract(&archive, &unpacked, cancelled)?;
+    validate_bundle(&package.staged_in(&unpacked), package, &version, cancelled)?;
     installation.handoff(executable, installed, staging)?;
     Ok(UpdateOutcome::Restarting(version))
 }
@@ -560,6 +555,15 @@ async fn run_update(
         app.exit(0);
     }
     outcome?
+}
+
+#[tauri::command]
+pub fn desktop_ui_ready(window: tauri::WebviewWindow, legacy: bool) {
+    let legacy_shell =
+        crate::native::legacy_shell_requested(std::env::var_os("HOH_WINDOW_SHELL").as_deref());
+    if window.label() == "main" && legacy == legacy_shell {
+        window.state::<Installation>().ui_ready();
+    }
 }
 
 #[tauri::command]
