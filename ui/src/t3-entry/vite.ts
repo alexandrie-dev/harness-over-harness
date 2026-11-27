@@ -756,6 +756,11 @@ function hohT3(): Plugin {
           ['    <header\n', '    <header\n      data-tauri-drag-region="deep"\n'],
         ]), map: null,
       };
+      if (id === resolve(T3_WEB, 'components/AppRouteModal.tsx')) return {
+        code: anchorPatch('AppRouteModal.tsx', code, [
+          ['            <GlobalVoiceInputIndicator />', '            {open ? <DesktopUpdateReady /> : null}\n            <GlobalVoiceInputIndicator />'],
+        ], DESKTOP_UPDATE_READY), map: null,
+      };
       if (id === resolve(T3_WEB, 'routes/_chat.settings.tsx')) return {
         code: anchorPatch('_chat.settings.tsx', code, [
           ['          <header className="flex h-12', '          <header data-tauri-drag-region="deep" className="flex h-12'],

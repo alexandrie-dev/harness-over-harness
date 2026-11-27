@@ -1,12 +1,16 @@
 use super::{
-    Package, instance::InstanceLock, open_regular_file, package_for, read_install_metadata,
+    Package,
+    candidate::{CandidateEngine, ENGINE_GUARD, run_guard},
+    instance::{InstanceLock, pass_fd, take_fd},
+    open_regular_file, package_for, read_install_metadata,
     recovery::{Recovery, is_backup, sibling_path},
 };
+use crate::engine::{Connector, ProcessConfig};
 use semver::Version;
 use std::{
     ffi::{OsStr, OsString},
     fs::{self, File, TryLockError},
-    io::{self, Read},
+    io::{self, Read, Write},
     os::{
         fd::{AsFd, AsRawFd, OwnedFd},
         unix::{
@@ -15,7 +19,7 @@ use std::{
             net::UnixStream,
         },
     },
-    path::{Path, PathBuf},
+    path::Path,
     process::{Child, Stdio},
     sync::{Arc, Mutex},
     thread,
@@ -24,10 +28,11 @@ use std::{
 use tauri::Manager;
 
 const WORKER: &str = "--hoh-update-worker";
-const CANDIDATE: &str = "--hoh-update-candidate";
+const CANDIDATE: &str = "--hoh-update-candidate-fd";
 const RECOVERED: &str = "--hoh-update-recovered";
 const START_TIMEOUT: Duration = Duration::from_secs(45);
 const START_STABILITY: Duration = Duration::from_secs(1);
+const STOP_TIMEOUT: Duration = Duration::from_secs(10);
 const WAIT_STEP: Duration = Duration::from_millis(75);
 
 #[derive(Default)]
@@ -50,7 +55,7 @@ pub struct Installation {
 }
 
 struct CandidateReadiness {
-    decision: PathBuf,
+    lifecycle: Arc<UnixStream>,
     ui: Mutex<Option<(u32, Instant)>>,
 }
 
@@ -101,6 +106,10 @@ impl Installation {
         let mut args = std::env::args_os().skip(1);
         let mode = args.next();
         let mode = mode.as_deref().and_then(OsStr::to_str);
+        if mode == Some(ENGINE_GUARD) {
+            run_guard(args).map_err(|error| format!("Could not guard the HoH engine ({error})."))?;
+            return Ok(None);
+        }
         let instance = if matches!(mode, Some(WORKER | CANDIDATE | RECOVERED)) {
             InstanceLock::inherit(args.next().as_deref())
                 .map_err(|error| format!("Could not resume HoH after updating ({error})."))?
@@ -150,8 +159,13 @@ impl Installation {
             );
         }
         if candidate {
+            let connect_error =
+                |error| format!("Could not connect to the HoH update worker ({error}).");
+            let lifecycle =
+                UnixStream::from(take_fd(args.next().as_deref()).map_err(connect_error)?);
+            lifecycle.set_nonblocking(true).map_err(connect_error)?;
             installation.readiness = Some(Arc::new(CandidateReadiness {
-                decision: PathBuf::from(args.next().ok_or("Missing update decision path.")?),
+                lifecycle: Arc::new(lifecycle),
                 ui: Mutex::default(),
             }));
         }
@@ -316,20 +330,45 @@ impl Installation {
 
     pub(crate) fn engine_ready_handler(&self) -> Option<crate::engine::ReadyHandler> {
         let readiness = self.readiness.clone()?;
+        let mut reported = false;
         Some(Box::new(move |engine_ready_at| {
-            let ui = readiness.ui.lock().unwrap_or_else(|error| error.into_inner());
-            if !ui.is_some_and(|(_, ui_ready_at)| {
-                engine_ready_at.max(ui_ready_at).elapsed() >= START_STABILITY
-            }) {
-                return false;
+            let mut lifecycle = &*readiness.lifecycle;
+            match lifecycle.read(&mut [0]) {
+                Err(error) if error.kind() == io::ErrorKind::WouldBlock => {}
+                Err(error) if error.kind() == io::ErrorKind::Interrupted => return false,
+                _ => return true,
             }
-            if let Err(error) = Recovery::commit(&readiness.decision)
-                && error.kind() != io::ErrorKind::AlreadyExists
-            {
-                eprintln!("HoH could not confirm the updated installation: {error}");
+            let ready = engine_ready_at.is_some_and(|engine_ready_at| {
+                let ui = readiness.ui.lock().unwrap_or_else(|error| error.into_inner());
+                ui.is_some_and(|(_, ui_ready_at)| {
+                    engine_ready_at.max(ui_ready_at).elapsed() >= START_STABILITY
+                })
+            });
+            if ready != reported {
+                match lifecycle.write_all(&[u8::from(ready)]) {
+                    Ok(()) => reported = ready,
+                    Err(error) if error.kind() == io::ErrorKind::WouldBlock => {}
+                    Err(error) => {
+                        eprintln!("HoH could not report update readiness: {error}");
+                        return true;
+                    }
+                }
             }
-            true
+            false
         }))
+    }
+
+    pub(crate) fn engine_connector(&self, config: ProcessConfig) -> io::Result<Arc<dyn Connector>> {
+        if let Some(readiness) = &self.readiness {
+            let lease = self.lease.as_ref().ok_or(io::ErrorKind::InvalidInput)?;
+            Ok(Arc::new(CandidateEngine {
+                config,
+                lifecycle: readiness.lifecycle.clone(),
+                lease: lease.try_clone()?,
+            }))
+        } else {
+            Ok(Arc::new(config))
+        }
     }
 }
 
@@ -357,31 +396,70 @@ fn launch(
     instance: &InstanceLock,
     executable: &Path,
     mode: &str,
-    decision: Option<&Path>,
+    lifecycle: Option<&UnixStream>,
     args: &[OsString],
     lease: &File,
 ) -> io::Result<Child> {
-    instance
-        .restart_command(executable, mode)?
-        .args(decision)
+    let mut command = instance.restart_command(executable, mode)?;
+    if let Some(lifecycle) = lifecycle {
+        pass_fd(&mut command, lifecycle)?;
+    }
+    command
         .args(args)
         .stdin(Stdio::from(lease.try_clone()?))
         .stdout(Stdio::null())
         .spawn()
 }
 
-fn await_ready(child: &mut Child, recovery: &Recovery) -> io::Result<bool> {
+fn await_ready(child: &mut Child, lifecycle: &mut UnixStream) -> io::Result<bool> {
     let deadline = Instant::now() + START_TIMEOUT;
-    while Instant::now() < deadline {
-        if recovery.committed()? {
+    lifecycle.set_nonblocking(true)?;
+    let mut changes = [0; 64];
+    loop {
+        let mut ready = false;
+        loop {
+            match lifecycle.read(&mut changes) {
+                Ok(0) => break,
+                Ok(count) => ready = changes[count - 1] == 1,
+                Err(error) if error.kind() == io::ErrorKind::WouldBlock => break,
+                Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+                Err(error) => return Err(error),
+            }
+        }
+        let exit = child.try_wait()?;
+        if exit.is_some_and(|status| !status.success()) {
+            return Ok(false);
+        }
+        if ready {
             return Ok(true);
         }
-        if child.try_wait()?.is_some() {
+        if exit.is_some() || Instant::now() >= deadline {
             return Ok(false);
         }
         thread::sleep(WAIT_STEP);
     }
-    Ok(false)
+}
+
+fn stop_candidate(child: &mut Child, lifecycle: &mut UnixStream) -> io::Result<()> {
+    if let Err(error) = child.kill()
+        && child.try_wait()?.is_none()
+    {
+        return Err(error);
+    }
+    let deadline = Instant::now() + STOP_TIMEOUT;
+    while child.try_wait()?.is_none() {
+        if Instant::now() >= deadline {
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "the updated HoH did not stop",
+            ));
+        }
+        thread::sleep(WAIT_STEP);
+    }
+    lifecycle.set_nonblocking(false)?;
+    lifecycle.set_read_timeout(Some(STOP_TIMEOUT))?;
+    io::copy(lifecycle, &mut io::sink())?;
+    Ok(())
 }
 
 fn recover_pending(
@@ -463,7 +541,6 @@ fn worker(
             return restart_previous(package, installed, args, instance, &lease);
         }
     };
-    let decision = recovery.decision_path();
     let executable = installed.join(package.binary_dir).join("hoh-desktop");
     if let Err(error) = recovery.exchange(installed, package) {
         eprintln!("HoH could not replace the installation: {error}");
@@ -471,16 +548,28 @@ fn worker(
         return restart_previous(package, installed, args, instance, &lease);
     }
     if recovery.sync_exchange(installed).is_ok()
-        && let Ok(mut child) =
-            launch(instance, &executable, CANDIDATE, Some(&decision), args, &candidate)
+        && let Ok((mut lifecycle, candidate_end)) = UnixStream::pair()
+        && let Ok(mut child) = launch(
+            instance,
+            &executable,
+            CANDIDATE,
+            Some(&candidate_end),
+            args,
+            &candidate,
+        )
     {
-        if await_ready(&mut child, &recovery).unwrap_or(false) || !recovery.claim_rollback()? {
-            let result = recovery.finish();
-            candidate.lock_shared()?;
-            return result;
+        drop(candidate_end);
+        if await_ready(&mut child, &mut lifecycle).unwrap_or(false) {
+            match recovery.commit() {
+                Ok(()) => {
+                    let result = recovery.finish();
+                    candidate.lock_shared()?;
+                    return result;
+                }
+                Err(error) => eprintln!("HoH could not commit the updated installation: {error}"),
+            }
         }
-        let _ = child.kill();
-        child.wait()?;
+        stop_candidate(&mut child, &mut lifecycle)?;
     }
     recovery.exchange(installed, package)?;
     let result = recovery.sync_exchange(installed).and_then(|()| recovery.finish());

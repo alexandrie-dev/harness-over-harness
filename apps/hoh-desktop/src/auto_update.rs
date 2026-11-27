@@ -1,3 +1,4 @@
+mod candidate;
 mod extract;
 mod install;
 mod instance;
@@ -14,6 +15,7 @@ use std::{
     os::unix::{
         ffi::OsStrExt,
         fs::{OpenOptionsExt, PermissionsExt},
+        process::CommandExt,
     },
     path::{Path, PathBuf},
     process::{Command, Stdio},
@@ -168,7 +170,7 @@ fn available_version(release: &Release, installed: &Version) -> Result<Option<Ve
 
 enum Response {
     Metadata,
-    Archive,
+    Archive(u64),
 }
 
 fn fetch(
@@ -181,11 +183,27 @@ fn fetch(
     if cancelled() {
         return Err("The update check was cancelled.".into());
     }
+    let mut command = Command::new("/usr/bin/curl");
     let (accept, timeout, limit) = match response {
         Response::Metadata => ("application/vnd.github+json", "20", 2 * 1024 * 1024),
-        Response::Archive => ("application/octet-stream", "300", MAX_ASSET_SIZE),
+        Response::Archive(size) => {
+            unsafe {
+                command.pre_exec(move || {
+                    let mut limit = std::mem::MaybeUninit::<libc::rlimit>::uninit();
+                    if libc::getrlimit(libc::RLIMIT_FSIZE, limit.as_mut_ptr()) != 0 {
+                        return Err(io::Error::last_os_error());
+                    }
+                    let mut limit = limit.assume_init();
+                    limit.rlim_cur = limit.rlim_cur.min(size as libc::rlim_t);
+                    if libc::setrlimit(libc::RLIMIT_FSIZE, &limit) != 0 {
+                        return Err(io::Error::last_os_error());
+                    }
+                    Ok(())
+                });
+            }
+            ("application/octet-stream", "300", size)
+        }
     };
-    let mut command = Command::new("/usr/bin/curl");
     command.arg("--disable");
     if token.is_some() {
         // Send the credential over stdin. curl drops Authorization on cross-host redirects.
@@ -516,6 +534,7 @@ fn update(
         .prefix(".hoh-update-")
         .tempdir_in(parent)
         .map_err(|error| format!("Could not prepare the HoH installation folder ({error})."))?;
+    extract::check_download_space(staging.path(), asset.size)?;
     let name = package.asset_name();
     progress(UpdateProgress::Downloading(version.clone()));
     let url = if token.is_some() {
@@ -531,7 +550,7 @@ fn update(
         &url,
         &archive,
         token.as_deref(),
-        Response::Archive,
+        Response::Archive(asset.size),
         cancelled,
     )?;
     if status != 200 {

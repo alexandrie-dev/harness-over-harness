@@ -3,7 +3,7 @@ use crate::{
     approval::{ApprovalView, Begun, Broker, OpenApproval, Resolution, now_ms},
     bridge,
     chat_secrets::ChatSecrets,
-    engine::{Engine, HostEvent, ProcessConfig},
+    engine::{Connector, Engine, HostEvent, ProcessConfig},
     questions::QuestionBroker,
     workspace,
 };
@@ -292,13 +292,17 @@ pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     let event_notifications = notifications.clone();
     let init = json!({"cwd":session_folder,"provider":config.provider,"model":config.model,"capabilities":{"approvals":"host","userQuestions":true},"hoh":{"protocolVersion":1,"approvalKey":hoh_protocol::approval::hex(&key)}});
     #[cfg(any(target_os = "linux", target_os = "macos"))]
-    let ready_handler = handle
-        .try_state::<crate::auto_update::Installation>()
-        .and_then(|installation| installation.engine_ready_handler());
+    let (connector, ready_handler): (Arc<dyn Connector>, _) =
+        if let Some(installation) = handle.try_state::<crate::auto_update::Installation>() {
+            let connector = installation.engine_connector(config)?;
+            (connector, installation.engine_ready_handler())
+        } else {
+            (Arc::new(config), None)
+        };
     #[cfg(not(any(target_os = "linux", target_os = "macos")))]
-    let ready_handler = None;
+    let (connector, ready_handler): (Arc<dyn Connector>, _) = (Arc::new(config), None);
     let engine = Engine::start_with_ready_handler(
-        Arc::new(config),
+        connector,
         init,
         Arc::new(move |event| {
             handle_event(

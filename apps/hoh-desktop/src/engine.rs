@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::{
     collections::HashMap,
-    io::BufReader,
+    io::{BufReader, PipeWriter},
     path::PathBuf,
     process::{Child, Command, Stdio},
     sync::{
@@ -49,7 +49,7 @@ fn error_code(error: &hoh_protocol::framing::RpcError) -> Option<&str> {
 pub type OnSend = Box<dyn FnOnce(u64, &str) + Send>;
 pub type Reply = mpsc::Sender<Result<Value, String>>;
 pub type Sink = Arc<dyn Fn(HostEvent) + Send + Sync>;
-pub(crate) type ReadyHandler = Box<dyn Fn(Instant) -> bool + Send>;
+pub(crate) type ReadyHandler = Box<dyn FnMut(Option<Instant>) -> bool + Send>;
 #[derive(Clone)]
 pub enum HostEvent {
     Notification(Value),
@@ -116,8 +116,25 @@ impl Connector for ProcessConfig {
         inbox: mpsc::Sender<Message>,
     ) -> Result<Box<dyn Transport>, String> {
         let mut command = Command::new(&self.path);
+        command.args(&self.args);
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::CommandExt;
+            command.process_group(0);
+        }
+        self.connect_process(command, None, generation, inbox)
+    }
+}
+
+impl ProcessConfig {
+    pub(crate) fn connect_process(
+        &self,
+        mut command: Command,
+        guard: Option<PipeWriter>,
+        generation: u64,
+        inbox: mpsc::Sender<Message>,
+    ) -> Result<Box<dyn Transport>, String> {
         command
-            .args(&self.args)
             .envs(
                 self.env
                     .iter()
@@ -140,11 +157,6 @@ impl Connector for ProcessConfig {
             if name.to_string_lossy().starts_with("TELEGRAM_") {
                 command.env_remove(name);
             }
-        }
-        #[cfg(unix)]
-        {
-            use std::os::unix::process::CommandExt;
-            command.process_group(0);
         }
         let mut child = command
             .spawn()
@@ -179,6 +191,7 @@ impl Connector for ProcessConfig {
         });
         Ok(Box::new(StdioTransport {
             child,
+            guard,
             tx: Some(tx),
             threads: vec![reader, writer],
             disconnected,
@@ -188,6 +201,7 @@ impl Connector for ProcessConfig {
 }
 struct StdioTransport {
     child: Child,
+    guard: Option<PipeWriter>,
     tx: Option<mpsc::SyncSender<Value>>,
     threads: Vec<thread::JoinHandle<()>>,
     disconnected: Arc<AtomicBool>,
@@ -202,24 +216,7 @@ impl Transport for StdioTransport {
             .map_err(|_| "Связь с Помощником недоступна".into())
     }
     fn exited(&mut self) -> bool {
-        #[cfg(unix)]
-        {
-            // Observe without reaping: reserve the PID until close kills its process group.
-            let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
-            let result = unsafe {
-                libc::waitid(
-                    libc::P_PID,
-                    self.child.id(),
-                    &mut info,
-                    libc::WEXITED | libc::WNOHANG | libc::WNOWAIT,
-                )
-            };
-            result < 0 || unsafe { info.si_pid() } != 0
-        }
-        #[cfg(not(unix))]
-        {
-            !matches!(self.child.try_wait(), Ok(None))
-        }
+        process_exited(&mut self.child)
     }
     fn disconnected(&self) -> bool {
         self.disconnected.load(Ordering::Acquire)
@@ -229,20 +226,50 @@ impl Transport for StdioTransport {
             return;
         }
         self.closed = true;
-        // The child is not reaped yet, so its process-group id cannot have been reused.
-        #[cfg(unix)]
-        unsafe {
-            libc::kill(-(self.child.id() as i32), libc::SIGKILL);
-        }
-        let _ = self.child.kill();
         self.tx.take();
-        let _ = self.child.wait();
+        if let Some(guard) = self.guard.take() {
+            drop(guard);
+            let _ = self.child.wait();
+        } else {
+            kill_and_wait(&mut self.child);
+        }
         for handle in self.threads.drain(..) {
             if handle.is_finished() {
                 let _ = handle.join();
             }
         }
     }
+}
+
+pub(crate) fn process_exited(child: &mut Child) -> bool {
+    #[cfg(unix)]
+    {
+        // Observe without reaping: reserve the PID until close kills its process group.
+        let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
+        let result = unsafe {
+            libc::waitid(
+                libc::P_PID,
+                child.id(),
+                &mut info,
+                libc::WEXITED | libc::WNOHANG | libc::WNOWAIT,
+            )
+        };
+        result < 0 || unsafe { info.si_pid() } != 0
+    }
+    #[cfg(not(unix))]
+    {
+        !matches!(child.try_wait(), Ok(None))
+    }
+}
+
+pub(crate) fn kill_and_wait(child: &mut Child) {
+    // The child is not reaped yet, so its process-group id cannot have been reused.
+    #[cfg(unix)]
+    unsafe {
+        libc::kill(-(child.id() as libc::pid_t), libc::SIGKILL);
+    }
+    let _ = child.kill();
+    let _ = child.wait();
 }
 impl Drop for StdioTransport {
     fn drop(&mut self) {
@@ -551,10 +578,8 @@ fn supervise(
             if transport.exited() || (!ready && started.elapsed() > Duration::from_secs(10)) {
                 break;
             }
-            if let Some(handler) = &ready_handler
-                && let Some(ready_at) = ready_at
-                && !transport.disconnected()
-                && handler(ready_at)
+            if let Some(handler) = &mut ready_handler
+                && handler(ready_at.filter(|_| !transport.disconnected()))
             {
                 ready_handler = None;
             }
@@ -565,6 +590,11 @@ fn supervise(
                 let _ = p.reply.send(Err("Время ожидания Помощника истекло".into()));
                 false
             });
+        }
+        if let Some(handler) = &mut ready_handler
+            && handler(None)
+        {
+            ready_handler = None;
         }
         // Do not replay requests after a crash: their effects may already have happened.
         for (_, p) in pending.drain() {

@@ -17,7 +17,7 @@ const MAX_LISTING_SIZE: u64 = 8 * 1024 * 1024;
 const DISK_RESERVE: u64 = 64 * 1024 * 1024;
 const EXTRACTION_TIMEOUT: Duration = Duration::from_secs(300);
 
-fn disk_budget(staging: &Path) -> io::Result<(u64, u64)> {
+fn disk_space(staging: &Path) -> io::Result<(u128, u128)> {
     let directory = File::open(staging)?;
     let mut stat = MaybeUninit::<libc::statvfs>::uninit();
     if unsafe { libc::fstatvfs(directory.as_raw_fd(), stat.as_mut_ptr()) } != 0 {
@@ -26,7 +26,20 @@ fn disk_budget(staging: &Path) -> io::Result<(u64, u64)> {
     let stat = unsafe { stat.assume_init() };
     let block_size = u128::from(stat.f_frsize);
     let available = u128::from(stat.f_bavail) * block_size;
-    let budget = available.saturating_sub(u128::from(DISK_RESERVE));
+    Ok((available.saturating_sub(u128::from(DISK_RESERVE)), block_size))
+}
+
+pub(super) fn check_download_space(staging: &Path, size: u64) -> Result<(), String> {
+    let (available, _) = disk_space(staging)
+        .map_err(|error| format!("Could not check space for the HoH release ({error})."))?;
+    if u128::from(size) > available {
+        return Err("There is not enough disk space to download the HoH release.".into());
+    }
+    Ok(())
+}
+
+fn disk_budget(staging: &Path) -> io::Result<(u64, u64)> {
+    let (budget, block_size) = disk_space(staging)?;
     let limit = budget.min(u128::from(MAX_EXPANDED_SIZE)) as u64;
     let path_cost = (block_size.max(4096) * 4).min(u128::from(MAX_EXPANDED_SIZE)) as u64;
     Ok((limit, path_cost))

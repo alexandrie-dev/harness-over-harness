@@ -16,6 +16,7 @@ use std::{
 
 const PENDING: &str = "pending.json";
 const ROLLBACK_SUFFIX: &str = "-rollback";
+const RETIRED_PREFIX: &str = ".hoh-retired-";
 
 #[derive(Deserialize, Serialize)]
 struct PendingSwap {
@@ -41,8 +42,15 @@ pub(super) fn is_backup(bundle: &Path) -> bool {
         .parent()
         .and_then(Path::file_name)
         .and_then(|name| name.to_str())
-        .and_then(|name| name.strip_prefix(".hoh-")?.strip_suffix(ROLLBACK_SUFFIX))
-        .is_some_and(|key| key.len() == 24 && key.bytes().all(|byte| byte.is_ascii_hexdigit()))
+        .is_some_and(|name| {
+            name.starts_with(RETIRED_PREFIX)
+                || name
+                    .strip_prefix(".hoh-")
+                    .and_then(|name| name.strip_suffix(ROLLBACK_SUFFIX))
+                    .is_some_and(|key| {
+                        key.len() == 24 && key.bytes().all(|byte| byte.is_ascii_hexdigit())
+                    })
+        })
 }
 
 impl Recovery {
@@ -70,8 +78,8 @@ impl Recovery {
                 "an earlier update is pending",
             ));
         }
-        match fs::remove_dir_all(&directory) {
-            Ok(()) => {}
+        match directory.symlink_metadata() {
+            Ok(_) => retire_directory(&directory)?,
             Err(error) if error.kind() == io::ErrorKind::NotFound => {}
             Err(error) => return Err(error),
         }
@@ -102,12 +110,12 @@ impl Recovery {
         self.directory.join(package.install_dir)
     }
 
-    pub(super) fn decision_path(&self) -> PathBuf {
+    fn decision_path(&self) -> PathBuf {
         self.directory.join("decision")
     }
 
-    pub(super) fn commit(decision: &Path) -> io::Result<()> {
-        symlink("commit", decision)
+    pub(super) fn commit(&self) -> io::Result<()> {
+        symlink("commit", self.decision_path())
     }
 
     pub(super) fn committed(&self) -> io::Result<bool> {
@@ -116,14 +124,6 @@ impl Recovery {
             Ok(decision) if decision == Path::new("rollback") => Ok(false),
             Ok(_) => Err(io::ErrorKind::InvalidData.into()),
             Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
-            Err(error) => Err(error),
-        }
-    }
-
-    pub(super) fn claim_rollback(&self) -> io::Result<bool> {
-        match symlink("rollback", self.decision_path()) {
-            Ok(()) => Ok(true),
-            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => Ok(!self.committed()?),
             Err(error) => Err(error),
         }
     }
@@ -152,11 +152,22 @@ impl Recovery {
     }
 
     pub(super) fn finish(&self) -> io::Result<()> {
-        fs::remove_file(self.directory.join(PENDING))?;
-        sync_directory(&self.directory)?;
-        let _ = fs::remove_dir_all(&self.directory);
-        Ok(())
+        retire_directory(&self.directory)
     }
+}
+
+fn retire_directory(directory: &Path) -> io::Result<()> {
+    let parent = parent(directory)?;
+    let retired = tempfile::Builder::new()
+        .prefix(RETIRED_PREFIX)
+        .tempdir_in(parent)?;
+    fs::rename(directory, retired.path())?;
+    let retired = retired.keep();
+    sync_directory(parent)?;
+    if let Err(error) = fs::remove_dir_all(&retired) {
+        eprintln!("HoH could not delete {}: {error}", retired.display());
+    }
+    Ok(())
 }
 
 fn parent(path: &Path) -> io::Result<&Path> {

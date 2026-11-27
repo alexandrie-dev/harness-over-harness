@@ -45,16 +45,7 @@ impl InstanceLock {
     }
 
     pub(super) fn inherit(argument: Option<&OsStr>) -> io::Result<Self> {
-        let descriptor = argument
-            .and_then(OsStr::to_str)
-            .and_then(|value| value.parse::<RawFd>().ok())
-            .filter(|descriptor| *descriptor >= FIRST_NON_STDIO_FD)
-            .ok_or(io::ErrorKind::InvalidInput)?;
-        if unsafe { libc::fcntl(descriptor, libc::F_SETFD, libc::FD_CLOEXEC) } < 0 {
-            return Err(io::Error::last_os_error());
-        }
-        // The restarting process owns this descriptor, inherited specifically for the lock.
-        let file = unsafe { File::from_raw_fd(descriptor) };
+        let file = File::from(take_fd(argument)?);
         let expected = open_lock()?.metadata()?;
         let inherited = file.metadata()?;
         if (inherited.dev(), inherited.ino()) != (expected.dev(), expected.ino()) {
@@ -65,28 +56,47 @@ impl InstanceLock {
     }
 
     pub(super) fn restart_command(&self, executable: &Path, mode: &str) -> io::Result<Command> {
-        let descriptor = unsafe {
-            libc::fcntl(
-                self.0.as_raw_fd(),
-                libc::F_DUPFD_CLOEXEC,
-                FIRST_NON_STDIO_FD,
-            )
-        };
-        if descriptor < 0 {
-            return Err(io::Error::last_os_error());
-        }
-        let inherited = unsafe { OwnedFd::from_raw_fd(descriptor) };
         let mut command = Command::new(executable);
-        command.arg(mode).arg(descriptor.to_string());
-        // Keep the lock across this exec only. The new process restores close-on-exec.
-        unsafe {
-            command.pre_exec(move || {
-                if libc::fcntl(inherited.as_raw_fd(), libc::F_SETFD, 0) < 0 {
-                    return Err(io::Error::last_os_error());
-                }
-                Ok(())
-            });
-        }
+        command.arg(mode);
+        pass_fd(&mut command, &self.0)?;
         Ok(command)
     }
+}
+
+pub(super) fn pass_fd(command: &mut Command, file: &impl AsRawFd) -> io::Result<()> {
+    let descriptor =
+        unsafe { libc::fcntl(file.as_raw_fd(), libc::F_DUPFD_CLOEXEC, FIRST_NON_STDIO_FD) };
+    if descriptor < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    let inherited = unsafe { OwnedFd::from_raw_fd(descriptor) };
+    command.arg(descriptor.to_string());
+    unsafe {
+        command.pre_exec(move || {
+            if libc::fcntl(inherited.as_raw_fd(), libc::F_SETFD, 0) < 0 {
+                return Err(io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
+    Ok(())
+}
+
+pub(super) fn take_fd(argument: Option<&OsStr>) -> io::Result<OwnedFd> {
+    let descriptor = argument
+        .and_then(OsStr::to_str)
+        .and_then(|value| value.parse::<RawFd>().ok())
+        .filter(|descriptor| *descriptor >= FIRST_NON_STDIO_FD)
+        .ok_or(io::ErrorKind::InvalidInput)?;
+    let flags = unsafe { libc::fcntl(descriptor, libc::F_GETFD) };
+    if flags < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    if flags & libc::FD_CLOEXEC != 0 {
+        return Err(io::ErrorKind::InvalidInput.into());
+    }
+    if unsafe { libc::fcntl(descriptor, libc::F_SETFD, flags | libc::FD_CLOEXEC) } < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(unsafe { OwnedFd::from_raw_fd(descriptor) })
 }
