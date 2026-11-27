@@ -207,8 +207,13 @@ fn main() {
                 } else {
                     "openai"
                 };
+                let auth_store = match scenario.as_str() {
+                    "title-keyring" => "keyring",
+                    "title-auto-store" => "auto",
+                    _ => "file",
+                };
                 let mut config =
-                    json!({"model_provider":provider,"cli_auth_credentials_store":"keyring"});
+                    json!({"model_provider":provider,"cli_auth_credentials_store":auth_store});
                 if Path::new("custom-route").exists() {
                     config["openai_base_url"] = json!("https://gateway.example.invalid/v1");
                 }

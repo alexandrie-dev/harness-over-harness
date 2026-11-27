@@ -98,8 +98,7 @@ pub(crate) fn verified_auth_store(
     {
         None if is_default("cli_auth_credentials_store") => Ok("file"),
         Some("file") => Ok("file"),
-        Some("keyring") => Ok("keyring"),
-        Some("auto") => Ok("auto"),
+        // The isolated command ignores user config, which can select a different keyring backend.
         _ => Err(unavailable()),
     }
 }

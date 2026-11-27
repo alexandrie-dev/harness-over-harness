@@ -194,7 +194,7 @@ async fn codex_title_uses_the_verified_thread_route_and_isolated_json_output() {
     assert_eq!(start["params"]["config"]["openai_base_url"], "");
     assert_eq!(
         start["params"]["config"]["cli_auth_credentials_store"],
-        "keyring"
+        "file"
     );
     let exec = requests
         .iter()
@@ -215,7 +215,7 @@ async fn codex_title_uses_the_verified_thread_route_and_isolated_json_output() {
         "--ignore-user-config",
         "--output-schema",
         "--model=gpt-stub",
-        "cli_auth_credentials_store=\"keyring\"",
+        "cli_auth_credentials_store=\"file\"",
         "openai_base_url=\"\"",
         "chatgpt_base_url=\"https://chatgpt.com/backend-api/\"",
         "shell_tool",
@@ -255,6 +255,8 @@ async fn codex_title_refuses_custom_routes_and_non_schema_responses() {
         "title-custom-config",
         "title-custom-thread",
         "title-managed",
+        "title-keyring",
+        "title-auto-store",
     ] {
         let (harness, log) = harness(&temp, scenario);
         let started = harness
