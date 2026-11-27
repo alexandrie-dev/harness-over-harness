@@ -29,16 +29,19 @@ export function SidebarTop(props: SidebarThreadHeaderProps) {
   const onUsage = useLocation({ select: (location) => location.pathname === '/usage' });
   const { isMobile, setOpen, setOpenMobile } = useSidebar();
   const [teamComingSoon, setTeamComingSoon] = useState(false);
-  const updateVersion = useStore(desktopUpdate, state => state.kind === 'available' ? state.version : undefined);
+  const update = useStore(desktopUpdate, state =>
+    state.kind === 'available' || state.kind === 'manualUpdateAvailable' ? state : undefined);
   useEffect(() => {
-    if (!updateVersion || updateVersion === announcedUpdate) return;
-    announcedUpdate = updateVersion;
+    if (!update || update.version === announcedUpdate) return;
+    announcedUpdate = update.version;
     toastManager.add({
       type: 'info',
-      title: `HoH ${updateVersion} is available`,
-      description: 'Use Update next to Settings to install.',
+      title: `HoH ${update.version} is available`,
+      description: update.kind === 'manualUpdateAvailable'
+        ? 'Use Update next to Settings to open GitHub Releases.'
+        : 'Use Update next to Settings to install.',
     });
-  }, [updateVersion]);
+  }, [update]);
   return (
     <div className="hoh-side" data-hoh-sidebar-top="">
       <PageLayer workspace={catalog?.packages.find(item => item.workspaceLabel && page === workspacePage(item.id))} />

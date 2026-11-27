@@ -4,7 +4,7 @@ import { createStore } from 'zustand/vanilla';
 type UpdateProgress = { kind: 'downloading' | 'installing'; version: string };
 type UpdateResult =
   | { kind: 'unsupportedInstall' | 'noRelease' | 'upToDate' | 'rolledBack' }
-  | { kind: 'available' | 'noCompatiblePackage' | 'restarting'; version: string };
+  | { kind: 'available' | 'manualUpdateAvailable' | 'noCompatiblePackage' | 'restarting'; version: string };
 
 export type UpdateState = UpdateResult | UpdateProgress
   | { kind: 'idle' | 'checking' }

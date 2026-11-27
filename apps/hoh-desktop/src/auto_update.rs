@@ -188,6 +188,7 @@ pub enum UpdateOutcome {
     RolledBack,
     NoCompatiblePackage(Version),
     Available(Version),
+    ManualUpdateAvailable(Version),
     Restarting(Version),
 }
 
@@ -517,6 +518,28 @@ fn validate_bundle_layout(bundle: &Path, package: Package, version: &Version) ->
     Ok(())
 }
 
+#[cfg(target_os = "linux")]
+fn require_managed_linux_bundle(bundle: &Path) -> io::Result<()> {
+    if !bundle.symlink_metadata()?.is_dir() {
+        return Err(io::ErrorKind::Unsupported.into());
+    }
+    for entry in bundle.read_dir()? {
+        let entry = entry?;
+        if !entry.file_type()?.is_file()
+            || !matches!(
+                entry.file_name().to_str(),
+                Some("hoh-desktop" | "hoh" | ".hoh-release" | "LICENSE" | "NOTICE")
+            )
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "the HoH installation contains user-managed files",
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn validate_bundle(
     bundle: &Path,
     package: Package,
@@ -527,6 +550,8 @@ fn validate_bundle(
         return Err("The update was cancelled.".into());
     }
     validate_bundle_layout(bundle, package, version).map_err(|_| INVALID_PACKAGE)?;
+    #[cfg(target_os = "linux")]
+    require_managed_linux_bundle(bundle).map_err(|_| INVALID_PACKAGE)?;
     #[cfg(target_os = "macos")]
     {
         let error =
@@ -626,6 +651,10 @@ fn update(
     let Some(asset) = release.asset(package) else {
         return Ok(UpdateOutcome::NoCompatiblePackage(version));
     };
+    #[cfg(target_os = "linux")]
+    if require_managed_linux_bundle(installed).is_err() {
+        return Ok(UpdateOutcome::ManualUpdateAvailable(version));
+    }
     if asset.size == 0 || asset.size > MAX_ASSET_SIZE {
         return Err("The update package has an unexpected size.".into());
     }
@@ -685,6 +714,10 @@ fn update(
         format!("Could not preserve permissions for the HoH installation ({error}).")
     })?;
     candidate::qualify(bundle.join(package.binary_dir).join("hoh"), cancelled)?;
+    #[cfg(target_os = "linux")]
+    if require_managed_linux_bundle(installed).is_err() {
+        return Ok(UpdateOutcome::ManualUpdateAvailable(version));
+    }
     installation.handoff(executable, installed, staging, package)?;
     Ok(UpdateOutcome::Restarting(version))
 }

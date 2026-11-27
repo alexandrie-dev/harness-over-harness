@@ -27,6 +27,8 @@ function updateMessage(state: UpdateState): string {
       return `HoH ${state.version} has no package for this system.`;
     case 'available':
       return `HoH ${state.version} is available. Installing it restarts HoH and interrupts running tasks.`;
+    case 'manualUpdateAvailable':
+      return `HoH ${state.version} is available from GitHub Releases. Your current installation has extra files and requires a manual update.`;
     case 'downloading':
       return `Downloading HoH ${state.version}…`;
     case 'installing':
@@ -66,7 +68,7 @@ export function SidebarUpdateButton() {
               className="hoh-side__action"
               aria-label="Update"
               tooltip="Update"
-              isActive={state.kind === 'available'}
+              isActive={state.kind === 'available' || state.kind === 'manualUpdateAvailable'}
             >
               <RefreshCwIcon
                 aria-hidden

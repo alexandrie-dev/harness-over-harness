@@ -1,3 +1,5 @@
+#[cfg(target_os = "linux")]
+use super::require_managed_linux_bundle;
 use super::{
     Package, candidate::initialize_engine_status, open_regular_file, read_install_metadata,
     swap_directories,
@@ -139,6 +141,8 @@ impl Recovery {
         staging: &Path,
         package: Package,
     ) -> io::Result<(Self, File)> {
+        #[cfg(target_os = "linux")]
+        require_managed_linux_bundle(installed)?;
         let directory = sibling_path(installed, ROLLBACK_SUFFIX)?;
         if Self::open(installed, package)?.is_some() {
             return Err(io::Error::new(
@@ -338,6 +342,26 @@ fn sync_tree(path: &Path) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn publish_leaves_a_prepared_plugin_in_the_installation() {
+        let parent = tempfile::tempdir().unwrap();
+        let package = super::super::package_for("linux", "x86_64").unwrap();
+        let installed = parent.path().join(package.install_dir);
+        let staging = parent.path().join(".hoh-update-test");
+        let plugin = installed.join("my-plugin");
+        fs::create_dir_all(&plugin).unwrap();
+        let manifest = plugin.join("hoh-package.json");
+        fs::write(&manifest, b"prepared plugin").unwrap();
+        fs::create_dir(&staging).unwrap();
+
+        let result = Recovery::publish(&installed, &staging, package);
+        assert!(matches!(result, Err(error) if error.kind() == io::ErrorKind::Unsupported));
+        assert_eq!(fs::read(manifest).unwrap(), b"prepared plugin");
+        assert!(staging.is_dir());
+        assert!(Recovery::open(&installed, package).unwrap().is_none());
+    }
 
     #[test]
     fn user_quit_and_commit_are_mutually_exclusive() {
