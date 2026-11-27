@@ -288,6 +288,26 @@ function timelineMessageEdit(code: string): string {
 export function sidebarList(code: string): string {
   return anchorPatch('Sidebar.tsx', code, [
     ['import { SidebarHeaderIconButton, SidebarThreadHeader } from "./sidebar/SidebarThreadHeader";', 'import { SidebarHeaderIconButton } from "./sidebar/SidebarThreadHeader";\nimport { SidebarTop as SidebarThreadHeader } from ' + JSON.stringify(SIDEBAR_TOP) + ';'],
+    ['  const [settledShelfExpanded, setSettledShelfExpanded] = useLocalStorage(', '  const [storedSettledShelfExpanded, setSettledShelfExpanded] = useLocalStorage('],
+    ['  const [snoozedShelfExpanded, setSnoozedShelfExpanded]', '  const settledShelfExpanded = HOH_SHOW_SETTLED_SHELF && storedSettledShelfExpanded;\n  const [snoozedShelfExpanded, setSnoozedShelfExpanded]'],
+    [`  const renderedSettledThreads = settledShelfExpanded
+    ? visibleSettledThreads
+    : routeThreadOnly(visibleSettledThreads, routeRowThreadKey);`, `  const renderedSettledThreads = HOH_SHOW_SETTLED_SHELF
+    ? settledShelfExpanded
+      ? visibleSettledThreads
+      : routeThreadOnly(visibleSettledThreads, routeRowThreadKey)
+    : EMPTY_THREADS;`],
+    [`    items.push({ kind: "marker", marker: "settled-header" });
+    const settledRows = rowsOf(renderedSettledThreads, "settled");
+    items.push({ kind: "marker", marker: "settled-placeholder" });
+    items.push(...settledRows);`, `    if (HOH_SHOW_SETTLED_SHELF) {
+      items.push({ kind: "marker", marker: "settled-header" });
+      items.push({ kind: "marker", marker: "settled-placeholder" });
+      items.push(...rowsOf(renderedSettledThreads, "settled"));
+    }`],
+    ['        settledCount ===\n', '        (HOH_SHOW_SETTLED_SHELF ? settledCount : 0) ===\n'],
+    ['          (settledCount === 0 || scopedProjectGroups.length > 0) ? (', '          (!HOH_SHOW_SETTLED_SHELF || settledCount === 0 || scopedProjectGroups.length > 0) ? ('],
+    ['                <T>No chats yet</T>', '                settledCount > 0 ? <T>No active chats</T> : <T>No chats yet</T>'],
     ['scopedProjectGroups.length > 0 || (group.pinned && !group.archived)', '!group.archived'],
     ['section === "active" || section === "pinned" || section === "working";', 'false;'],
     // Пустой черновик (разговор без первого сообщения: хост даёт ему latestUserMessageAt = null) в «Recent chats» не показывается.
@@ -299,7 +319,7 @@ export function sidebarList(code: string): string {
       }`],
     ['        ref={sidebarContentRef}', '        ref={sidebarContentRef}\n        data-hoh-hide-in-rail=""'],
     ['newThreadDisabled={projects.length === 0}', 'newThreadDisabled={projects.length === 0 && scratchId === null}'],
-  ], 'import { useMemo as useHohMemo } from "react";\nimport { useScratchProject as useHohScratchProject } from "~/hooks/useScratchProject";\n');
+  ], 'import { useMemo as useHohMemo } from "react";\nimport { useScratchProject as useHohScratchProject } from "~/hooks/useScratchProject";\nconst HOH_SHOW_SETTLED_SHELF = false;\n');
 }
 function sidebarLayout(code: string): string {
   return anchorPatch('AppSidebarLayout.tsx', code, [
