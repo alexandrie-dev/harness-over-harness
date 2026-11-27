@@ -26,6 +26,8 @@ use tauri::{Manager, ipc::Channel};
 const DEFAULT_RELEASE_REPOSITORY: &str = "alexandrie-dev/harness-over-harness";
 const MAX_ASSET_SIZE: u64 = 512 * 1024 * 1024;
 const MAX_METADATA_SIZE: u64 = 4096;
+const INVALID_PACKAGE: &str =
+    "The package does not contain a complete HoH installation for this release.";
 
 #[derive(Clone, Copy)]
 struct Package {
@@ -65,12 +67,13 @@ impl Package {
         format!("{}.{}", self.name, self.extension)
     }
 
-    fn staged_in(self, unpacked: &Path) -> PathBuf {
-        if self.extension == "zip" {
-            unpacked.join(self.install_dir)
+    fn staged_in(self, unpacked: &Path) -> io::Result<PathBuf> {
+        let relative = if self.extension == "zip" {
+            PathBuf::from(self.install_dir)
         } else {
-            unpacked.join(self.name).join(self.install_dir)
-        }
+            Path::new(self.name).join(self.install_dir)
+        };
+        package_directory(unpacked, &relative)
     }
 
     fn installed_at(self, executable: &Path) -> Option<&Path> {
@@ -86,6 +89,23 @@ impl Package {
             && root.join(self.version_file).symlink_metadata().is_ok())
         .then_some(root)
     }
+}
+
+fn package_directory(root: &Path, relative: &Path) -> io::Result<PathBuf> {
+    let mut directory = root.to_owned();
+    let require_directory = |path: &Path| -> io::Result<()> {
+        if path.symlink_metadata()?.is_dir() {
+            Ok(())
+        } else {
+            Err(io::ErrorKind::InvalidData.into())
+        }
+    };
+    require_directory(&directory)?;
+    for component in relative.components() {
+        directory.push(component.as_os_str());
+        require_directory(&directory)?;
+    }
+    Ok(directory)
 }
 
 fn open_regular_file(path: &Path) -> io::Result<File> {
@@ -411,6 +431,23 @@ impl Asset {
     }
 }
 
+fn validate_bundle_layout(bundle: &Path, package: Package, version: &Version) -> io::Result<()> {
+    let marker = Path::new(package.version_file);
+    package_directory(bundle, marker.parent().ok_or(io::ErrorKind::InvalidInput)?)?;
+    let bin = package_directory(bundle, Path::new(package.binary_dir))?;
+    let version_marker = read_install_metadata(&bundle.join(marker))?;
+    if version_marker.trim() != version.to_string() {
+        return Err(io::ErrorKind::InvalidData.into());
+    }
+    for program in ["hoh-desktop", "hoh"] {
+        let metadata = bin.join(program).symlink_metadata()?;
+        if !metadata.is_file() || metadata.permissions().mode() & 0o100 == 0 {
+            return Err(io::ErrorKind::InvalidData.into());
+        }
+    }
+    Ok(())
+}
+
 fn validate_bundle(
     bundle: &Path,
     package: Package,
@@ -420,22 +457,7 @@ fn validate_bundle(
     if cancelled() {
         return Err("The update was cancelled.".into());
     }
-    let invalid = || "The package does not contain a complete HoH installation for this release.";
-    if !bundle.symlink_metadata().is_ok_and(|file| file.is_dir()) {
-        return Err(invalid().into());
-    }
-    let version_marker =
-        read_install_metadata(&bundle.join(package.version_file)).map_err(|_| invalid())?;
-    if version_marker.trim() != version.to_string() {
-        return Err(invalid().into());
-    }
-    for program in ["hoh-desktop", "hoh"] {
-        let binary = bundle.join(package.binary_dir).join(program);
-        let metadata = binary.symlink_metadata().map_err(|_| invalid())?;
-        if !metadata.is_file() || metadata.permissions().mode() & 0o100 == 0 {
-            return Err(invalid().into());
-        }
-    }
+    validate_bundle_layout(bundle, package, version).map_err(|_| INVALID_PACKAGE)?;
     #[cfg(target_os = "macos")]
     {
         let error =
@@ -567,8 +589,18 @@ fn update(
     let unpacked = staging.path().join("unpacked");
     fs::create_dir(&unpacked)
         .map_err(|error| format!("Could not prepare the package extractor ({error})."))?;
-    extract::extract(&archive, &unpacked, cancelled)?;
-    let bundle = package.staged_in(&unpacked);
+    match extract::extract(&archive, &unpacked, cancelled) {
+        Ok(()) => {}
+        Err(extract::ExtractionError::Failed(error)) => return Err(error),
+        Err(extract::ExtractionError::ShutdownUnconfirmed(error)) => {
+            let retained = staging.keep();
+            return Err(format!(
+                "Could not confirm the package extractor stopped ({error}). Staging was retained at {}.",
+                retained.display()
+            ));
+        }
+    }
+    let bundle = package.staged_in(&unpacked).map_err(|_| INVALID_PACKAGE)?;
     validate_bundle(&bundle, package, &version, cancelled)?;
     #[cfg(target_os = "linux")]
     extract::preserve_access_modes(installed, &bundle).map_err(|error| {
@@ -733,6 +765,68 @@ mod tests {
         assert!(asset.verify(&file, || false).is_ok());
         fs::write(&file, b"modified").unwrap();
         assert!(asset.verify(&file, || false).is_err());
+    }
+
+    fn write_bundle_layout(bundle: &Path, package: Package) {
+        let marker = bundle.join(package.version_file);
+        fs::create_dir_all(marker.parent().unwrap()).unwrap();
+        fs::write(&marker, b"0.0.1\n").unwrap();
+        let bin = bundle.join(package.binary_dir);
+        fs::create_dir_all(&bin).unwrap();
+        for program in ["hoh-desktop", "hoh"] {
+            let path = bin.join(program);
+            fs::write(&path, b"executable").unwrap();
+            fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
+        }
+    }
+
+    #[test]
+    fn staged_linux_bundle_rejects_a_symlinked_package_directory() {
+        use std::os::unix::fs::symlink;
+
+        let directory = tempfile::tempdir().unwrap();
+        let unpacked = directory.path().join("unpacked");
+        let outside = directory.path().join("outside");
+        let package = package_for("linux", "x86_64").unwrap();
+        let bundle = outside.join(package.install_dir);
+        write_bundle_layout(&bundle, package);
+        assert!(validate_bundle_layout(&bundle, package, &Version::new(0, 0, 1)).is_ok());
+        fs::create_dir(&unpacked).unwrap();
+        symlink(&outside, unpacked.join(package.name)).unwrap();
+
+        assert_eq!(
+            package.staged_in(&unpacked).unwrap_err().kind(),
+            io::ErrorKind::InvalidData
+        );
+    }
+
+    #[test]
+    fn staged_macos_bundle_rejects_symlinked_contents_and_subdirectories() {
+        use std::os::unix::fs::symlink;
+
+        let directory = tempfile::tempdir().unwrap();
+        let unpacked = directory.path().join("unpacked");
+        let package = package_for("macos", "aarch64").unwrap();
+        let bundle = unpacked.join(package.install_dir);
+        let version = Version::new(0, 0, 1);
+        write_bundle_layout(&bundle, package);
+        assert_eq!(package.staged_in(&unpacked).unwrap(), bundle);
+        assert!(validate_bundle_layout(&bundle, package, &version).is_ok());
+
+        let outside = directory.path().join("outside");
+        for name in ["Contents", "Contents/MacOS", "Contents/Resources"] {
+            let path = bundle.join(name);
+            fs::rename(&path, &outside).unwrap();
+            symlink(&outside, &path).unwrap();
+            assert_eq!(
+                validate_bundle_layout(&bundle, package, &version)
+                    .unwrap_err()
+                    .kind(),
+                io::ErrorKind::InvalidData
+            );
+            fs::remove_file(&path).unwrap();
+            fs::rename(&outside, &path).unwrap();
+        }
     }
 
     #[test]

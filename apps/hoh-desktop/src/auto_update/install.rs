@@ -1,6 +1,9 @@
 use super::{
     Package,
-    candidate::{CandidateEngine, ENGINE_GUARD, run_guard},
+    candidate::{
+        CandidateEngine, ENGINE_GUARD, await_engine_stop, confirm_interrupted_engine_stopped,
+        engine_is_running, run_guard,
+    },
     instance::{InstanceLock, pass_fd, take_fd},
     open_regular_file, package_for, read_install_metadata,
     recovery::{Recovery, is_backup, sibling_path},
@@ -58,6 +61,7 @@ pub struct Installation {
 
 struct CandidateReadiness {
     lifecycle: Arc<UnixStream>,
+    engine_status: File,
     ui: Mutex<Option<(u32, Instant)>>,
 }
 
@@ -160,17 +164,6 @@ impl Installation {
                 "Restore the HoH backup to its installation path before launching it.".into(),
             );
         }
-        if candidate {
-            let connect_error =
-                |error| format!("Could not connect to the HoH update worker ({error}).");
-            let lifecycle =
-                UnixStream::from(take_fd(args.next().as_deref()).map_err(connect_error)?);
-            lifecycle.set_nonblocking(true).map_err(connect_error)?;
-            installation.readiness = Some(Arc::new(CandidateReadiness {
-                lifecycle: Arc::new(lifecycle),
-                ui: Mutex::default(),
-            }));
-        }
         let lease_error = |error| format!("Could not lock the HoH installation ({error}).");
         let lease = if candidate || recovered {
             inherited_lease().map_err(lease_error)?
@@ -198,6 +191,21 @@ impl Installation {
                 "The HoH installation has changed. Open it again to start the current version."
                     .into(),
             );
+        }
+        if candidate {
+            let connect_error =
+                |error| format!("Could not connect to the HoH update worker ({error}).");
+            let lifecycle =
+                UnixStream::from(take_fd(args.next().as_deref()).map_err(connect_error)?);
+            lifecycle.set_nonblocking(true).map_err(connect_error)?;
+            let recovery = Recovery::open(installed)
+                .map_err(connect_error)?
+                .ok_or("Could not find the pending HoH update.")?;
+            installation.readiness = Some(Arc::new(CandidateReadiness {
+                lifecycle: Arc::new(lifecycle),
+                engine_status: recovery.prepare_engine_status().map_err(connect_error)?,
+                ui: Mutex::default(),
+            }));
         }
         installation.lease = Some(lease);
         Ok(Some(installation))
@@ -361,6 +369,7 @@ impl Installation {
                     (*engine_ready_at).max(ui_ready_at).elapsed() >= START_STABILITY
                 }) && !transport.exited()
                     && !transport.disconnected()
+                    && engine_is_running(&readiness.engine_status)
             });
             let reply = confirmed.map_or(0, |(generation, _)| generation).to_be_bytes();
             if let Err(error) = lifecycle.write_all(&reply) {
@@ -378,6 +387,7 @@ impl Installation {
                 config,
                 lifecycle: readiness.lifecycle.clone(),
                 lease: lease.try_clone()?,
+                status: readiness.engine_status.try_clone()?,
             }))
         } else {
             Ok(Arc::new(config))
@@ -457,7 +467,11 @@ fn await_ready(child: &mut Child, lifecycle: &mut UnixStream) -> io::Result<bool
     Ok(false)
 }
 
-fn stop_candidate(child: &mut Child, lifecycle: &mut UnixStream) -> io::Result<()> {
+fn stop_candidate(
+    child: &mut Child,
+    lifecycle: &mut UnixStream,
+    recovery: &Recovery,
+) -> io::Result<()> {
     if let Err(error) = child.kill()
         && child.try_wait()?.is_none()
     {
@@ -473,19 +487,31 @@ fn stop_candidate(child: &mut Child, lifecycle: &mut UnixStream) -> io::Result<(
         }
         thread::sleep(WAIT_STEP);
     }
+    await_candidate_socket_close(lifecycle, deadline)?;
+    if let Some(status) = recovery.engine_status()? {
+        await_engine_stop(&status, deadline)?;
+    }
+    Ok(())
+}
+
+fn await_candidate_socket_close(lifecycle: &mut UnixStream, deadline: Instant) -> io::Result<()> {
     lifecycle.set_nonblocking(true)?;
     while Instant::now() < deadline {
         match lifecycle.read(&mut [0; 64]) {
             Ok(0) => return Ok(()),
             Ok(_) => {}
             Err(error) if error.kind() == io::ErrorKind::WouldBlock => thread::sleep(WAIT_STEP),
-            Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    io::ErrorKind::Interrupted | io::ErrorKind::ConnectionReset
+                ) => {}
             Err(error) => return Err(error),
         }
     }
     Err(io::Error::new(
         io::ErrorKind::TimedOut,
-        "could not confirm that the updated HoH engine stopped",
+        "the updated HoH lifecycle socket did not close",
     ))
 }
 
@@ -505,6 +531,9 @@ fn recover_pending(
     backup.try_lock()?;
     let restored = recovery.is_swapped(active, &backup)? && !recovery.committed()?;
     if restored {
+        if let Some(status) = recovery.engine_status()? {
+            confirm_interrupted_engine_stopped(&status)?;
+        }
         recovery.exchange(installed, package)?;
     }
     recovery.sync_exchange(installed)?;
@@ -589,7 +618,7 @@ fn worker(
                 Err(error) => eprintln!("HoH could not commit the updated installation: {error}"),
             }
         }
-        stop_candidate(&mut child, &mut lifecycle)?;
+        stop_candidate(&mut child, &mut lifecycle, &recovery)?;
     }
     recovery.exchange(installed, package)?;
     let result = recovery.sync_exchange(installed).and_then(|()| recovery.finish());
@@ -616,31 +645,9 @@ pub(super) fn wait_for_child(
     child: &mut Child,
     cancelled: impl Fn() -> bool,
 ) -> io::Result<std::process::ExitStatus> {
-    wait_for(child, cancelled, |child| {
-        let _ = child.kill();
-    })
-}
-
-pub(super) fn wait_for_group(
-    child: &mut Child,
-    cancelled: impl Fn() -> bool,
-) -> io::Result<std::process::ExitStatus> {
-    wait_for(child, cancelled, |child| {
-        // The extractor starts its own process group, including its decompressor.
-        unsafe {
-            libc::kill(-(child.id() as libc::pid_t), libc::SIGKILL);
-        }
-    })
-}
-
-fn wait_for(
-    child: &mut Child,
-    cancelled: impl Fn() -> bool,
-    stop: impl Fn(&mut Child),
-) -> io::Result<std::process::ExitStatus> {
     loop {
         if cancelled() {
-            stop(child);
+            let _ = child.kill();
             child.wait()?;
             return Err(io::ErrorKind::Interrupted.into());
         }
@@ -648,5 +655,19 @@ fn wait_for(
             return Ok(status);
         }
         thread::sleep(WAIT_STEP);
+    }
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn candidate_socket_drains_to_eof_after_reset() {
+        let (mut worker, candidate) = UnixStream::pair().unwrap();
+        worker.write_all(&[CHECK_READY]).unwrap();
+        drop(candidate);
+
+        await_candidate_socket_close(&mut worker, Instant::now() + STOP_TIMEOUT).unwrap();
     }
 }

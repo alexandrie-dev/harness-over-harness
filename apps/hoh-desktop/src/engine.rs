@@ -7,9 +7,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::{
     collections::HashMap,
-    io::{self, BufReader, PipeReader, PipeWriter},
+    io::{self, BufReader, PipeWriter},
     path::PathBuf,
-    process::{Child, Command, Stdio},
+    process::{Child, Command, ExitStatus, Stdio},
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -135,7 +135,7 @@ impl ProcessConfig {
     pub(crate) fn connect_process(
         &self,
         mut command: Command,
-        guard: Option<(PipeWriter, PipeReader)>,
+        guard: Option<PipeWriter>,
         generation: u64,
         inbox: mpsc::Sender<Message>,
     ) -> Result<Box<dyn Transport>, String> {
@@ -206,7 +206,7 @@ impl ProcessConfig {
 }
 struct StdioTransport {
     child: Child,
-    guard: Option<(PipeWriter, PipeReader)>,
+    guard: Option<PipeWriter>,
     tx: Option<mpsc::SyncSender<Value>>,
     threads: Vec<thread::JoinHandle<()>>,
     disconnected: Arc<AtomicBool>,
@@ -222,10 +222,6 @@ impl Transport for StdioTransport {
     }
     fn exited(&mut self) -> bool {
         process_exited(&mut self.child)
-            || self
-                .guard
-                .as_ref()
-                .is_some_and(|(_, lifetime)| pipe_closed(lifetime, Instant::now()))
     }
     fn disconnected(&self) -> bool {
         self.disconnected.load(Ordering::Acquire)
@@ -238,10 +234,10 @@ impl Transport for StdioTransport {
             return confirmed;
         }
         self.tx.take();
-        let confirmed = if let Some((control, lifetime)) = self.guard.take() {
+        let confirmed = if let Some(control) = self.guard.take() {
             drop(control);
-            let deadline = Instant::now() + SHUTDOWN_GRACE;
-            wait_for_exit(&mut self.child, deadline).is_ok() && pipe_closed(&lifetime, deadline)
+            wait_for_exit(&mut self.child, Instant::now() + SHUTDOWN_GRACE)
+                .is_ok_and(|status| status.success())
         } else {
             kill_and_wait(&mut self.child).is_ok()
         };
@@ -255,41 +251,16 @@ impl Transport for StdioTransport {
     }
 }
 
-#[cfg(unix)]
-fn pipe_closed(pipe: &PipeReader, deadline: Instant) -> bool {
-    use std::os::fd::AsRawFd;
-    let mut descriptor = libc::pollfd {
-        fd: pipe.as_raw_fd(),
-        events: 0,
-        revents: 0,
-    };
+fn wait_for_exit(child: &mut Child, deadline: Instant) -> io::Result<ExitStatus> {
     loop {
-        let timeout = deadline.saturating_duration_since(Instant::now());
-        let result = unsafe { libc::poll(&mut descriptor, 1, timeout.as_millis() as libc::c_int) };
-        if result >= 0 {
-            return result > 0 && descriptor.revents & libc::POLLHUP != 0;
+        if let Some(status) = child.try_wait()? {
+            return Ok(status);
         }
-        if io::Error::last_os_error().kind() != io::ErrorKind::Interrupted
-            || Instant::now() >= deadline
-        {
-            return false;
-        }
-    }
-}
-
-#[cfg(not(unix))]
-fn pipe_closed(_pipe: &PipeReader, _deadline: Instant) -> bool {
-    false
-}
-
-fn wait_for_exit(child: &mut Child, deadline: Instant) -> io::Result<()> {
-    while child.try_wait()?.is_none() {
         if Instant::now() >= deadline {
             return Err(io::ErrorKind::TimedOut.into());
         }
         thread::sleep(Duration::from_millis(10));
     }
-    Ok(())
 }
 
 pub(crate) fn process_exited(child: &mut Child) -> bool {

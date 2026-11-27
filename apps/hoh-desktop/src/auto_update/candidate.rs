@@ -1,4 +1,4 @@
-use super::instance::{inherit_fd, pass_fd, take_fd};
+use super::instance::{pass_fd, take_fd};
 use crate::{
     engine::{
         Connector, Message, ProcessConfig, Transport, kill_and_wait, process_exited,
@@ -12,9 +12,14 @@ use std::{
     ffi::OsString,
     fs::{self, File},
     io,
+    mem::size_of,
     os::{
         fd::AsRawFd,
-        unix::{fs::PermissionsExt, net::UnixStream, process::CommandExt},
+        unix::{
+            fs::{FileExt, PermissionsExt},
+            net::UnixStream,
+            process::CommandExt,
+        },
     },
     path::PathBuf,
     process::Command,
@@ -27,11 +32,16 @@ const PROBE_TIMEOUT: Duration = Duration::from_secs(10);
 const PROBE_STABILITY: Duration = Duration::from_secs(1);
 const PROBE_POLL: Duration = Duration::from_millis(50);
 const PROBE_INITIALIZE: &str = "update-probe-initialize";
+const STATUS_PID_SIZE: usize = size_of::<libc::pid_t>();
+const BOOT_ID_SIZE: usize = 36;
+#[cfg(target_os = "macos")]
+const ENGINE_UNCONFIRMED: libc::pid_t = -1;
 
 pub(super) struct CandidateEngine {
     pub config: ProcessConfig,
     pub lifecycle: Arc<UnixStream>,
     pub lease: File,
+    pub status: File,
 }
 
 impl Connector for CandidateEngine {
@@ -41,18 +51,16 @@ impl Connector for CandidateEngine {
         inbox: mpsc::Sender<Message>,
     ) -> Result<Box<dyn Transport>, String> {
         let (control, owner) = io::pipe().map_err(guard_error)?;
-        let (lifetime, engine_end) = io::pipe().map_err(guard_error)?;
         let executable = std::env::current_exe().map_err(guard_error)?;
         let mut command = Command::new(executable);
         command.arg(ENGINE_GUARD).process_group(0);
         pass_fd(&mut command, &control).map_err(guard_error)?;
         pass_fd(&mut command, &*self.lifecycle).map_err(guard_error)?;
         pass_fd(&mut command, &self.lease).map_err(guard_error)?;
-        pass_fd(&mut command, &engine_end).map_err(guard_error)?;
-        drop(engine_end);
+        pass_fd(&mut command, &self.status).map_err(guard_error)?;
         command.arg(&self.config.path).args(&self.config.args);
         self.config
-            .connect_process(command, Some((owner, lifetime)), generation, inbox)
+            .connect_process(command, Some(owner), generation, inbox)
     }
 }
 
@@ -62,18 +70,17 @@ fn guard_error(error: io::Error) -> String {
 
 pub(super) fn run_guard(mut args: impl Iterator<Item = OsString>) -> io::Result<()> {
     let control = take_fd(args.next().as_deref())?;
-    let lifecycle = take_fd(args.next().as_deref())?;
-    let lease = take_fd(args.next().as_deref())?;
-    let lifetime = take_fd(args.next().as_deref())?;
+    let _lifecycle = take_fd(args.next().as_deref())?;
+    let _lease = take_fd(args.next().as_deref())?;
+    let status = File::from(take_fd(args.next().as_deref())?);
+    require_engine_stopped(&status)?;
     let executable = args.next().ok_or(io::ErrorKind::InvalidInput)?;
     let mut command = Command::new(executable);
     command.args(args).process_group(0);
-    inherit_fd(&mut command, &lifecycle)?;
-    inherit_fd(&mut command, &lease)?;
-    inherit_fd(&mut command, &lifetime)?;
     #[cfg(target_os = "linux")]
     unsafe {
         let guard_pid = libc::getpid();
+        let status = status.try_clone()?;
         command.pre_exec(move || {
             if libc::prctl(
                 libc::PR_SET_PDEATHSIG,
@@ -88,12 +95,18 @@ pub(super) fn run_guard(mut args: impl Iterator<Item = OsString>) -> io::Result<
             if libc::getppid() != guard_pid {
                 return Err(io::ErrorKind::Interrupted.into());
             }
-            Ok(())
+            record_engine_status(&status, libc::getpid())
         });
     }
-    let mut engine = command.spawn()?;
-    drop(command);
-    drop(lifetime);
+    #[cfg(target_os = "macos")]
+    record_engine_status(&status, ENGINE_UNCONFIRMED)?;
+    let mut engine = match command.spawn() {
+        Ok(engine) => engine,
+        Err(error) => {
+            eprintln!("Could not start the HoH update engine: {error}");
+            return record_engine_status(&status, 0);
+        }
+    };
     unsafe {
         libc::close(libc::STDIN_FILENO);
         libc::close(libc::STDOUT_FILENO);
@@ -110,7 +123,142 @@ pub(super) fn run_guard(mut args: impl Iterator<Item = OsString>) -> io::Result<
             break;
         }
     }
-    kill_and_wait(&mut engine)
+    kill_and_wait(&mut engine)?;
+    record_engine_status(&status, 0)
+}
+
+pub(super) fn initialize_engine_status(status: &File) -> io::Result<()> {
+    if let Some(boot) = boot_id() {
+        status.write_all_at(&boot, STATUS_PID_SIZE as u64)?;
+    }
+    record_engine_status(status, 0)
+}
+
+fn record_engine_status(status: &File, pid: libc::pid_t) -> io::Result<()> {
+    status.write_all_at(&pid.to_ne_bytes(), 0)?;
+    status.sync_all()
+}
+
+fn engine_status(status: &File) -> io::Result<libc::pid_t> {
+    let mut bytes = [0; STATUS_PID_SIZE];
+    status.read_exact_at(&mut bytes, 0)?;
+    Ok(libc::pid_t::from_ne_bytes(bytes))
+}
+
+fn require_engine_stopped(status: &File) -> io::Result<()> {
+    if engine_status(status)? == 0 {
+        return Ok(());
+    }
+    Err(unconfirmed_engine_exit())
+}
+
+pub(super) fn confirm_interrupted_engine_stopped(status: &File) -> io::Result<()> {
+    if engine_status(status)? == 0 {
+        return Ok(());
+    }
+    let mut recorded = [0; BOOT_ID_SIZE];
+    if let Some(current) = boot_id()
+        && status.read_exact_at(&mut recorded, STATUS_PID_SIZE as u64).is_ok()
+        && recorded != current
+    {
+        return Ok(());
+    }
+    Err(unconfirmed_engine_exit())
+}
+
+#[cfg(target_os = "linux")]
+fn boot_id() -> Option<[u8; BOOT_ID_SIZE]> {
+    let id = fs::read_to_string("/proc/sys/kernel/random/boot_id").ok()?;
+    id.trim().as_bytes().try_into().ok()
+}
+
+#[cfg(target_os = "macos")]
+fn boot_id() -> Option<[u8; BOOT_ID_SIZE]> {
+    let mut id = [0; BOOT_ID_SIZE + 1];
+    let mut length = id.len();
+    let result = unsafe {
+        libc::sysctlbyname(
+            c"kern.bootsessionuuid".as_ptr(),
+            id.as_mut_ptr().cast(),
+            &mut length,
+            std::ptr::null_mut(),
+            0,
+        )
+    };
+    if result != 0 || length != id.len() || id[BOOT_ID_SIZE] != 0 {
+        return None;
+    }
+    id[..BOOT_ID_SIZE].try_into().ok()
+}
+
+fn unconfirmed_engine_exit() -> io::Error {
+    io::Error::other("could not confirm that the updated HoH engine stopped")
+}
+
+pub(super) fn engine_is_running(status: &File) -> bool {
+    let Ok(pid) = engine_status(status) else {
+        return false;
+    };
+    #[cfg(target_os = "macos")]
+    {
+        pid == ENGINE_UNCONFIRMED
+    }
+    #[cfg(target_os = "linux")]
+    {
+        if pid <= 0 {
+            return false;
+        }
+        match process_has_exited(pid, Instant::now()) {
+            Ok(exited) => !exited,
+            Err(error) => matches!(error.raw_os_error(), Some(libc::ENOSYS | libc::EPERM)),
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+pub(super) fn await_engine_stop(status: &File, _deadline: Instant) -> io::Result<()> {
+    require_engine_stopped(status)
+}
+
+#[cfg(target_os = "linux")]
+pub(super) fn await_engine_stop(status: &File, deadline: Instant) -> io::Result<()> {
+    let pid = engine_status(status)?;
+    if pid == 0 || pid > 0 && process_has_exited(pid, deadline)? {
+        return Ok(());
+    }
+    Err(unconfirmed_engine_exit())
+}
+
+#[cfg(target_os = "linux")]
+fn process_has_exited(pid: libc::pid_t, deadline: Instant) -> io::Result<bool> {
+    use std::os::fd::{FromRawFd, OwnedFd};
+
+    let fd = unsafe { libc::syscall(libc::SYS_pidfd_open, pid, 0) };
+    if fd < 0 {
+        let error = io::Error::last_os_error();
+        return if error.raw_os_error() == Some(libc::ESRCH) {
+            Ok(true)
+        } else {
+            Err(error)
+        };
+    }
+    let fd = unsafe { OwnedFd::from_raw_fd(fd as libc::c_int) };
+    let mut descriptor = libc::pollfd {
+        fd: fd.as_raw_fd(),
+        events: libc::POLLIN,
+        revents: 0,
+    };
+    loop {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        let result = unsafe { libc::poll(&mut descriptor, 1, remaining.as_millis() as libc::c_int) };
+        if result >= 0 {
+            return Ok(descriptor.revents & (libc::POLLIN | libc::POLLHUP) != 0);
+        }
+        let error = io::Error::last_os_error();
+        if error.kind() != io::ErrorKind::Interrupted || Instant::now() >= deadline {
+            return Err(error);
+        }
+    }
 }
 
 pub(super) fn qualify(executable: PathBuf, cancelled: impl Fn() -> bool) -> Result<(), String> {

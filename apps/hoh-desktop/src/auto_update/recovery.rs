@@ -1,4 +1,7 @@
-use super::{Package, read_install_metadata, swap_directories};
+use super::{
+    Package, candidate::initialize_engine_status, open_regular_file, read_install_metadata,
+    swap_directories,
+};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
@@ -15,6 +18,7 @@ use std::{
 };
 
 const PENDING: &str = "pending.json";
+const ENGINE_STATUS: &str = "candidate-engine";
 const ROLLBACK_SUFFIX: &str = "-rollback";
 const RETIRED_PREFIX: &str = ".hoh-retired-";
 
@@ -110,7 +114,7 @@ impl Recovery {
         }
         let unpacked = staging.join("unpacked");
         let staged_bundle = staging.join(package.install_dir);
-        fs::rename(package.staged_in(&unpacked), &staged_bundle)?;
+        fs::rename(package.staged_in(&unpacked)?, &staged_bundle)?;
         fs::remove_dir_all(unpacked)?;
         fs::remove_file(staging.join(package.asset_name()))?;
         let candidate = File::open(&staged_bundle)?;
@@ -133,6 +137,26 @@ impl Recovery {
 
     pub(super) fn backup(&self, package: Package) -> PathBuf {
         self.directory.join(package.install_dir)
+    }
+
+    pub(super) fn prepare_engine_status(&self) -> io::Result<File> {
+        let temporary = tempfile::NamedTempFile::new_in(&self.directory)?;
+        let status = temporary.as_file();
+        status.set_permissions(fs::Permissions::from_mode(0o644))?;
+        initialize_engine_status(status)?;
+        let status = temporary
+            .persist_noclobber(self.directory.join(ENGINE_STATUS))
+            .map_err(|error| error.error)?;
+        sync_directory(&self.directory)?;
+        Ok(status)
+    }
+
+    pub(super) fn engine_status(&self) -> io::Result<Option<File>> {
+        match open_regular_file(&self.directory.join(ENGINE_STATUS)) {
+            Ok(status) => Ok(Some(status)),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+            Err(error) => Err(error),
+        }
     }
 
     fn decision_path(&self) -> PathBuf {
