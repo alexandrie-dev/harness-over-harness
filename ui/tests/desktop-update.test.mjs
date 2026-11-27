@@ -25,6 +25,7 @@ test('desktop checks at startup and on the timer, and installs only on request',
         commands.push(command);
         if (command === 'check_for_update') return new Promise(resolve => { answerCheck = resolve; });
         assert.equal(command, 'auto_update');
+        assert.equal(args.expectedVersion, '0.2.0');
         args.onProgress.onmessage({ kind: 'downloading', version: '0.2.0' });
         return Promise.resolve({ kind: 'restarting', version: '0.2.0' });
       },

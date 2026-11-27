@@ -1,15 +1,19 @@
+mod install;
+pub use install::Installation;
+
 use semver::Version;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
     ffi::{CString, OsStr},
-    fs::{self, File, OpenOptions},
-    io::{self, BufRead, BufReader, Write},
-    os::unix::{ffi::OsStrExt, fs::PermissionsExt},
-    path::Path,
+    fs::{self, File},
+    io::{self, BufRead, BufReader, Read, Write},
+    os::unix::{ffi::OsStrExt, fs::PermissionsExt, process::CommandExt},
+    path::{Path, PathBuf},
     process::{Command, Stdio},
+    time::{Duration, Instant},
 };
-use tauri::ipc::Channel;
+use tauri::{Manager, ipc::Channel};
 
 const DEFAULT_RELEASE_REPOSITORY: &str = "alexandrie-dev/harness-over-harness";
 const MAX_ASSET_SIZE: u64 = 512 * 1024 * 1024;
@@ -50,6 +54,14 @@ fn package_for(os: &str, arch: &str) -> Option<Package> {
 impl Package {
     fn asset_name(self) -> String {
         format!("{}.{}", self.name, self.extension)
+    }
+
+    fn staged_in(self, unpacked: &Path) -> PathBuf {
+        if self.extension == "zip" {
+            unpacked.join(self.install_dir)
+        } else {
+            unpacked.join(self.name).join(self.install_dir)
+        }
     }
 
     fn installed_at(self, executable: &Path) -> Option<&Path> {
@@ -97,6 +109,7 @@ pub enum UpdateOutcome {
     UnsupportedInstall,
     NoRelease,
     UpToDate,
+    RolledBack,
     NoCompatiblePackage(Version),
     Available(Version),
     Restarting(Version),
@@ -129,7 +142,11 @@ fn fetch(
     destination: &Path,
     token: Option<&str>,
     response: Response,
+    cancelled: impl Fn() -> bool,
 ) -> Result<u16, String> {
+    if cancelled() {
+        return Err("The update check was cancelled.".into());
+    }
     let (accept, timeout, limit) = match response {
         Response::Metadata => ("application/vnd.github+json", "20", 2 * 1024 * 1024),
         Response::Archive => ("application/octet-stream", "300", MAX_ASSET_SIZE),
@@ -177,22 +194,27 @@ fn fetch(
             "Authorization: Bearer {token}"
         )
     });
-    let output = child
-        .wait_with_output()
+    let status = install::wait_for_child(&mut child, cancelled)
         .map_err(|error| format!("Could not read the GitHub response ({error})."))?;
-    if !output.status.success() || header.is_some_and(|result| result.is_err()) {
+    if !status.success() || header.is_some_and(|result| result.is_err()) {
         return Err("Could not download from GitHub. Check your connection and try again.".into());
     }
     if fs::metadata(destination).map_or(true, |file| file.len() > limit) {
         return Err("The GitHub response was missing or exceeded the download limit.".into());
     }
-    std::str::from_utf8(&output.stdout)
-        .ok()
-        .and_then(|status| status.parse().ok())
-        .ok_or_else(|| "Could not read the GitHub response status.".into())
+    let mut bytes = String::new();
+    child
+        .stdout
+        .take()
+        .expect("curl stdout is piped")
+        .read_to_string(&mut bytes)
+        .map_err(|error| format!("Could not read the GitHub response status ({error})."))?;
+    bytes
+        .parse()
+        .map_err(|_| "Could not read the GitHub response status.".into())
 }
 
-fn github_token() -> Option<String> {
+fn github_token(cancelled: impl Fn() -> bool) -> Option<String> {
     // Finder launches with a restricted PATH, so also look in the Homebrew bin directories.
     for binary in ["gh", "/opt/homebrew/bin/gh", "/usr/local/bin/gh"] {
         match Command::new(binary)
@@ -200,15 +222,29 @@ fn github_token() -> Option<String> {
             .env("GH_PROMPT_DISABLED", "1")
             .current_dir("/")
             .stdin(Stdio::null())
+            .stdout(Stdio::piped())
             .stderr(Stdio::null())
-            .output()
+            .spawn()
         {
-            Ok(output) => {
-                let token = String::from_utf8(output.stdout).ok()?.trim().to_owned();
-                return (output.status.success()
+            Ok(mut child) => {
+                let deadline = Instant::now() + Duration::from_secs(10);
+                let status = install::wait_for_child(&mut child, || {
+                    cancelled() || Instant::now() >= deadline
+                })
+                .ok()?;
+                let mut token = String::new();
+                child
+                    .stdout
+                    .take()?
+                    .take(1024)
+                    .read_to_string(&mut token)
+                    .ok()?;
+                let token = token.trim();
+                return (status.success()
                     && !token.is_empty()
+                    && token.len() < 1024
                     && token.bytes().all(|byte| byte.is_ascii_graphic()))
-                .then_some(token);
+                .then(|| token.to_owned());
             }
             Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
             Err(_) => return None,
@@ -240,22 +276,35 @@ fn release_repository() -> Result<&'static str, String> {
 fn latest_release(
     api: &str,
     destination: &Path,
+    cancelled: impl Fn() -> bool + Copy,
 ) -> Result<Option<(Release, Option<String>)>, String> {
     let url = format!("{api}/releases/latest");
     let mut token = None;
-    let mut status = fetch(&url, destination, None, Response::Metadata)?;
-    if status == 404 && fetch(api, destination, None, Response::Metadata)? == 200 {
+    let mut status = fetch(&url, destination, None, Response::Metadata, cancelled)?;
+    if status == 404 && fetch(api, destination, None, Response::Metadata, cancelled)? == 200 {
         return Ok(None);
     }
     if matches!(status, 401 | 403 | 404) {
-        token = github_token();
+        token = github_token(cancelled);
         if let Some(token) = token.as_deref() {
-            status = fetch(&url, destination, Some(token), Response::Metadata)?;
+            status = fetch(
+                &url,
+                destination,
+                Some(token),
+                Response::Metadata,
+                cancelled,
+            )?;
         }
     }
     if status == 404
         && token.is_some()
-        && fetch(api, destination, token.as_deref(), Response::Metadata)? == 200
+        && fetch(
+            api,
+            destination,
+            token.as_deref(),
+            Response::Metadata,
+            cancelled,
+        )? == 200
     {
         return Ok(None);
     }
@@ -307,8 +356,9 @@ impl Asset {
     }
 }
 
-fn extract(archive: &Path, staging: &Path) -> Result<(), String> {
-    let status = Command::new("/usr/bin/tar")
+fn extract(archive: &Path, staging: &Path, cancelled: impl Fn() -> bool) -> Result<(), String> {
+    let mut child = Command::new("/usr/bin/tar")
+        .process_group(0)
         .arg("-xf")
         .arg(archive)
         .arg("-C")
@@ -318,8 +368,10 @@ fn extract(archive: &Path, staging: &Path) -> Result<(), String> {
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
-        .status()
+        .spawn()
         .map_err(|error| format!("Could not start the package extractor ({error})."))?;
+    let status = install::wait_for_group(&mut child, cancelled)
+        .map_err(|error| format!("Could not complete package extraction ({error})."))?;
     if !status.success() {
         return Err(
             "Could not unpack the HoH release. On Linux, make sure zstd is installed.".into(),
@@ -392,7 +444,8 @@ fn swap_directories(installed: &Path, staged: &Path) -> io::Result<()> {
 fn update(
     executable: &Path,
     installed_version: &Version,
-    progress: Option<impl Fn(UpdateProgress)>,
+    installation: &Installation,
+    progress: Option<(Version, impl Fn(UpdateProgress))>,
 ) -> Result<UpdateOutcome, String> {
     let Some(package) = package_for(std::env::consts::OS, std::env::consts::ARCH) else {
         return Ok(UpdateOutcome::UnsupportedInstall);
@@ -400,11 +453,15 @@ fn update(
     let Some(installed) = package.installed_at(executable) else {
         return Ok(UpdateOutcome::UnsupportedInstall);
     };
+    if !installation.can_update() {
+        return Ok(UpdateOutcome::UnsupportedInstall);
+    }
+    let cancelled = || installation.cancelled();
     let metadata = tempfile::NamedTempFile::new()
         .map_err(|error| format!("Could not prepare the update check ({error})."))?;
     let repo = release_repository()?;
     let api = format!("https://api.github.com/repos/{repo}");
-    let Some((release, token)) = latest_release(&api, metadata.path())? else {
+    let Some((release, token)) = latest_release(&api, metadata.path(), cancelled)? else {
         return Ok(UpdateOutcome::NoRelease);
     };
     let Some(version) = available_version(&release, installed_version)? else {
@@ -417,31 +474,16 @@ fn update(
         return Err("The update package has an unexpected size.".into());
     }
     asset.checksum()?;
-    let Some(progress) = progress else {
+    let Some((expected, progress)) = progress else {
         return Ok(UpdateOutcome::Available(version));
     };
+    if expected != version {
+        return Ok(UpdateOutcome::Available(version));
+    }
 
     let parent = installed
         .parent()
         .ok_or("Could not locate the HoH installation.")?;
-    let lock = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(true)
-        .truncate(false)
-        .open(parent.join(".hoh-update.lock"))
-        .map_err(|error| format!("Could not write to the HoH installation folder ({error})."))?;
-    lock.try_lock()
-        .map_err(|error| format!("Could not acquire the HoH update lock ({error})."))?;
-
-    let marker = fs::read_to_string(installed.join(package.version_file))
-        .map_err(|error| format!("Could not read the installed version ({error})."))?;
-    if marker.trim() != installed_version.to_string() {
-        return Err(
-            "The installation has changed on disk. Restart HoH before checking again.".into(),
-        );
-    }
-
     let staging = tempfile::Builder::new()
         .prefix(".hoh-update-")
         .tempdir_in(parent)
@@ -457,7 +499,13 @@ fn update(
         )
     };
     let archive = staging.path().join(name);
-    let status = fetch(&url, &archive, token.as_deref(), Response::Archive)?;
+    let status = fetch(
+        &url,
+        &archive,
+        token.as_deref(),
+        Response::Archive,
+        cancelled,
+    )?;
     if status != 200 {
         return Err(format!(
             "GitHub could not serve the update package (HTTP {status})."
@@ -469,44 +517,58 @@ fn update(
     let unpacked = staging.path().join("unpacked");
     fs::create_dir(&unpacked)
         .map_err(|error| format!("Could not prepare the package extractor ({error})."))?;
-    extract(&archive, &unpacked)?;
-    let staged = if package.extension == "zip" {
-        unpacked.join(package.install_dir)
-    } else {
-        unpacked.join(package.name).join(package.install_dir)
-    };
-    validate_bundle(&staged, package, &version)?;
-    swap_directories(installed, &staged)
-        .map_err(|error| format!("Could not replace the HoH installation ({error})."))?;
+    extract(&archive, &unpacked, cancelled)?;
+    validate_bundle(&package.staged_in(&unpacked), package, &version)?;
+    installation.handoff(executable, installed, staging)?;
     Ok(UpdateOutcome::Restarting(version))
 }
 
 async fn run_update(
     window: tauri::WebviewWindow,
-    on_progress: Option<Channel<UpdateProgress>>,
+    request: Option<(Version, Channel<UpdateProgress>)>,
 ) -> Result<UpdateOutcome, String> {
     if window.label() != "main" {
         return Err("Updates are available in the main window.".into());
     }
-    use tauri::Manager;
     let app = window.app_handle();
+    let installation = app.state::<Installation>();
+    let installing = request.is_some();
+    if !installing && installation.take_recovered() {
+        return Ok(UpdateOutcome::RolledBack);
+    }
     let installed_version = app.package_info().version.clone();
-    let executable = tauri::process::current_binary(&app.env())
-        .map_err(|error| format!("Could not locate HoH ({error})."))?;
+    let executable =
+        std::env::current_exe().map_err(|error| format!("Could not locate HoH ({error})."))?;
+    installation.begin()?;
+    let worker_app = app.clone();
     let outcome = tauri::async_runtime::spawn_blocking(move || {
-        let notify = on_progress.map(|channel| {
-            move |progress| {
-                let _ = channel.send(progress);
-            }
-        });
-        update(&executable, &installed_version, notify)
+        update(
+            &executable,
+            &installed_version,
+            &worker_app.state::<Installation>(),
+            request.map(|(version, channel)| {
+                (version, move |progress| {
+                    let _ = channel.send(progress);
+                })
+            }),
+        )
     })
     .await
-    .map_err(|_| "HoH could not complete the update request.")??;
-    if matches!(outcome, UpdateOutcome::Restarting(_)) {
-        app.request_restart();
+    .map_err(|_| "HoH could not complete the update request.");
+    if installation.finish() {
+        app.exit(0);
     }
-    Ok(outcome)
+    outcome?
+}
+
+#[tauri::command]
+pub fn open_update_releases(window: tauri::WebviewWindow) -> Result<(), String> {
+    if window.label() != "main" {
+        return Err("Releases are available in the main window.".into());
+    }
+    let repo = release_repository()?;
+    let url = format!("https://github.com/{repo}/releases");
+    crate::opener::open(OsStr::new(&url))
 }
 
 #[tauri::command]
@@ -517,9 +579,10 @@ pub async fn check_for_update(window: tauri::WebviewWindow) -> Result<UpdateOutc
 #[tauri::command]
 pub async fn auto_update(
     window: tauri::WebviewWindow,
+    expected_version: Version,
     on_progress: Channel<UpdateProgress>,
 ) -> Result<UpdateOutcome, String> {
-    run_update(window, Some(on_progress)).await
+    run_update(window, Some((expected_version, on_progress))).await
 }
 
 #[cfg(test)]

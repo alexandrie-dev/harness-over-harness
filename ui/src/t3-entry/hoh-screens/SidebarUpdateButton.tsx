@@ -1,27 +1,32 @@
-import { isTauri } from '@tauri-apps/api/core';
-import { RefreshCwIcon } from 'lucide-react';
+import { invoke, isTauri } from '@tauri-apps/api/core';
+import { ArrowUpRightIcon, RefreshCwIcon } from 'lucide-react';
+import { useRef, useState } from 'react';
 import { useStore } from 'zustand';
+import { Button } from '~/components/ui/button';
+import {
+  Dialog, DialogDescription, DialogFooter, DialogHeader, DialogPopup, DialogTitle, DialogTrigger,
+} from '~/components/ui/dialog';
 import { SidebarMenuButton, SidebarMenuItem } from '~/components/ui/sidebar';
-import { toastManager } from '~/components/ui/toast';
-import { Tooltip, TooltipPopup, TooltipTrigger } from '~/components/ui/tooltip';
-import { desktopUpdate, installUpdate, updateInProgress, type UpdateState } from '../desktop-update';
+import { checkForUpdate, desktopUpdate, installUpdate, updateInProgress, type UpdateState } from '../desktop-update';
 
 function updateMessage(state: UpdateState): string {
   switch (state.kind) {
     case 'idle':
-      return 'HoH checks GitHub for updates automatically.';
+      return 'Check GitHub for the latest stable release.';
     case 'checking':
       return 'Checking GitHub for updates…';
     case 'unsupportedInstall':
-      return 'Install HoH from a release package to use updates.';
+      return 'Download a release package from GitHub to enable updates.';
     case 'noRelease':
       return 'No stable release has been published yet.';
     case 'upToDate':
       return 'HoH is up to date.';
+    case 'rolledBack':
+      return 'The update could not start. HoH restored the previous version.';
     case 'noCompatiblePackage':
       return `HoH ${state.version} has no package for this system.`;
     case 'available':
-      return `Install HoH ${state.version} and restart.`;
+      return `HoH ${state.version} is available. Installing it restarts HoH and interrupts running tasks.`;
     case 'downloading':
       return `Downloading HoH ${state.version}…`;
     case 'installing':
@@ -35,34 +40,33 @@ function updateMessage(state: UpdateState): string {
 
 export function SidebarUpdateButton() {
   const state = useStore(desktopUpdate);
+  const trigger = useRef<HTMLButtonElement>(null);
+  const [open, setOpen] = useState(false);
+  const [linkFailed, setLinkFailed] = useState(false);
   if (!isTauri()) return null;
 
   const busy = updateInProgress(state);
-  const message = updateMessage(state);
 
-  async function handleUpdate() {
-    const result = await installUpdate();
-    if (result && !updateInProgress(result)) {
-      toastManager.add({
-        type: result.kind === 'error' ? 'error' : 'info',
-        title: updateMessage(result),
-      });
-    }
+  function openReleases() {
+    setLinkFailed(false);
+    void invoke('open_update_releases')
+      .catch(() => setLinkFailed(true));
   }
 
   return (
     <SidebarMenuItem className="ms-auto shrink-0">
-      <Tooltip>
-        <TooltipTrigger
+      <Dialog
+        open={open}
+        onOpenChange={(next) => { setOpen(next); setLinkFailed(false); }}
+      >
+        <DialogTrigger
           render={
             <SidebarMenuButton
-              type="button"
+              ref={trigger}
               className="hoh-side__action"
               aria-label="Update"
-              aria-busy={busy}
+              tooltip="Update"
               isActive={state.kind === 'available'}
-              disabled={busy || state.kind === 'unsupportedInstall'}
-              onClick={() => void handleUpdate()}
             >
               <RefreshCwIcon
                 aria-hidden
@@ -73,9 +77,28 @@ export function SidebarUpdateButton() {
             </SidebarMenuButton>
           }
         />
-        <TooltipPopup side="top">{message}</TooltipPopup>
-      </Tooltip>
-      <span className="sr-only" role="status">{message}</span>
+        <DialogPopup finalFocus={trigger}>
+          <DialogHeader>
+            <DialogTitle>Update HoH</DialogTitle>
+            <DialogDescription aria-live="polite">{updateMessage(state)}</DialogDescription>
+            {linkFailed ? <p className="text-sm" role="alert">Could not open GitHub in your browser.</p> : null}
+          </DialogHeader>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={openReleases}>
+              GitHub Releases <ArrowUpRightIcon aria-hidden />
+            </Button>
+            {state.kind === 'available' ? (
+              <Button type="button" onClick={() => void installUpdate()}>
+                Install and restart
+              </Button>
+            ) : state.kind === 'unsupportedInstall' ? null : (
+              <Button type="button" disabled={busy} onClick={() => void checkForUpdate()}>
+                Check for updates
+              </Button>
+            )}
+          </DialogFooter>
+        </DialogPopup>
+      </Dialog>
     </SidebarMenuItem>
   );
 }

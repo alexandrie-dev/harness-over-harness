@@ -14,10 +14,35 @@ fn setup_application(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Err
     }
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn defer_exit(app: &tauri::AppHandle) -> bool {
+    app.state::<hoh_desktop::auto_update::Installation>()
+        .defer_exit()
+}
+
 fn main() {
     #[cfg(all(feature = "probe", target_os = "linux"))]
     hoh_desktop::probe::trace("process:start");
+    let context = tauri::generate_context!();
     let builder = tauri::Builder::default();
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    let builder =
+        match hoh_desktop::auto_update::Installation::startup(&context.package_info().version) {
+            Ok(Some(installation)) => builder.manage(installation),
+            Ok(None) => return,
+            Err(error) => {
+                eprintln!("{error}");
+                std::process::exit(1);
+            }
+        };
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    let builder = builder.on_page_load(|webview, payload| {
+        if webview.label() == "main" && payload.event() == tauri::webview::PageLoadEvent::Finished {
+            webview
+                .state::<hoh_desktop::auto_update::Installation>()
+                .page_loaded();
+        }
+    });
     #[cfg(target_os = "linux")]
     let builder = builder.manage(hoh_desktop::clipboard_image::ImagePasteGesture::default());
     builder
@@ -29,6 +54,8 @@ fn main() {
             hoh_desktop::auto_update::auto_update,
             #[cfg(any(target_os = "linux", target_os = "macos"))]
             hoh_desktop::auto_update::check_for_update,
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            hoh_desktop::auto_update::open_update_releases,
             hoh_desktop::native::engine_request,
             hoh_desktop::native::environment_platform,
             hoh_desktop::native::subscribe_engine_notifications,
@@ -60,15 +87,27 @@ fn main() {
         ])
         .on_window_event(|window, event| {
             if window.label() == "main"
-                && matches!(event, tauri::WindowEvent::CloseRequested { .. })
+                && let tauri::WindowEvent::CloseRequested { api, .. } = event
             {
+                #[cfg(any(target_os = "linux", target_os = "macos"))]
+                if defer_exit(window.app_handle()) {
+                    api.prevent_close();
+                    return;
+                }
                 window.app_handle().exit(0);
             }
         })
         .setup(setup_application)
-        .build(tauri::generate_context!())
+        .build(context)
         .expect("build HoH desktop")
         .run(|app, event| {
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            if let tauri::RunEvent::ExitRequested { api, .. } = &event
+                && defer_exit(app)
+            {
+                api.prevent_exit();
+                return;
+            }
             let exiting = matches!(
                 event,
                 tauri::RunEvent::Exit | tauri::RunEvent::ExitRequested { .. }
