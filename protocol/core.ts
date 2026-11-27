@@ -183,7 +183,7 @@ export type ExecutorSelection = { "executor"?: (string | null); "model"?: (strin
 
 export type ExecutorSessionAccess = { "executor"?: (string | null); "model"?: (string | null); "privacy"?: (string | null); "mode"?: (ExecutorAccessMode | null); "running"?: (ExecutorAccessMode | null); "runtimeMode"?: (ExecutorRuntimeMode | null); "runningRuntimeMode"?: (ExecutorRunningRuntimeMode | null); "builtin"?: (boolean | null); "pending": boolean; };
 
-export type ExecutorTitleGenerateParams = { "executor": string; "prompt": string; };
+export type ExecutorTitleGenerateParams = { "executor": string; "prompt": string; "sessionId"?: (string | null); };
 
 export type ExecutorTitleGenerateResult = { "title": string; };
 

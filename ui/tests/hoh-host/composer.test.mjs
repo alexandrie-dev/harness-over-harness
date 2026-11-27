@@ -90,6 +90,32 @@ test('an attached image context link stays in the conversation but is not duplic
   assert.equal(projection.messages.find(message => message.role === 'user').text, text);
 });
 
+test('an image-only chat keeps its image label across a restart until a text prompt can name it', async t => {
+  const engine = new FakeEngine();
+  const data = new Map();
+  const storage = { getItem: key => data.get(key) ?? null, setItem: (key, value) => data.set(key, value) };
+  const { host, client } = connect(engine, { storage });
+  t.after(() => host.stop());
+  const threadId = 'image-title';
+  const { attachments } = await client.call('assets.persistChatAttachments', { threadId, messageId: 'image', attachments: [upload()] });
+  const launched = await client.call('orchestration.launchThread', {
+    commandId: 'image-title-launch', threadId, projectId: 'hoh-project', title: 'Attached image', generateTitle: true,
+    modelSelection: { instanceId: 'codex', model: 'gpt-6-sol' }, runtimeMode: 'approval-required',
+    initialMessage: { messageId: 'image', text: '![red.png](t3-context://v1/image/image_img-1)', attachments },
+  });
+  assert.equal(launched.projection.thread.title, 'Attached image');
+  assert.equal(sent(engine, 'hoh/executor/title/generate').length, 0);
+  host.stop();
+
+  const restartedEngine = new FakeEngine({ store: engine.store });
+  const restarted = connect(restartedEngine, { storage });
+  t.after(() => restarted.host.stop());
+  assert.equal((await restarted.client.call('orchestration.getThreadProjection', { threadId })).thread.title, 'Attached image');
+  await restarted.client.call('orchestration.dispatchCommand', dispatch(threadId, 'text', 'Fix login redirect'));
+  assert.equal((await restarted.client.call('orchestration.getThreadProjection', { threadId })).thread.title, 'Fix login redirect');
+  assert.deepEqual(sent(restartedEngine, 'hoh/executor/title/generate').map(({ params }) => [params.executor, params.sessionId]), [['codex', threadId]]);
+});
+
 test('clipboard tokens are matched by their draft context IDs on launch and follow-up', async t => {
   const engine = new FakeEngine();
   const { host, client } = connect(engine);

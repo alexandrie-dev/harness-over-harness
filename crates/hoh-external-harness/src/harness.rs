@@ -1,7 +1,7 @@
 //! The in-process face of the contract: what a harness package implements and registers.
 
-use std::sync::Arc;
 use std::time::Duration;
+use std::{path::PathBuf, sync::Arc};
 
 use futures_util::future::BoxFuture;
 use tokio::sync::mpsc;
@@ -12,6 +12,16 @@ use crate::contract::{
 };
 
 pub type HarnessResult<T> = Result<T, HarnessFailure>;
+
+#[derive(Default)]
+pub struct TitleRequest {
+    pub prompt: String,
+    pub model: Option<String>,
+    /// The verified chat directory, for inspecting the chat's configured model route.
+    pub cwd: Option<PathBuf>,
+    pub trusted: bool,
+    pub native_session_id: Option<String>,
+}
 
 /// One kind of external harness (a CLI and its protocol), registered under a name through
 /// [`crate::ExternalHarnessesService::register`].
@@ -136,8 +146,7 @@ pub trait ExternalHarness: Send + Sync + 'static {
     }
 
     /// One isolated, no-tools title request. The default harness does not provide it.
-    fn generate_title(&self, prompt: String) -> BoxFuture<'static, HarnessResult<String>> {
-        let _ = prompt;
+    fn generate_title(&self, _request: TitleRequest) -> BoxFuture<'static, HarnessResult<String>> {
         Box::pin(std::future::ready(Err(HarnessFailure::new(
             code::HARNESS,
             "this harness cannot generate conversation titles",

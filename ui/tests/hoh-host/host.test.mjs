@@ -231,6 +231,9 @@ test('a built-in agent session remains in the inventory when it has no external 
   await client.call('orchestration.dispatchCommand', { type: 'message.dispatch', commandId: 'builtin-send', threadId: 'built-in', messageId: 'builtin-message', text: 'hello', attachments: [], runtimeMode: 'approval-required' });
   assert(engine.requests.some(entry => entry.method === 'session/prompt' && entry.params.sessionId === 'built-in'));
   assert(!engine.requests.some(entry => entry.method === 'hoh/executor/access/set' && entry.params.sessionId === 'built-in'));
+  engine.emitEvent('built-in', 'session/title', { title: 'Session setup', source: { kind: 'provider' } });
+  await shell.until(value => value.kind === 'thread.updated' && value.thread.id === 'built-in' && value.thread.title === 'Session setup');
+  assert.equal((await client.call('orchestration.getThreadProjection', { threadId: 'built-in' })).thread.title, 'Session setup');
   host.stop();
 });
 
@@ -1244,9 +1247,10 @@ test('cold history restores usage from both plugin and legacy events', async () 
   }
 });
 
-test('the first message gets a Claude title; failure keeps its beginning and a late result cannot overwrite a manual rename', async () => {
+test('Claude can refine a short local title without replacing a manual rename', async () => {
   const launch = (client, id, text) => client.call('orchestration.launchThread', {
     commandId: 'title-' + id, threadId: id, projectId: 'hoh-project',
+    title: text, generateTitle: true,
     modelSelection: { instanceId: 'claudeAgent', model: 'claude-sonnet' }, runtimeMode: 'approval-required', interactionMode: 'default',
     initialMessage: { messageId: 'm-' + id, text, attachments: [] },
   });
@@ -1261,7 +1265,9 @@ test('the first message gets a Claude title; failure keeps its beginning and a l
   const successful = connect(success, { storage: titleStorage }); await launch(successful.client, 'title-ok', 'Покажи заполнение контекста'); await tick(5);
   assert.equal((await successful.client.call('orchestration.getThreadProjection', { threadId: 'title-ok' })).thread.title, 'Context Window Indicator');
   const titleCall = success.requests.find(request => request.method === 'hoh/executor/title/generate');
-  assert.equal(titleCall.params.executor, 'claude'); assert.match(titleCall.params.prompt, /3-8 words/);
+  assert.equal(titleCall.params.executor, 'claude');
+  assert.equal(titleCall.params.sessionId, 'title-ok');
+  assert.match(titleCall.params.prompt, /2–3 content words in the user's language/);
   successful.host.stop();
   const reopenedTitle = connect(new FakeEngine({ store: success.store }), { storage: titleStorage });
   await reopenedTitle.host.start(); await tick(10);
@@ -1271,7 +1277,14 @@ test('the first message gets a Claude title; failure keeps its beginning and a l
   const failed = new FakeEngine(); const failedRequest = failed.request.bind(failed);
   failed.request = (method, params) => method === 'hoh/executor/title/generate' ? Promise.reject(new Error('offline')) : failedRequest(method, params);
   const failure = connect(failed); await launch(failure.client, 'title-fail', 'Сохрани начало сообщения при ошибке'); await tick(5);
-  assert.equal((await failure.client.call('orchestration.getThreadProjection', { threadId: 'title-fail' })).thread.title, 'Сохрани начало сообщения при ошибке');
+  assert.equal((await failure.client.call('orchestration.getThreadProjection', { threadId: 'title-fail' })).thread.title, 'Сохрани начало сообщения');
+
+  const invalid = new FakeEngine(); const invalidRequest = invalid.request.bind(invalid);
+  invalid.request = (method, params) => method === 'hoh/executor/title/generate'
+    ? Promise.resolve({ title: 'A very long generated title' }) : invalidRequest(method, params);
+  const rejected = connect(invalid);
+  await launch(rejected.client, 'title-invalid', 'Please fix the login redirect after sign-in.');
+  assert.equal((await rejected.client.call('orchestration.getThreadProjection', { threadId: 'title-invalid' })).thread.title, 'Fix login redirect');
 
   let finishTitle; const pending = new Promise(resolve => { finishTitle = resolve; });
   const stale = new FakeEngine(); const staleRequest = stale.request.bind(stale);
@@ -1292,6 +1305,111 @@ test('the first message gets a Claude title; failure keeps its beginning and a l
   assert.equal((await named.client.call('orchestration.getThreadProjection', { threadId: 'named-first' })).thread.title, 'Моё имя');
   assert(!namedEngine.requests.some(request => request.method === 'hoh/executor/title/generate'));
   named.host.stop();
+});
+
+test('a Codex draft gets its first short title from a substantive prompt accepted by the engine', async () => {
+  const engine = new FakeEngine();
+  const request = engine.request.bind(engine);
+  engine.request = (method, params) => {
+    if (method === 'session/prompt' && params.contentBlocks[0]?.text === 'Failed draft prompt') {
+      return Promise.reject(new Error('transport down'));
+    }
+    return request(method, params);
+  };
+  const { host, client } = connect(engine);
+  const threadId = 'short-codex-title';
+  try {
+    const draft = await client.call('orchestration.launchThread', {
+      commandId: 'create-short-title', threadId, projectId: 'hoh-project', title: 'Привет!', generateTitle: true,
+      modelSelection: { instanceId: 'codex', model: 'gpt-6-sol' }, runtimeMode: 'approval-required',
+      initialMessage: { messageId: 'greeting', text: 'Привет!', attachments: [] },
+    });
+    assert.equal(draft.projection.thread.title, 'New chat');
+    const send = (messageId, text) => client.call('orchestration.dispatchCommand', {
+      type: 'message.dispatch', commandId: messageId, threadId, messageId, text, attachments: [],
+    });
+    await assert.rejects(send('failed', 'Failed draft prompt'), /transport down/);
+    await send('accepted', 'Проверь, почему не запускается сервер после обновления.');
+    await send('next', 'Обнови зависимости проекта');
+    assert.equal((await client.call('orchestration.getThreadProjection', { threadId })).thread.title, 'Не запускается сервер');
+    const requests = engine.requests.filter(request => request.method === 'hoh/executor/title/generate');
+    assert.deepEqual(requests.map(request => [request.params.executor, request.params.sessionId]), [['codex', threadId]]);
+    assert.match(requests[0].params.prompt, /Проверь, почему не запускается сервер/);
+  } finally {
+    host.stop();
+    client.close();
+  }
+});
+
+test('turning off automatic titles persists and explicit naming uses the bound chat even while off', async t => {
+  const values = new Map();
+  const storage = { getItem: key => values.get(key) ?? null, setItem: (key, value) => values.set(key, value) };
+  const engine = new FakeEngine();
+  const request = engine.request.bind(engine);
+  const titleRequests = [];
+  engine.request = (method, params) => {
+    if (method !== 'hoh/executor/title/generate') return request(method, params);
+    return new Promise((resolve, reject) => titleRequests.push({ params, resolve, reject }));
+  };
+  const { host, client } = connect(engine, { storage });
+  t.after(() => { host.stop(); client.close(); });
+  const text = 'У CEO не открывается кабинет';
+  const launch = (threadId, message = text) => client.call('orchestration.launchThread', {
+    commandId: 'title-' + threadId, threadId, projectId: 'hoh-project', title: message, generateTitle: true,
+    modelSelection: { instanceId: 'codex', model: 'gpt-6-sol' }, runtimeMode: 'approval-required',
+    initialMessage: { messageId: 'm-' + threadId, text: message, attachments: [] },
+  });
+
+  const settings = host.chatTitles;
+  assert.equal(settings.getEnabled(), true);
+  const observed = [];
+  const unsubscribe = settings.subscribe(() => observed.push(settings.getEnabled()));
+  await launch('pending-name');
+  assert.equal(titleRequests.length, 1);
+  settings.setEnabled(false);
+  settings.setEnabled(true);
+  titleRequests[0].resolve({ title: 'Доступ к кабинету CEO' });
+  await tick(5);
+  const projection = threadId => client.call('orchestration.getThreadProjection', { threadId });
+  assert.notEqual((await projection('pending-name')).thread.title, 'Доступ к кабинету CEO');
+
+  settings.setEnabled(false);
+  assert.deepEqual(observed, [false, true, false]);
+  unsubscribe();
+  assert.equal((await launch('explicit-name')).projection.thread.title, text);
+  assert.equal(titleRequests.length, 1);
+  const reopened = connect(new FakeEngine({ store: engine.store }), { storage });
+  t.after(() => { reopened.host.stop(); reopened.client.close(); });
+  assert.equal(reopened.host.chatTitles.getEnabled(), false);
+
+  const renaming = settings.rename('explicit-name');
+  const duplicate = settings.rename('explicit-name');
+  await tick(5);
+  assert.equal(titleRequests.length, 2);
+  assert.equal(titleRequests[1].params.executor, 'codex');
+  assert.equal(titleRequests[1].params.sessionId, 'explicit-name');
+  titleRequests[1].resolve({ title: 'Доступ к кабинету CEO' });
+  assert.deepEqual(await Promise.all([renaming, duplicate]), ['Доступ к кабинету CEO', 'Доступ к кабинету CEO']);
+  assert.equal((await projection('explicit-name')).thread.title, 'Доступ к кабинету CEO');
+
+  const retry = settings.rename('explicit-name');
+  const rejected = assert.rejects(retry, /valid chat title/);
+  await tick(5);
+  titleRequests[2].resolve({ title: 'A very long generated title' });
+  await rejected;
+  assert.equal((await projection('explicit-name')).thread.title, 'Доступ к кабинету CEO');
+
+  for (const [id, message, modelTitle, expected] of [
+    ['named-object', 'Делаю плагин «OpenSearch»', 'Плагин OpenSearch', 'OpenSearch'],
+    ['title-connectors', 'Добавь уведомления о платежах Stripe', 'Уведомления о платежах Stripe', 'Уведомления о платежах Stripe'],
+  ]) {
+    await launch(id, message);
+    const rename = settings.rename(id);
+    await tick(5);
+    titleRequests.at(-1).resolve({ title: modelTitle });
+    assert.equal(await rename, expected);
+    assert.equal((await projection(id)).thread.title, expected);
+  }
 });
 
 test('a follow-up message goes to the same chat; Stop is the engine\'s cancel and the run ends interrupted', async () => {
@@ -1559,7 +1677,7 @@ test('Codex: app-server models and effort are offered; executor and exact mode a
   assert.deepEqual(access.params, { executor: 'codex', sessionId: 'cx-chat', mode: 'confirm', runtimeMode: 'auto' });
   assert.equal(prompt.params.effort, 'high');
   assert(engine.requests.indexOf(access) < engine.requests.indexOf(prompt));
-  assert.equal(engine.requests.some(request => request.method === 'hoh/executor/title/generate'), false, 'Codex text never goes to Claude');
+  assert.equal(engine.requests.some(request => request.method === 'hoh/executor/title/generate' && request.params.executor === 'claude'), false);
   await assert.rejects(client.call('orchestration.dispatchCommand', {
     type: 'thread.interaction-mode.set', commandId: 'codex-plan', threadId: 'cx-chat', interactionMode: 'plan',
   }), /coming soon/i);
@@ -1593,9 +1711,10 @@ test('Pi advertises its models and binds a thread only with explicit Full access
   const { host, client } = connect(engine);
   const args = {
     commandId: 'launch-pi', threadId: 'pi-conversation', projectId: 'hoh-project',
+    title: 'Fix the login redirect after sign-in', generateTitle: true,
     modelSelection: { instanceId: 'pi', model: 'local/demo' },
     interactionMode: 'default', workspaceStrategy: { type: 'root' },
-    initialMessage: { messageId: 'msg-pi', text: 'Hello Pi', attachments: [] },
+    initialMessage: { messageId: 'msg-pi', text: 'Fix the login redirect after sign-in', attachments: [] },
   };
   try {
     const config = await client.call('server.refreshProviders', { instanceId: 'pi' });
@@ -1608,6 +1727,9 @@ test('Pi advertises its models and binds a thread only with explicit Full access
     assert.equal(engine.store.has(args.threadId), false);
     const launched = await client.call('orchestration.launchThread', { ...args, runtimeMode: 'full-access' });
     assert.equal(launched.projection.thread.providerInstanceId, 'pi');
+    assert.equal(launched.projection.thread.title, 'Fix login redirect');
+    assert.deepEqual(engine.requests.filter(request => request.method === 'hoh/executor/title/generate')
+      .map(request => [request.params.executor, request.params.sessionId]), [['pi', args.threadId]]);
     assert.equal(engine.store.get(args.threadId).executor, 'pi');
     assert.equal(engine.store.get(args.threadId).runtimeMode, 'full');
     const live = await client.stream('orchestration.subscribeThread', { threadId: args.threadId });

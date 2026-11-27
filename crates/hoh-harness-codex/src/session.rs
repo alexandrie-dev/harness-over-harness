@@ -449,6 +449,51 @@ impl CodexSession {
         result
     }
 
+    pub(crate) async fn read_title_context(
+        supervisor: Supervisor,
+        request_timeout: Duration,
+        cwd: String,
+        trusted: bool,
+        native_id: &str,
+    ) -> Result<(Value, Value, Value), HarnessFailure> {
+        let (session, _events) = Self::open(
+            supervisor,
+            1,
+            request_timeout,
+            mode_settings(hoh_external_harness::AccessMode::Confirm),
+            cwd,
+            trusted,
+            None,
+            None,
+        )
+        .await?;
+        let result = async {
+            let config = session
+                .request("config/read", json!({"includeLayers": false}))
+                .await?;
+            let thread_params = json!({"threadId": native_id, "includeTurns": false});
+            let mut thread = session.request("thread/read", thread_params.clone()).await;
+            // A fresh thread id may be announced before the first turn creates its rollout.
+            for _ in 0..6 {
+                if !thread
+                    .as_ref()
+                    .is_err_and(|error| error.message.contains("thread not loaded"))
+                {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(150)).await;
+                thread = session.request("thread/read", thread_params.clone()).await;
+            }
+            let requirements = session
+                .request("configRequirements/read", json!({}))
+                .await?;
+            Ok((config, thread?, requirements))
+        }
+        .await;
+        session.terminate_now(Duration::from_millis(200)).await;
+        result
+    }
+
     pub(crate) async fn read_rate_limits(
         supervisor: Supervisor,
         request_timeout: Duration,

@@ -148,6 +148,10 @@ function imageContextId(imageId: string): string {
 
 const IMAGE_CONTEXT_REFERENCE = /!\[([^\[\]\n]{0,512})\]\(t3-context:\/\/v1\/image\/([a-z0-9_-]{1,128})\)/gi;
 
+export function stripImageContextReferences(text: string): string {
+  return text.replace(IMAGE_CONTEXT_REFERENCE, '');
+}
+
 /** Remove only T3 image references whose bytes are already carried by this turn's image blocks. */
 export function stripAttachedImageReferences(text: string, imageIds: readonly string[], context?: { records?: unknown }): string {
   if (!imageIds.length) return text;

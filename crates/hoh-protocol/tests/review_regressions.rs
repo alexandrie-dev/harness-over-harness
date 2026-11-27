@@ -167,6 +167,13 @@ fn title_prompt_has_a_protocol_boundary() {
         &json!({"executor":"claude","prompt":accepted}),
     )
     .unwrap();
+    let bound = json!({"executor":"pi","prompt":"Name the work","sessionId":"chat-1"});
+    assert!(validate_params("hoh/executor/title/generate", &bound).is_ok());
+    for session_id in [Value::Null, json!(1)] {
+        let mut bad = bound.clone();
+        bad["sessionId"] = session_id;
+        assert!(validate_params("hoh/executor/title/generate", &bad).is_err());
+    }
     let refused = "x".repeat(EXECUTOR_TITLE_PROMPT_MAX_CHARS + 1);
     assert!(
         validate_params(

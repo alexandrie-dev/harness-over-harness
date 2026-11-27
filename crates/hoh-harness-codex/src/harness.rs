@@ -10,8 +10,8 @@ use futures_util::future::BoxFuture;
 use hoh_external_harness::{
     AccessMode, AuthState, Discovery, ExecutorLimitWindow, ExternalHarness, HarnessCommand,
     HarnessCommands, HarnessEffort, HarnessFailure, HarnessModel, HarnessPolicy, HarnessResult,
-    ProcessSpec, StartParams, StartResult, Started, Supervisor, SupervisorLimits, VersionStatus,
-    code,
+    ProcessSpec, StartParams, StartResult, Started, Supervisor, SupervisorLimits, TitleRequest,
+    VersionStatus, code,
 };
 use serde_json::Value;
 
@@ -71,7 +71,7 @@ impl CodexHarness {
     }
 }
 
-enum VersionCheck {
+pub(crate) enum VersionCheck {
     Supported(String),
     NotInstalled,
     Refused {
@@ -92,7 +92,7 @@ impl VersionCheck {
     }
 }
 
-async fn check_version(config: &CodexConfig) -> VersionCheck {
+pub(crate) async fn check_version(config: &CodexConfig) -> VersionCheck {
     let mut command = tokio::process::Command::new(&config.executable);
     command
         .arg("--version")
@@ -155,7 +155,22 @@ async fn check_version(config: &CodexConfig) -> VersionCheck {
     VersionCheck::Supported(shown)
 }
 
-fn app_server_spec(config: &CodexConfig, cwd: &Path, trusted: bool) -> ProcessSpec {
+pub(crate) fn projects_config(cwd: &Path, trusted: bool) -> String {
+    format!(
+        "projects={{{}}}",
+        crate::session::project_trust(cwd, trusted)
+            .keys()
+            .map(|path| format!(
+                "{}={{trust_level=\"{}\"}}",
+                serde_json::to_string(path).expect("path serializes"),
+                if trusted { "trusted" } else { "untrusted" }
+            ))
+            .collect::<Vec<_>>()
+            .join(",")
+    )
+}
+
+pub(crate) fn app_server_spec(config: &CodexConfig, cwd: &Path, trusted: bool) -> ProcessSpec {
     ProcessSpec {
         program: config.executable.clone(),
         args: vec![
@@ -163,18 +178,7 @@ fn app_server_spec(config: &CodexConfig, cwd: &Path, trusted: bool) -> ProcessSp
             "-c".to_owned(),
             "thread_unload_delay_secs=0".to_owned(),
             "-c".to_owned(),
-            format!(
-                "projects={{{}}}",
-                crate::session::project_trust(cwd, trusted)
-                    .keys()
-                    .map(|path| format!(
-                        "{}={{trust_level=\"{}\"}}",
-                        serde_json::to_string(path).expect("path serializes"),
-                        if trusted { "trusted" } else { "untrusted" }
-                    ))
-                    .collect::<Vec<_>>()
-                    .join(",")
-            ),
+            projects_config(cwd, trusted),
         ],
         cwd: Some(cwd.to_owned()),
         cwd_identity: None,
@@ -616,6 +620,11 @@ impl ExternalHarness for CodexHarness {
 
     fn stop_ends_process(&self) -> bool {
         true
+    }
+
+    fn generate_title(&self, request: TitleRequest) -> BoxFuture<'static, HarnessResult<String>> {
+        let config = self.config.clone();
+        Box::pin(async move { crate::title::generate(&config, request).await })
     }
 
     fn accepts_effort(&self, _effort: &str) -> bool {

@@ -18,20 +18,26 @@ use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use futures_util::StreamExt;
 use hoh_agent::{
     Agent, AgentRegistry, AgentStatus, Agents, ExecutorSelection, stored_executor_binding,
 };
 use hoh_error::BoxError;
 use hoh_kernel::{Cfg, Context, Inject, Logger, NoConfig, Plugin, Service};
+use hoh_llm::{
+    BlockAssembler, ContentBlock, GenerateOptions, Llm, MessageSource, NewUserMessage,
+    RequestMessage, create_user_message,
+};
 use hoh_loader::ProfileContextKey;
 use hoh_protocol::{
     ExecutorAccessGetParams, ExecutorAccessGetResult, ExecutorAccessMode, ExecutorAccessSetParams,
     ExecutorAccessSetResult, ExecutorCommand, ExecutorCommandsParams, ExecutorCommandsResult,
     ExecutorEffectiveAccess, ExecutorLimitsResult, ExecutorLimitsState, ExecutorParams,
     ExecutorRuntimeMode, ExecutorSelectParams, ExecutorSessionAccess, ExecutorTitleGenerateParams,
-    ExecutorTrustGetParams, ExecutorTrustResult, ExecutorTrustSetParams, SessionInteractionMode,
-    WorkingDirectoryRootIdentity, WorkspaceAddParams, WorkspaceAddResult, WorkspaceEntriesParams,
-    WorkspaceEntriesResult, WorkspaceResolveParams, WorkspaceResolveResult,
+    ExecutorTitleGenerateResult, ExecutorTrustGetParams, ExecutorTrustResult,
+    ExecutorTrustSetParams, SessionInteractionMode, WorkingDirectoryRootIdentity, WorkspaceAddParams,
+    WorkspaceAddResult, WorkspaceEntriesParams, WorkspaceEntriesResult, WorkspaceResolveParams,
+    WorkspaceResolveResult,
 };
 use hoh_sdk_jsonrpc_server::HohRpcMethods;
 use hoh_session::SessionId;
@@ -45,7 +51,7 @@ use crate::contract::{
     AccessMode, Discovery, HarnessCommand, HarnessCommands, InteractionMode, VersionStatus,
 };
 use crate::redact::{redact, redact_value};
-use crate::{Choices, ExternalHarnesses, ExternalHarnessesService};
+use crate::{Choices, ExternalHarnesses, ExternalHarnessesService, TitleRequest};
 
 /// The file in the engine's profile folder that keeps the window's choices.
 pub const CHOICES_FILE: &str = "external-harness.json";
@@ -331,6 +337,46 @@ struct EntriesKey {
     limit: u32,
 }
 
+async fn builtin_title(agent: &dyn Agent, prompt: String) -> Result<String, BoxError> {
+    let route = agent
+        .model()
+        .current()
+        .ok_or("The chat's model is unavailable.")?;
+    let ctx = agent.ctx();
+    let llm = ctx.get::<Llm>().ok_or("The chat's model is unavailable.")?;
+    let deadline = hoh_timeout::deadline(None, 20_000.0, "CHAT_TITLE_TIMEOUT")?;
+    let mut stream = llm.stream(
+        ctx,
+        GenerateOptions {
+            provider: route.provider,
+            model: route.model,
+            messages: vec![RequestMessage::from(create_user_message(NewUserMessage {
+                source: MessageSource::new("hoh-chat-title"),
+                content: vec![ContentBlock::text(prompt)],
+            }))],
+            signal: Some(deadline.signal.clone()),
+            max_tokens: Some(512),
+            session_id: Some(agent.id().clone()),
+            purpose: Some("session-title".into()),
+            ..Default::default()
+        },
+    );
+    let mut assembler = BlockAssembler::new();
+    while let Some(chunk) = stream.next().await {
+        assembler.push(chunk?);
+    }
+    deadline.signal.throw_if_aborted()?;
+    if assembler.finish().kind != "stop" {
+        return Err("The title request did not complete.".into());
+    }
+    let blocks = assembler.blocks()?;
+    let response = blocks
+        .iter()
+        .filter_map(|block| block.text_value().filter(|_| block.r#type == "text"))
+        .collect::<String>();
+    Ok(serde_json::from_str::<ExecutorTitleGenerateResult>(&response)?.title)
+}
+
 impl Window {
     async fn call(&self, method: &str, params: Value) -> Result<Value, BoxError> {
         match method {
@@ -446,14 +492,79 @@ impl Window {
             )?),
             TITLE_GENERATE => {
                 let params: ExecutorTitleGenerateParams = parse(method, params)?;
-                let harness = self
-                    .service()
-                    .get(&params.executor)
-                    .ok_or_else(|| format!("no external harness named {:?}", params.executor))?;
-                Ok(json!({ "title": harness.generate_title(params.prompt).await? }))
+                Ok(json!({ "title": self.generate_title(params).await? }))
             }
             _ => Err(format!("external harness window does not serve {method}").into()),
         }
+    }
+
+    async fn generate_title(
+        &self,
+        params: ExecutorTitleGenerateParams,
+    ) -> Result<String, BoxError> {
+        let mut request = TitleRequest {
+            prompt: params.prompt,
+            model: None,
+            cwd: None,
+            trusted: false,
+            native_session_id: None,
+        };
+        if let Some(id) = params.session_id {
+            let agent = self
+                .agents
+                .get(&SessionId::from(id.as_str()))
+                .ok_or("The chat is unavailable for title generation.")?;
+            let route = agent
+                .model()
+                .current()
+                .ok_or("The chat's model is unavailable.")?;
+            if params.executor == "builtin" {
+                if self.session_access(&id).await?.builtin != Some(true) {
+                    return Err("The chat is not bound to the built-in agent.".into());
+                }
+                return builtin_title(agent.as_ref(), request.prompt).await;
+            }
+            if route.provider != params.executor {
+                return Err("The chat is bound to a different harness.".into());
+            }
+            request.model = Some(route.model);
+            if params.executor == "codex" {
+                let native = tokio::time::timeout(Duration::from_secs(12), async {
+                    loop {
+                        if let Some(native) = crate::executor::recorded_native(
+                            &agent.session().snapshot_events(None, None),
+                        ) {
+                            return native;
+                        }
+                        tokio::time::sleep(Duration::from_millis(100)).await;
+                    }
+                })
+                .await
+                .map_err(|_| "The Codex chat's native session is unavailable.")?;
+                let directories = self
+                    .ctx
+                    .get::<WorkingDirectoryKey>()
+                    .ok_or("The chat's directory is unavailable.")?;
+                let (cwd, _) = directories.verify_for_read(agent.session())?;
+                let profile = self
+                    .ctx
+                    .get::<ProfileContextKey>()
+                    .ok_or("The chat profile is unavailable.")?;
+                let cwd = PathBuf::from(cwd);
+                let (trusted, changed) = crate::trust::status(&profile.dir, &cwd).await?;
+                if changed {
+                    return Err("The chat's directory trust changed before naming.".into());
+                }
+                request.cwd = Some(cwd);
+                request.trusted = trusted;
+                request.native_session_id = Some(native.to_string());
+            }
+        }
+        let harness = self
+            .service()
+            .get(&params.executor)
+            .ok_or_else(|| format!("no external harness named {:?}", params.executor))?;
+        Ok(harness.generate_title(request).await?)
     }
 
     /// The folder `cwd` names, when the engine knows it (HOH-41) and it is not the engine's own

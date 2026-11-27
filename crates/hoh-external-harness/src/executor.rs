@@ -253,7 +253,7 @@ impl SessionExecutor for ExternalExecutor {
 }
 
 /// The last native id the log records.
-fn recorded_native(events: &[Arc<SessionEvent>]) -> Option<NativeSessionId> {
+pub(crate) fn recorded_native(events: &[Arc<SessionEvent>]) -> Option<NativeSessionId> {
     events
         .iter()
         .rev()

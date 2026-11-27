@@ -9,6 +9,12 @@
     "prompt": {
       "type": "string",
       "maxLength": 16384
+    },
+    "sessionId": {
+      "type": [
+        "string",
+        "null"
+      ]
     }
   },
   "additionalProperties": false,

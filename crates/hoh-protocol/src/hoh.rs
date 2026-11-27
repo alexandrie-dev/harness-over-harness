@@ -642,6 +642,12 @@ pub struct ExecutorTitleGenerateParams {
     #[serde(deserialize_with = "title_prompt")]
     #[schemars(length(max = 16384))]
     pub prompt: String,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::present"
+    )]
+    pub session_id: Option<String>,
 }
 object!(ExecutorTitleGenerateResult { title: String });
 optional!(ExecutorAccessSetParams {

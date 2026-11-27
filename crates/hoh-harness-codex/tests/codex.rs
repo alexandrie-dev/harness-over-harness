@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 use hoh_external_harness::{
     AccessMode, ApprovalDecision, AuthState, ExternalHarness, HarnessEvent, HarnessPolicy,
     HarnessResponse, InteractionMode, PromptImage, PromptParams, QuestionAnswer, RespondParams,
-    StartParams, VersionStatus,
+    StartParams, TitleRequest, VersionStatus,
 };
 use hoh_harness_codex::{CodexConfig, CodexHarness};
 use serde_json::Value;
@@ -105,6 +105,98 @@ fn start_params(temp: &TempDir, resume: Option<String>) -> StartParams {
         policy: HarnessPolicy::default(),
         resume: resume.map(Into::into),
     }
+}
+
+fn title_request(temp: &TempDir) -> TitleRequest {
+    TitleRequest {
+        prompt: "Generate a short title for: У CEO не открывается кабинет\n".into(),
+        model: Some("gpt-stub".into()),
+        cwd: Some(temp.path().to_owned()),
+        trusted: true,
+        native_session_id: Some("thread-stub".into()),
+    }
+}
+
+#[tokio::test]
+async fn codex_title_uses_the_verified_thread_route_and_isolated_json_output() {
+    let temp = TempDir::new().unwrap();
+    let (harness, log) = harness(&temp, "title-default");
+    let request = title_request(&temp);
+    let prompt = request.prompt.clone();
+    assert_eq!(
+        harness.generate_title(request).await.unwrap(),
+        "Доступ к кабинету CEO"
+    );
+    let requests = lines(&log);
+    let methods: Vec<_> = requests
+        .iter()
+        .filter_map(|entry| entry["method"].as_str())
+        .collect();
+    assert_eq!(
+        methods,
+        [
+            "initialize",
+            "initialized",
+            "config/read",
+            "thread/read",
+            "configRequirements/read"
+        ]
+    );
+    let exec = requests
+        .iter()
+        .find(|entry| entry["stubEvent"] == "title-exec")
+        .unwrap();
+    assert_eq!(exec["prompt"], prompt);
+    let cwd = Path::new(exec["cwd"].as_str().unwrap());
+    assert_ne!(cwd, temp.path());
+    assert!(!cwd.exists());
+    let args: Vec<_> = exec["args"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|arg| arg.as_str().unwrap())
+        .collect();
+    for required in [
+        "--ephemeral",
+        "--ignore-user-config",
+        "--output-schema",
+        "--model=gpt-stub",
+        "cli_auth_credentials_store=\"keyring\"",
+        "shell_tool",
+        "hooks",
+        "read-only",
+    ] {
+        assert!(args.contains(&required), "missing {required}: {args:?}");
+    }
+    assert!(!args.iter().any(|arg| arg.contains(prompt.as_str())));
+}
+
+#[tokio::test]
+async fn codex_title_refuses_custom_routes_and_non_schema_responses() {
+    let temp = TempDir::new().unwrap();
+    for scenario in [
+        "title-custom-config",
+        "title-custom-thread",
+        "title-managed",
+    ] {
+        let (harness, log) = harness(&temp, scenario);
+        let error = harness
+            .generate_title(title_request(&temp))
+            .await
+            .unwrap_err();
+        assert_eq!(error.code, hoh_external_harness::code::POLICY_UNAVAILABLE);
+        assert!(
+            !lines(&log)
+                .iter()
+                .any(|entry| entry["stubEvent"] == "title-exec")
+        );
+    }
+    let (harness, _) = harness(&temp, "title-invalid-output");
+    let error = harness
+        .generate_title(title_request(&temp))
+        .await
+        .unwrap_err();
+    assert_eq!(error.code, hoh_external_harness::code::PROTOCOL);
 }
 
 fn lines(path: &Path) -> Vec<Value> {

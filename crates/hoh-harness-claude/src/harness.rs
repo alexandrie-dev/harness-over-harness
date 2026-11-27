@@ -19,7 +19,7 @@ use hoh_external_harness::{
     DiscoveryOperation, ExitInfo, ExternalHarness, Frame, HarnessCommand, HarnessCommands,
     HarnessFailure, HarnessModel, HarnessPolicy, HarnessResult, InteractionMode, NetworkAccess,
     ProcessSpec, SandboxMode, StartParams, StartResult, Started, Supervisor, SupervisorLimits,
-    VersionStatus, code,
+    TitleRequest, VersionStatus, code,
 };
 use serde_json::Value;
 use tokio::io::AsyncReadExt;
@@ -1277,9 +1277,9 @@ impl ExternalHarness for ClaudeHarness {
             .map_or(0, |snapshot| snapshot.revision)
     }
 
-    fn generate_title(&self, prompt: String) -> BoxFuture<'static, HarnessResult<String>> {
+    fn generate_title(&self, request: TitleRequest) -> BoxFuture<'static, HarnessResult<String>> {
         let config = self.config.clone();
-        Box::pin(async move { generate_title(config, prompt).await })
+        Box::pin(async move { generate_title(config, request.prompt).await })
     }
 
     /// Without a mode from the slot: the default one ([`DEFAULT_ACCESS`], confirm).

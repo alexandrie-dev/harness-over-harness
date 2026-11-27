@@ -1,5 +1,5 @@
 use std::fs::OpenOptions;
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::os::unix::process::CommandExt;
 use std::process::{Child, Command};
 use std::sync::Arc;
@@ -84,8 +84,26 @@ fn main() {
         );
         return;
     }
-    assert_eq!(args.get(1).map(String::as_str), Some("app-server"));
     let scenario = std::env::var("CODEX_STUB_SCENARIO").unwrap_or_else(|_| "stream".into());
+    if args.get(1).map(String::as_str) == Some("exec") {
+        let mut prompt = String::new();
+        std::io::stdin().read_to_string(&mut prompt).unwrap();
+        log(
+            &json!({"stubEvent":"title-exec", "args":&args[1..], "cwd":std::env::current_dir().unwrap(), "prompt":prompt}),
+        );
+        assert!(scenario.starts_with("title-"));
+        let output = if scenario == "title-invalid-output" {
+            json!({"title":"Valid-looking title", "extra":true})
+        } else {
+            json!({"title":"Доступ к кабинету CEO"})
+        };
+        send(
+            json!({"type":"item.completed","item":{"type":"agent_message","text":output.to_string()}}),
+        );
+        send(json!({"type":"turn.completed"}));
+        return;
+    }
+    assert_eq!(args.get(1).map(String::as_str), Some("app-server"));
     log(&json!({"stubEvent":"argv", "args": &args[1..]}));
     let stdin = std::io::stdin();
     let mut approval = 0_u8;
@@ -145,6 +163,34 @@ fn main() {
                         {"name":"not a token","enabled":true}
                     ]}
                 ]}}));
+            }
+            Some("config/read") => {
+                let provider = if scenario == "title-custom-config" {
+                    "custom"
+                } else {
+                    "openai"
+                };
+                send(
+                    json!({"id":id,"result":{"config":{"model_provider":provider,"cli_auth_credentials_store":"keyring"}}}),
+                );
+            }
+            Some("thread/read") => {
+                let provider = if scenario == "title-custom-thread" {
+                    "custom"
+                } else {
+                    "openai"
+                };
+                send(
+                    json!({"id":id,"result":{"thread":{"id":message["params"]["threadId"],"modelProvider":provider}}}),
+                );
+            }
+            Some("configRequirements/read") => {
+                let requirements = if scenario == "title-managed" {
+                    json!({"featureRequirements":{"shell_tool":true}})
+                } else {
+                    Value::Null
+                };
+                send(json!({"id":id,"result":{"requirements":requirements}}));
             }
             Some("thread/start") => send(json!({"id":id,"result":{"thread":{"id":"thread-stub"}}})),
             Some("thread/resume") => {

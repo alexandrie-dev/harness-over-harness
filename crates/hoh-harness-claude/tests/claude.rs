@@ -9,7 +9,7 @@ use hoh_external_harness::{
     AccessMode, ApprovalDecision, ApprovalMode, AuthState, DiscoveryFailure, DiscoveryOperation,
     EndReason, ExternalHarness, HarnessAction, HarnessEvent, HarnessPolicy, HarnessResponse,
     HarnessSession, HarnessTelemetry, InteractionMode, ItemOutcome, PromptParams, QuestionAnswer,
-    RespondParams, SandboxMode, StartParams, Started, code,
+    RespondParams, SandboxMode, StartParams, Started, TitleRequest, code,
 };
 use hoh_harness_claude::{ClaudeConfig, ClaudeHarness, SettingSources};
 use tokio::sync::mpsc::Receiver;
@@ -294,7 +294,10 @@ async fn title_generation_is_a_short_isolated_no_tools_call_outside_the_project(
     let env = Env::new();
     let title = env
         .harness()
-        .generate_title("title this conversation".into())
+        .generate_title(TitleRequest {
+            prompt: "title this conversation".into(),
+            ..Default::default()
+        })
         .await
         .unwrap();
     assert_eq!(title, "Context Window Indicator");
@@ -2739,7 +2742,13 @@ async fn fake_script_checks_window_argv_across_personal_launches() {
         .await
         .unwrap();
     trusted.session.terminate(Duration::from_millis(500)).await;
-    harness.generate_title("title".into()).await.unwrap();
+    harness
+        .generate_title(TitleRequest {
+            prompt: "title".into(),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
     let records: Vec<Vec<String>> = std::fs::read_to_string(log)
         .unwrap()
         .lines()

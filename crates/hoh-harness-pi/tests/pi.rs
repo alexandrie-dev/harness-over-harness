@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use hoh_external_harness::{
     AccessMode, ExternalHarness, HarnessAction, HarnessEvent, HarnessPolicy, NetworkAccess,
-    PromptImage, PromptParams, SandboxMode, StartParams, VersionStatus, code,
+    PromptImage, PromptParams, SandboxMode, StartParams, TitleRequest, VersionStatus, code,
 };
 use hoh_harness_pi::PiHarness;
 use tempfile::TempDir;
@@ -45,6 +45,11 @@ if args == ["--version"]:
 assert {"--no-approve", "--no-extensions", "--no-mcp", "--offline"} <= set(args)
 session_id = "30ef5cde-f3d8-4a0e-a933-1308bf671102"
 resume = "--session-id" in args
+title_mode = "--system-prompt" in args
+if title_mode:
+    assert {"--no-session", "--no-skills", "--no-prompt-templates", "--no-context-files"} <= set(args)
+    assert "--session-dir" not in args and "--session-id" not in args
+    assert not list(pathlib.Path.cwd().iterdir())
 if "--no-session" in args:
     assert "--no-tools" in args
     saved = None
@@ -53,6 +58,7 @@ else:
     if resume:
         assert args[args.index("--session-id") + 1] == session_id
 model = {"provider": "mock", "id": "model", "name": "Test Model"}
+title_model_selected = False
 for line in sys.stdin:
     request = json.loads(line)
     method = request["type"]
@@ -74,14 +80,31 @@ for line in sys.stdin:
             {"name": "run-extension", "source": "extension"},
         ]}
     elif method == "set_model":
-        assert request["provider"] == "mock" and request["modelId"] == "model"
+        if title_mode:
+            assert request["provider"] == "another"
+            if request["modelId"] == "nested/model":
+                data = {"provider": request["provider"], "id": request["modelId"]}
+                title_model_selected = True
+            else:
+                data = model
+        else:
+            assert request["provider"] == "mock" and request["modelId"] == "model"
     elif method == "set_thinking_level":
-        assert request["level"] == "high"
+        assert request["level"] == ("off" if title_mode else "high")
     elif method == "prompt":
-        assert request["images"] == [{"type":"image", "mimeType":"image/png", "data":"aW1n"}]
+        if title_mode:
+            assert title_model_selected and request["images"] == []
+        else:
+            assert request["images"] == [{"type":"image", "mimeType":"image/png", "data":"aW1n"}]
         data = {"disposition": "handled" if request["message"] == "/handled" else "started"}
     emit({"id": request["id"], "type": "response", "command": method, "success": True, "data": data})
     if method == "prompt" and data["disposition"] == "started":
+        if title_mode:
+            answer = json.dumps({"title": "Доступ к кабинету CEO"}) if request["message"] == "title" else "Title: Кабинет CEO"
+            message = {"role": "assistant", "content": [{"type": "text", "text": answer}]}
+            emit({"type": "message_end", "message": message})
+            emit({"type": "agent_settled", "aborted": False})
+            continue
         saved.touch()
         message = {"role": "assistant", "content": [{"type": "text", "text": "Hello"}, {"type": "thinking", "thinking": "Plan"}]}
         for kind, delta in [("text_delta", "Hello"), ("thinking_delta", "Plan")]:
@@ -125,6 +148,49 @@ async fn workspace_get_commands_uses_no_session_or_extensions() {
         Some("Prepare release")
     );
     assert!(!cwd.join("sessions").exists());
+}
+
+#[tokio::test]
+async fn titles_use_an_isolated_session_and_the_bound_model() {
+    let dir = TempDir::new().unwrap();
+    let project = dir.path().join("project");
+    std::fs::create_dir(&project).unwrap();
+    std::fs::write(
+        project.join("AGENTS.md"),
+        "Do not load this in the title process.",
+    )
+    .unwrap();
+    let pi = stub(dir.path());
+    let request = |prompt: &str, model: Option<&str>| TitleRequest {
+        prompt: prompt.into(),
+        model: model.map(str::to_owned),
+        cwd: Some(project.clone()),
+        trusted: true,
+        native_session_id: None,
+    };
+
+    assert_eq!(
+        pi.generate_title(request("title", Some("another/nested/model")))
+            .await
+            .unwrap(),
+        "Доступ к кабинету CEO"
+    );
+    assert_eq!(
+        pi.generate_title(request("invalid", Some("another/nested/model")))
+            .await
+            .unwrap_err()
+            .code,
+        code::PROTOCOL,
+    );
+    assert!(pi.generate_title(request("title", None)).await.is_err());
+    assert_eq!(
+        pi.generate_title(request("title", Some("another/unavailable")))
+            .await
+            .unwrap_err()
+            .code,
+        code::PROTOCOL,
+    );
+    assert!(!dir.path().join("sessions").exists());
 }
 
 #[tokio::test]

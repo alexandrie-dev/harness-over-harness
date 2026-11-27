@@ -15,6 +15,7 @@ import {
 } from '~/components/ui/dialog';
 import { ComposerHandleContext } from '~/composerHandleContext';
 import { useQuietThreadShell } from '~/state/entities';
+import { RenameChatTitleButton } from './ChatTitles';
 import { closeQuickView, openFullFromQuickView, openQuickView, quickViewStore } from './quick-view-store';
 import './quick-view.css';
 
@@ -110,16 +111,19 @@ export function QuickViewDialog() {
                   Quick view of this conversation. Reply here or open the full conversation.
                 </DialogDescription>
               </span>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="hoh-quick-view__full"
-                aria-label={`Open ${title} in full conversation`}
-                onClick={() => { void openFullConversation(); }}
-              >
-                <ArrowUpRightIcon aria-hidden />
-                <span>Open full conversation</span>
-              </Button>
+              <div className="hoh-quick-view__actions">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="hoh-quick-view__full"
+                  aria-label={`Open ${title} in full conversation`}
+                  onClick={() => { void openFullConversation(); }}
+                >
+                  <ArrowUpRightIcon aria-hidden />
+                  <span>Open full conversation</span>
+                </Button>
+                {thread ? <RenameChatTitleButton key={threadId} threadId={threadId} title={title} /> : null}
+              </div>
             </DialogHeader>
             <div className="hoh-quick-view__chat" data-side-chat-pane={threadId}>
               <BackgroundThreadContext value>
