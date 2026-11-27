@@ -91,7 +91,7 @@ python3 scripts/build-desktop.py --release --build-dir target/release-macos
 файлы сертификатом Developer ID Application и пройдите
 [нотаризацию Apple](https://developer.apple.com/documentation/security/notarizing-macos-software-before-distribution).
 
-Создайте GitHub Release с тегом этой версии (например, `v0.2.0`) и прикрепите
+Создайте GitHub Release с тегом этой версии (первый выпуск — `v0.0.1`) и прикрепите
 собранные файлы с их исходными именами: `HoH-linux-x86_64.tar.zst`,
 `HoH-linux-aarch64.tar.zst` или `HoH-macos-arm64.zip`. Опубликуйте выпуск как
 `Latest` после загрузки всех готовых архивов. По умолчанию сборка читает релизы

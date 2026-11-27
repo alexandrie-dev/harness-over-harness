@@ -592,21 +592,21 @@ mod tests {
 
     #[test]
     fn release_must_be_stable_and_newer() {
-        let installed = Version::new(0, 2, 0);
+        let installed = Version::new(0, 0, 1);
         let mut release = Release {
-            tag_name: "v0.10.0".into(),
+            tag_name: "v0.0.2".into(),
             draft: false,
             prerelease: false,
             assets: Vec::new(),
         };
         assert_eq!(
             available_version(&release, &installed).unwrap(),
-            Some(Version::new(0, 10, 0))
+            Some(Version::new(0, 0, 2))
         );
         release.prerelease = true;
         assert_eq!(available_version(&release, &installed).unwrap(), None);
         release.prerelease = false;
-        for tag in ["v0.1.9", "v0.2.0", "v0.2.0+rebuilt", "v0.3.0-beta.1"] {
+        for tag in ["v0.0.0", "v0.0.1", "v0.0.1+rebuilt", "v0.0.3-beta.1"] {
             release.tag_name = tag.into();
             assert_eq!(available_version(&release, &installed).unwrap(), None);
         }

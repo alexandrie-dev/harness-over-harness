@@ -1,6 +1,6 @@
 {
   "productName": "HoH",
-  "version": "0.1.0",
+  "version": "0.0.1",
   "identifier": "local.hoh.desktop",
   "build": {
     "frontendDist": "../../ui/dist",

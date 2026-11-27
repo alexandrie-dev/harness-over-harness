@@ -14,7 +14,7 @@ test('desktop checks at startup and on the timer, and installs only on request',
   const timers = [];
   let tauri = false;
   let answerCheck;
-  const available = { kind: 'available', version: '0.2.0' };
+  const available = { kind: 'available', version: '0.0.2' };
   const modules = {
     '@tauri-apps/api/core': {
       isTauri: () => tauri,
@@ -25,9 +25,9 @@ test('desktop checks at startup and on the timer, and installs only on request',
         commands.push(command);
         if (command === 'check_for_update') return new Promise(resolve => { answerCheck = resolve; });
         assert.equal(command, 'auto_update');
-        assert.equal(args.expectedVersion, '0.2.0');
-        args.onProgress.onmessage({ kind: 'downloading', version: '0.2.0' });
-        return Promise.resolve({ kind: 'restarting', version: '0.2.0' });
+        assert.equal(args.expectedVersion, '0.0.2');
+        args.onProgress.onmessage({ kind: 'downloading', version: '0.0.2' });
+        return Promise.resolve({ kind: 'restarting', version: '0.0.2' });
       },
     },
     'zustand/vanilla': { createStore },
@@ -60,5 +60,5 @@ test('desktop checks at startup and on the timer, and installs only on request',
 
   await controls.installUpdate();
   assert.deepEqual(commands, ['check_for_update', 'check_for_update', 'auto_update']);
-  assert.deepEqual(controls.desktopUpdate.getState(), { kind: 'restarting', version: '0.2.0' });
+  assert.deepEqual(controls.desktopUpdate.getState(), { kind: 'restarting', version: '0.0.2' });
 });
