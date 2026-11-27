@@ -195,10 +195,22 @@
           "markdownDescription": "Enables the approval_history command without any pre-configured scope."
         },
         {
+          "description": "Enables the auto_update command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-auto-update",
+          "markdownDescription": "Enables the auto_update command without any pre-configured scope."
+        },
+        {
           "description": "Enables the browse_folders command without any pre-configured scope.",
           "type": "string",
           "const": "allow-browse-folders",
           "markdownDescription": "Enables the browse_folders command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the check_for_update command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-check-for-update",
+          "markdownDescription": "Enables the check_for_update command without any pre-configured scope."
         },
         {
           "description": "Enables the confirm_external_image command without any pre-configured scope.",
@@ -357,10 +369,22 @@
           "markdownDescription": "Denies the approval_history command without any pre-configured scope."
         },
         {
+          "description": "Denies the auto_update command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-auto-update",
+          "markdownDescription": "Denies the auto_update command without any pre-configured scope."
+        },
+        {
           "description": "Denies the browse_folders command without any pre-configured scope.",
           "type": "string",
           "const": "deny-browse-folders",
           "markdownDescription": "Denies the browse_folders command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the check_for_update command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-check-for-update",
+          "markdownDescription": "Denies the check_for_update command without any pre-configured scope."
         },
         {
           "description": "Denies the confirm_external_image command without any pre-configured scope.",

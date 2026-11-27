@@ -25,6 +25,10 @@ fn main() {
         .plugin(hoh_desktop::native::main_security_plugin())
         .on_permission_request(hoh_desktop::native::webview_permission)
         .invoke_handler(tauri::generate_handler![
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            hoh_desktop::auto_update::auto_update,
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            hoh_desktop::auto_update::check_for_update,
             hoh_desktop::native::engine_request,
             hoh_desktop::native::environment_platform,
             hoh_desktop::native::subscribe_engine_notifications,

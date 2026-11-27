@@ -52,6 +52,42 @@ Codex запускает `codex-code-mode-host` из своей установк
 указываете путь к CLI вручную, используйте бинарник из полного пакета.
 Проверьте запуск команд в HoH по [сценарию приёмки на Apple Silicon](docs/macos-smoke.md).
 
+## Релизы и обновления
+
+HoH проверяет последний стабильный выпуск в GitHub Releases при запуске и
+каждые шесть часов, пока приложение открыто. Если есть более новая версия
+для ОС и архитектуры, HoH покажет уведомление. Кнопка **Update** в
+**Settings → About** скачивает архив, сверяет размер и SHA-256 из GitHub,
+заменяет окно вместе с движком и перезапускает HoH. Для доступа к закрытому
+репозиторию выполните `gh auth login --hostname github.com` на компьютере с HoH.
+
+Для первой установки распакуйте архив релиза и запустите `hoh-desktop` из
+распакованной папки на Linux или переместите `HoH.app` в папку приложений на
+macOS. Папка, содержащая установку, должна быть доступна пользователю на запись.
+Для архивов Linux нужны системные `curl` и `zstd` (`sudo apt install curl zstd`).
+
+Выпуск собирается локально. Установите новую версию в
+[`tauri.conf.json`](apps/hoh-desktop/tauri.conf.json) и соберите интерфейс из той
+же ревизии. На Linux после подготовки зависимостей используйте:
+
+```bash
+bash ui/scripts/build.sh
+python3 scripts/build-desktop.py --release --build-dir target/release-linux
+```
+
+На Apple Silicon с готовым `ui/dist` и кэшем Cargo из инструкции выше:
+
+```bash
+python3 scripts/build-desktop.py --release --build-dir target/release-macos
+```
+
+Создайте GitHub Release с тегом этой версии (например, `v0.2.0`) и прикрепите
+собранные файлы с их исходными именами: `HoH-linux-x86_64.tar.zst`,
+`HoH-linux-aarch64.tar.zst` или `HoH-macos-arm64.zip`. Опубликуйте выпуск как
+`Latest` после загрузки всех готовых архивов. По умолчанию сборка читает релизы
+`alexandrie-dev/harness-over-harness`. Для отдельного репозитория с артефактами
+задайте `HOH_RELEASE_REPOSITORY=owner/repo` при сборке окна.
+
 ## Запуск
 
 В графической сессии разработки запустите окно с собранным движком:

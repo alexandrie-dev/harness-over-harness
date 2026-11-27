@@ -1,6 +1,7 @@
 import { ChartNoAxesColumnIcon, GraduationCapIcon, LayoutDashboardIcon, MessagesSquareIcon, PanelRightIcon, PlusIcon, PuzzleIcon, SquarePenIcon, WrenchIcon } from 'lucide-react';
 import { useLocation, useNavigate } from '@tanstack/react-router';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { useStore } from 'zustand';
 
 import { SidebarHeaderIconButton, SidebarThreadHeader, type SidebarThreadHeaderProps } from '~/components/sidebar/SidebarThreadHeader';
 import { SidebarMenuButton, useSidebar } from '~/components/ui/sidebar';
@@ -9,6 +10,9 @@ import { PageLayer, usePage } from './SidebarPages';
 import { externalUiError, openExternalUiPanel, useExternalUiCatalog } from './external-ui-sdk';
 import { HOH_ENVIRONMENT_ID } from '../../hoh-host/config';
 import { toastManager } from '~/components/ui/toast';
+import { desktopUpdate } from '../desktop-update';
+
+let announcedUpdate: string | undefined;
 
 const WORKSPACE_PAGES = [
   ['learning', GraduationCapIcon],
@@ -25,6 +29,16 @@ export function SidebarTop(props: SidebarThreadHeaderProps) {
   const onUsage = useLocation({ select: (location) => location.pathname === '/usage' });
   const { isMobile, setOpen, setOpenMobile } = useSidebar();
   const [teamComingSoon, setTeamComingSoon] = useState(false);
+  const updateVersion = useStore(desktopUpdate, state => state.kind === 'available' ? state.version : undefined);
+  useEffect(() => {
+    if (!updateVersion || updateVersion === announcedUpdate) return;
+    announcedUpdate = updateVersion;
+    toastManager.add({
+      type: 'info',
+      title: `HoH ${updateVersion} is available`,
+      description: 'Open Settings → About to update.',
+    });
+  }, [updateVersion]);
   return (
     <div className="hoh-side" data-hoh-sidebar-top="">
       <PageLayer workspace={catalog?.packages.find(item => item.workspaceLabel && page === workspacePage(item.id))} />

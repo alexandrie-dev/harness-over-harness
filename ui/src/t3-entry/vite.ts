@@ -436,6 +436,14 @@ function chatSettingsWhisper(code: string): string {
   ]], `import { WhisperSettingsLink as HohWhisperSetting } from ${JSON.stringify(setting)};\n`);
 }
 
+function aboutSettingsUpdate(code: string): string {
+  const row = resolve(import.meta.dirname, 'hoh-screens/UpdateVersionRow.tsx');
+  return anchorPatch('SettingsPanels.tsx', code, [[
+    '{isElectron || HOSTED_APP_CHANNEL ? (\n          <AboutVersionSection />',
+    '{isTauri() ? (\n          <UpdateVersionRow id={setting("app-version").id} />\n        ) : isElectron || HOSTED_APP_CHANNEL ? (\n          <AboutVersionSection />',
+  ]], TAURI_IMPORT + `import { UpdateVersionRow } from ${JSON.stringify(row)};\n`);
+}
+
 function localSettingsRoute(code: string, panel: string, original: string, replacement: string): string {
   return anchorPatch(panel + ' route', code, [[
     `import { ${panel} } from "../components/settings/${original}";`,
@@ -719,7 +727,7 @@ function hohT3(): Plugin {
         map: null,
       };
       if (id === resolve(T3_WEB, 'components/chat/ChatComposer.tsx')) return { code: composerSecret(composerWhisper(composerPaste(code))), map: null };
-      if (id === resolve(T3_WEB, 'components/settings/SettingsPanels.tsx')) return { code: chatSettingsWhisper(code), map: null };
+      if (id === resolve(T3_WEB, 'components/settings/SettingsPanels.tsx')) return { code: aboutSettingsUpdate(chatSettingsWhisper(code)), map: null };
       if (id === resolve(T3_WEB, 'components/ComposerPromptEditorTiptap.tsx')) return { code: editorPaste(code), map: null };
       if (id === resolve(T3_WEB, 'components/ChatMarkdown.tsx')) return { code: markdownHtml(code), map: null };
       if (id === resolve(T3_WEB, 'components/chat/MarkdownFileLink.tsx')) return { code: markdownHtmlFileLink(code), map: null };
@@ -843,7 +851,7 @@ const T3_ENV = [
   'VITE_DEV_SERVER_URL', 'T3CODE_DESKTOP_UPDATE_REPOSITORY', 'T3CODE_FEATURE_SECRETS',
 ];
 /** Версия программы в окне T3 (их APP_VERSION) — версия окна HoH. */
-const APP_VERSION = JSON.parse(readFileSync(resolve(UI, 'package.json'), 'utf8')).version as string;
+const APP_VERSION = JSON.parse(readFileSync(resolve(UI, '../apps/hoh-desktop/tauri.conf.json'), 'utf8')).version as string;
 
 /** Скрытые маршруты сверяются с файлами T3: тот же id в createFileRoute, иначе сборка останавливается. */
 export function checkHiddenRoutes(web: string): void {
