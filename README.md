@@ -63,13 +63,13 @@ SHA-256 из GitHub, заменяет окно вместе с движком и
 новая версия не запускается, HoH восстанавливает предыдущую. Для доступа к закрытому
 репозиторию выполните `gh auth login --hostname github.com` на компьютере с HoH.
 
+HoH держит одно окно на пользователя. Повторный запуск завершается, пока окно
+открыто или HoH перезапускается после обновления.
+
 Для первой установки распакуйте архив релиза и запустите `hoh-desktop` из
 распакованной папки на Linux или переместите `HoH.app` в папку приложений на
 macOS. Папка, содержащая установку, должна быть доступна пользователю на запись.
 Для архивов Linux нужны системные `curl` и `zstd` (`sudo apt install curl zstd`).
-Архив macOS, собранный указанной выше командой, имеет локальную подпись для
-разработки. Для публичного распространения подпишите приложение сертификатом
-Developer ID и пройдите нотаризацию Apple.
 
 Выпуск собирается локально. Установите новую версию в
 [`tauri.conf.json`](apps/hoh-desktop/tauri.conf.json) и соберите интерфейс из той
@@ -80,11 +80,16 @@ bash ui/scripts/build.sh
 python3 scripts/build-desktop.py --release --build-dir target/release-linux
 ```
 
-На Apple Silicon с готовым `ui/dist` и кэшем Cargo из инструкции выше:
+На Apple Silicon с готовым `ui/dist` и кэшем Cargo из инструкции выше можно
+собрать архив с локальной подписью для проверки:
 
 ```bash
 python3 scripts/build-desktop.py --release --build-dir target/release-macos
 ```
+
+Для публичного выпуска macOS подпишите `HoH.app` и вложенные исполняемые
+файлы сертификатом Developer ID Application и пройдите
+[нотаризацию Apple](https://developer.apple.com/documentation/security/notarizing-macos-software-before-distribution).
 
 Создайте GitHub Release с тегом этой версии (например, `v0.2.0`) и прикрепите
 собранные файлы с их исходными именами: `HoH-linux-x86_64.tar.zst`,

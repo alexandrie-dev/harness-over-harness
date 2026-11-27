@@ -1,4 +1,5 @@
 mod install;
+mod instance;
 pub use install::Installation;
 
 use semver::Version;

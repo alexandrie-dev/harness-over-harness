@@ -1,7 +1,7 @@
-use super::{Package, package_for, swap_directories};
+use super::{Package, instance::InstanceLock, package_for, swap_directories};
 use semver::Version;
 use std::{
-    ffi::OsString,
+    ffi::{OsStr, OsString},
     fs::{self, File, OpenOptions},
     io::{self, Read},
     os::{
@@ -9,7 +9,7 @@ use std::{
         unix::{ffi::OsStrExt, net::UnixStream},
     },
     path::{Path, PathBuf},
-    process::{Child, Command, Stdio},
+    process::{Child, Stdio},
     sync::{
         Mutex,
         atomic::{AtomicBool, Ordering},
@@ -37,8 +37,8 @@ enum Job {
     },
 }
 
-#[derive(Default)]
 pub struct Installation {
+    instance: InstanceLock,
     lease: Option<File>,
     job: Mutex<Job>,
     ready: Option<PathBuf>,
@@ -65,32 +65,58 @@ impl Installation {
     pub fn startup(version: &Version) -> Result<Option<Self>, String> {
         let mut args = std::env::args_os().skip(1);
         let mode = args.next();
+        let mode = mode.as_deref().and_then(OsStr::to_str);
+        let instance = if matches!(mode, Some(WORKER | CANDIDATE | RECOVERED)) {
+            InstanceLock::inherit(args.next().as_deref())
+                .map_err(|error| format!("Could not resume HoH after updating ({error})."))?
+        } else {
+            let lock = InstanceLock::acquire()
+                .map_err(|error| format!("Could not check whether HoH is running ({error})."))?;
+            let Some(lock) = lock else {
+                eprintln!("HoH is already running.");
+                return Ok(None);
+            };
+            lock
+        };
         let executable = std::env::current_exe().map_err(|error| error.to_string())?;
         let (package, installed) = package_for(std::env::consts::OS, std::env::consts::ARCH)
             .and_then(|package| Some((package, package.installed_at(&executable)?)))
             .unzip();
-        if mode.as_deref().is_some_and(|mode| mode == WORKER) {
+        if mode == Some(WORKER) {
             let package = package.ok_or("Cannot update this installation.")?;
             let installed = installed.ok_or("Cannot find the installation to update.")?;
             let staging = args.next().ok_or("Missing update staging directory.")?;
             let launch_args: Vec<_> = args.collect();
-            worker(package, installed, Path::new(&staging), &launch_args)
-                .map_err(|error| error.to_string())?;
+            worker(
+                package,
+                installed,
+                Path::new(&staging),
+                &launch_args,
+                &instance,
+            )
+            .map_err(|error| error.to_string())?;
             return Ok(None);
         }
+        let candidate = mode == Some(CANDIDATE);
+        let recovered = mode == Some(RECOVERED);
+        let mut installation = Self {
+            instance,
+            lease: None,
+            job: Mutex::default(),
+            ready: None,
+            engine_ready: AtomicBool::default(),
+            page_loaded: AtomicBool::default(),
+            recovered: Mutex::new(recovered),
+        };
         let Some((package, installed)) = package.zip(installed) else {
-            return Ok(Some(Self::default()));
+            return Ok(Some(installation));
         };
-        let candidate = mode.as_deref().is_some_and(|mode| mode == CANDIDATE);
-        let recovered = mode.as_deref().is_some_and(|mode| mode == RECOVERED);
-        let ready = if candidate {
-            Some(PathBuf::from(
+        if candidate {
+            installation.ready = Some(PathBuf::from(
                 args.next().ok_or("Missing update readiness path.")?,
-            ))
-        } else {
-            None
-        };
-        let lease = if candidate || recovered {
+            ));
+        }
+        installation.lease = if candidate || recovered {
             Some(inherited_lease().map_err(|error| error.to_string())?)
         } else if let Ok(lease) = read_lock(installed, "running") {
             lease.try_lock_shared().map_err(|error| {
@@ -110,12 +136,7 @@ impl Installation {
                     .into(),
             );
         }
-        Ok(Some(Self {
-            lease,
-            ready,
-            recovered: Mutex::new(recovered),
-            ..Self::default()
-        }))
+        Ok(Some(installation))
     }
 
     pub(super) fn can_update(&self) -> bool {
@@ -193,8 +214,9 @@ impl Installation {
             let (until_exit, parent) = UnixStream::pair()?;
             let launch_args = current_launch_args();
             let output: OwnedFd = parent.into();
-            let mut child = Command::new(executable)
-                .arg(WORKER)
+            let mut child = self
+                .instance
+                .restart_command(executable, WORKER)?
                 .arg(staging.path())
                 .args(launch_args)
                 .stdin(Stdio::from(lease.try_clone()?))
@@ -239,10 +261,9 @@ impl Installation {
 fn current_launch_args() -> Vec<OsString> {
     let mut args = std::env::args_os().skip(1).peekable();
     if args.peek().is_some_and(|arg| arg == CANDIDATE) {
-        args.next();
-        args.next();
+        args.nth(2);
     } else if args.peek().is_some_and(|arg| arg == RECOVERED) {
-        args.next();
+        args.nth(1);
     }
     args.collect()
 }
@@ -258,14 +279,15 @@ fn inherited_lease() -> io::Result<File> {
 }
 
 fn launch(
+    instance: &InstanceLock,
     executable: &Path,
     mode: &str,
     ready: Option<&Path>,
     args: &[OsString],
     lease: &File,
 ) -> io::Result<Child> {
-    Command::new(executable)
-        .arg(mode)
+    instance
+        .restart_command(executable, mode)?
         .args(ready)
         .args(args)
         .stdin(Stdio::from(lease.try_clone()?))
@@ -287,7 +309,13 @@ fn await_ready(child: &mut Child, ready: &Path) -> io::Result<bool> {
     Ok(false)
 }
 
-fn worker(package: Package, installed: &Path, staging: &Path, args: &[OsString]) -> io::Result<()> {
+fn worker(
+    package: Package,
+    installed: &Path,
+    staging: &Path,
+    args: &[OsString],
+    instance: &InstanceLock,
+) -> io::Result<()> {
     if staging.parent() != installed.parent()
         || !staging
             .file_name()
@@ -314,10 +342,10 @@ fn worker(package: Package, installed: &Path, staging: &Path, args: &[OsString])
     if let Err(error) = swap_directories(installed, &staged) {
         eprintln!("HoH could not replace the installation: {error}");
         lease.lock_shared()?;
-        launch(&executable, RECOVERED, None, args, &lease)?;
+        launch(instance, &executable, RECOVERED, None, args, &lease)?;
         return fs::remove_dir_all(staging);
     }
-    if let Ok(mut child) = launch(&executable, CANDIDATE, Some(&ready), args, &lease) {
+    if let Ok(mut child) = launch(instance, &executable, CANDIDATE, Some(&ready), args, &lease) {
         if await_ready(&mut child, &ready).unwrap_or(false) {
             lease.lock_shared()?;
             return fs::remove_dir_all(staging);
@@ -328,7 +356,7 @@ fn worker(package: Package, installed: &Path, staging: &Path, args: &[OsString])
     // Keep the staging directory if the reverse swap fails. It contains the previous copy.
     swap_directories(installed, &staged)?;
     lease.lock_shared()?;
-    launch(&executable, RECOVERED, None, args, &lease)?;
+    launch(instance, &executable, RECOVERED, None, args, &lease)?;
     fs::remove_dir_all(staging)
 }
 
