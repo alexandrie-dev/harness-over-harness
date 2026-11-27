@@ -1,19 +1,24 @@
-#!/usr/bin/env bash
-# This is the only intentional network step. Never run the build here.
+#!/bin/bash -p
+# The explicit network step for dependency acquisition.
 set -euo pipefail
-cd "$(dirname "$0")/.."
-export XDG_RUNTIME_DIR="${TMPDIR:-/tmp}/hoh-ui2-runtime-$UID"
-mkdir -p "$XDG_RUNTIME_DIR"
-chmod 700 "$XDG_RUNTIME_DIR"
-[[ $(pnpm --version) == 12.21.0 ]] || { echo 'pnpm 12.21.0 required' >&2; exit 1; }
-../scripts/ui-supply-check.sh --config-only
-if [[ ! -f pnpm-lock.yaml ]]; then
-  pnpm install --lockfile-only --no-frozen-lockfile --no-offline --ignore-scripts --no-optional --network-concurrency=4
+unset CDPATH
+cd -- "${BASH_SOURCE[0]%/*}/.."
+
+record=${1:-}
+if (( $# > 1 )) || [[ -n "$record" && "$record" != --record ]]; then
+  printf 'Usage: %s [--record]\n' "$0" >&2
+  exit 2
 fi
-# Check every locked package BEFORE acquiring its archive or executing it.
-../scripts/ui-supply-check.sh --refresh
-# pnpm 12.21 fetch has no --no-optional flag (verified with fetch --help).
-# Materialize with install, whose flags explicitly preserve all acquisition rules.
-pnpm install --frozen-lockfile --no-offline --ignore-scripts --no-optional --network-concurrency=4
-pnpm install --frozen-lockfile --offline --ignore-scripts --no-optional
-../scripts/ui-supply-check.sh
+exec /usr/bin/env -i /usr/bin/python3 -I scripts/offline.py --acquire /bin/bash -peuc '
+  ../scripts/ui-supply-check.sh --npm-only --config-only
+  if [[ ! -f pnpm-lock.yaml ]]; then
+    pnpm install --lockfile-only --no-frozen-lockfile --no-offline --ignore-scripts --no-optional --network-concurrency=4
+  fi
+
+  report=(--local)
+  [[ $1 != --record ]] || report=()
+  ../scripts/ui-supply-check.sh --npm-only --refresh --before-install "${report[@]}"
+  pnpm install --frozen-lockfile --no-offline --ignore-scripts --no-optional --network-concurrency=4
+  pnpm install --frozen-lockfile --offline --ignore-scripts --no-optional
+  ../scripts/ui-supply-check.sh --npm-only
+' hoh-acquire "$record"

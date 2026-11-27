@@ -6,7 +6,7 @@
 set -uo pipefail
 cd "${HOH_TREE:-$(dirname "$0")/..}"   # CEO 20.11 19:3x: приёмка в выгрузке коммита пакета
 export CARGO_NET_OFFLINE=true
-export CARGO_HOME=/mnt/toshiba/alexandrie/hoh/cargo-home   # CEO 20.11: кэш crates не на корневом диске
+export CARGO_HOME=${CARGO_HOME:-/mnt/toshiba/alexandrie/hoh/cargo-home}   # CEO 20.11: кэш crates не на корневом диске
 
 # Read-only window artifact check. This mode exits before report setup or cargo.
 window_artifacts() {
@@ -101,7 +101,11 @@ if ((passed == 0)); then
 fi
 
 if (($# == 0)); then
-  phase window-artifacts window_artifacts ui/dist "${HOH_DESKTOP_BINARY:-/mnt/toshiba/alexandrie/hoh/target-ui2/release/hoh-desktop}"
+  phase ui bash -p ui/scripts/build.sh --check
+  if command -v cargo-deny >/dev/null; then
+    phase ui-rust-licenses cargo deny --manifest-path apps/hoh-desktop/Cargo.toml --locked --offline check --disable-fetch
+  fi
+  phase window-artifacts window_artifacts ui/dist "${HOH_DESKTOP_BINARY:-${HOH_BUILD_DIR:-target}/desktop/release/hoh-desktop}"
   # The scenario runner (crates/hoh-conformance) is not written yet. Until it is, a full check cannot pass.
   say "scenarios: прогонщика сценариев ещё нет"
   failed+=(scenarios)

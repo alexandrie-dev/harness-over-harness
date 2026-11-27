@@ -105,14 +105,12 @@
     "@tailwindcss/vite": "4.3.5",
     "typescript": "6.0.3",
     "playwright-core": "1.65.0",
-    "@tauri-apps/cli": "2.12.4",
     "@types/react": "19.3.0",
     "@types/react-dom": "19.3.0",
     "@types/node": "24.19.2",
     "@rolldown/binding-linux-x64-gnu": "1.2.19",
     "@tailwindcss/oxide-linux-x64-gnu": "4.3.5",
     "lightningcss-linux-x64-gnu": "1.33.0",
-    "@tauri-apps/cli-linux-x64-gnu": "2.12.4",
     "oxc-transform-react": "0.156.0",
     "@oxc-transform-react/binding-linux-x64-gnu": "0.156.0",
     "@types/culori": "4.0.1",
@@ -287,14 +285,12 @@
 | `@tailwindcss/vite` | 4.3.5 | 2026-11-06 | MIT | Интеграция Tailwind с Vite |
 | `typescript` | 6.0.3 | 2026-04-16 | Apache-2.0 | Проверка типов (JS-реализация) |
 | `playwright-core` | 1.65.0 | 2026-11-05 | Apache-2.0 | Снимки установленным Chromium без загрузки браузера |
-| `@tauri-apps/cli` | 2.12.4 | 2026-10-21 | Apache-2.0 OR MIT | Локальный CLI оболочки |
 | `@types/react` | 19.3.0 | 2026-09-09 | MIT | Типы React для tsc, нельзя заменить DOM-типами |
 | `@types/react-dom` | 19.3.0 | 2026-09-09 | MIT | Типы ReactDOM для tsc |
 | `@types/node` | 24.19.2 | 2026-10-09 | MIT | Типы конфигурации Vite и проверок Node |
 | `@rolldown/binding-linux-x64-gnu` | 1.2.19 | 2026-11-11 | MIT | Необходимый бинарный backend Vite, явный Linux x64 glibc пакет при optional=false |
 | `@tailwindcss/oxide-linux-x64-gnu` | 4.3.5 | 2026-11-06 | MIT | Сканер Tailwind, явный Linux x64 glibc пакет при optional=false |
 | `lightningcss-linux-x64-gnu` | 1.33.0 | 2026-07-20 | MPL-2.0 | CSS backend Vite/Tailwind, явный Linux x64 glibc пакет при optional=false |
-| `@tauri-apps/cli-linux-x64-gnu` | 2.12.4 | 2026-10-21 | Apache-2.0 OR MIT | Бинарный CLI Tauri, явный Linux x64 glibc пакет при optional=false |
 | `oxc-transform-react` | 0.156.0 | 2026-10-27 | MIT | Обязательный peer plugin-react 6.3; TSX-преобразование |
 | `@oxc-transform-react/binding-linux-x64-gnu` | 0.156.0 | 2026-10-27 | MIT | Backend обязательного TSX peer, явный Linux x64 glibc пакет при optional=false |
 | `react-markdown` | 10.1.0 | 2025-03-07 | MIT | Отображение чата как в T3, установка разрешена основателем 20.11.2026 |

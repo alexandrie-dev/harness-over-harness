@@ -14,8 +14,8 @@ frozenLockfile: true
 offline: true
 updateNotifier: false
 registry: https://registry.npmjs.org/
-storeDir: /mnt/toshiba/alexandrie/hoh/pnpm-store
-cacheDir: /mnt/toshiba/alexandrie/hoh/pnpm-store/cache
+storeDir: .supply-cache/store
+cacheDir: .supply-cache/cache
 ignoredOptionalDependencies:
   - '*'
 autoInstallPeers: false

@@ -1,7 +1,7 @@
 {
-  "lockSha256": "764e88c54eb79071f02f2e6a0ab905a558e4db74db30ab7fca444c237fc98d14",
+  "lockSha256": "94916739ec5e0d1f5d2f76696d8993fcf95a12d64ce804db225e0a5a09d0d439",
   "registry": "https://registry.npmjs.org/",
-  "checkedAt": "2026-11-23T21:56:16.661211+00:00",
+  "checkedAt": "2026-11-27T11:53:14.383271+00:00",
   "packages": {
     "@babel/runtime": {
       "versions": {
@@ -2056,84 +2056,6 @@
         "2.12.4": "2026-10-14T18:47:44.921Z"
       }
     },
-    "@tauri-apps/cli-linux-x64-gnu": {
-      "versions": {
-        "2.12.4": {
-          "license": "Apache-2.0 OR MIT",
-          "dist": {
-            "shasum": "0dbabc5df1db3a9c48298fb6061a1979a6886941",
-            "tarball": "https://registry.npmjs.org/@tauri-apps/cli-linux-x64-gnu/-/cli-linux-x64-gnu-2.12.4.tgz",
-            "fileCount": 3,
-            "integrity": "sha512-tNzZSa79Z1nRpHxEpQ38lsAFpKlFlYvoXzjTV+lRRn/zSf3wrdUC3wnLcq2XEadchPu4ttK0zivhYzr+XGD19Q==",
-            "signatures": [
-              {
-                "sig": "MEUCIBDmG8LxvLb87byDq6yTXjCXDn4dYpLw7KcpVRTGFrAQAiEA9akvvAV0WALThqe1BTf2FPpmGThT7G0oB1lD5Sc/txQ=",
-                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
-              },
-              {
-                "sig": "MEQCIFozohi52CnuUFY8srkDlq4HpnhU+N7OJzbGE677iuAIAiAdF/crQP0sgSpZT/bDxyS3+yKRcFLLnjeueCA7f8/FAg==",
-                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
-              }
-            ],
-            "attestations": {
-              "url": "https://registry.npmjs.org/-/npm/v1/attestations/@tauri-apps%2fcli-linux-x64-gnu@2.12.4",
-              "provenance": {
-                "predicateType": "https://slsa.dev/provenance/v1"
-              }
-            },
-            "unpackedSize": 19882694
-          }
-        }
-      },
-      "time": {
-        "2.12.4": "2026-10-21T12:18:50.744Z"
-      }
-    },
-    "@tauri-apps/cli": {
-      "versions": {
-        "2.12.4": {
-          "license": "Apache-2.0 OR MIT",
-          "scripts": {
-            "test": "vitest run",
-            "build": "cross-env TARGET=node napi build --platform --profile release-size-optimized",
-            "tauri": "node ./tauri.js",
-            "prepack": "cp ../../crates/tauri-schema-generator/schemas/config.schema.json .",
-            "version": "napi version",
-            "artifacts": "napi artifacts",
-            "postbuild": "node append-headers.js",
-            "build:debug": "cross-env TARGET=node napi build --platform",
-            "prepublishOnly": "napi prepublish -t npm --gh-release-id $RELEASE_ID",
-            "postbuild:debug": "node append-headers.js"
-          },
-          "dist": {
-            "shasum": "877284bf929b3c190b2e9f859e602c51c34a7c9f",
-            "tarball": "https://registry.npmjs.org/@tauri-apps/cli/-/cli-2.12.4.tgz",
-            "fileCount": 12,
-            "integrity": "sha512-JI9bHfudSRJikGOrjbXEm6RjzzvmKuLc+JixB1NE8hNzQkNlCCIC3pTES3uypkR9lxHrsbxzcnSwhI2IxBQphw==",
-            "signatures": [
-              {
-                "sig": "MEYCIQCsPiZ7ZsNMolVc1PCaCPsJk9+g+Svw4oUGK/2IudJS+gIhAL8sLV2CoByJO1BYEPlrxrYR7zS6XlMl1YA0S3DxCfCO",
-                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
-              },
-              {
-                "sig": "MEYCIQCLrBloYWg/zYvoScVQGBucguGGj37Lf9Yzf/lljvWi0QIhAIXc2SGyuvgJ9XGkZztvwOsrYIwe2HF4WlV9U1u+LIeO",
-                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
-              }
-            ],
-            "attestations": {
-              "url": "https://registry.npmjs.org/-/npm/v1/attestations/@tauri-apps%2fcli@2.12.4",
-              "provenance": {
-                "predicateType": "https://slsa.dev/provenance/v1"
-              }
-            },
-            "unpackedSize": 432536
-          }
-        }
-      },
-      "time": {
-        "2.12.4": "2026-10-21T12:20:52.691Z"
-      }
-    },
     "@tiptap/core": {
       "versions": {
         "3.31.3": {
@@ -3535,8 +3457,8 @@
                 "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
               },
               {
-                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U",
-                "sig": "MEYCIQCdWO3ej7Y4B4HA3uIQuk1m5VOzg4qaIaOxbsq7rFbrtwIhAOVFoXYM361j2ejjnuJ9mg/UG84OEeuFRZBsoWmajAD5"
+                "sig": "MEYCIQCdWO3ej7Y4B4HA3uIQuk1m5VOzg4qaIaOxbsq7rFbrtwIhAOVFoXYM361j2ejjnuJ9mg/UG84OEeuFRZBsoWmajAD5",
+                "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
               }
             ],
             "attestations": {
