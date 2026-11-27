@@ -84,7 +84,7 @@ impl Package {
         } else {
             root.file_name() == Some(OsStr::new(self.install_dir))
         };
-        (valid_root
+        ((valid_root || recovery::is_backup(root))
             && executable.ends_with(&binary)
             && root.join(self.version_file).symlink_metadata().is_ok())
         .then_some(root)
@@ -193,19 +193,53 @@ enum Response {
     Archive(u64),
 }
 
+enum StagingError {
+    Failed(String),
+    ShutdownUnconfirmed(String),
+}
+
+impl From<String> for StagingError {
+    fn from(error: String) -> Self {
+        Self::Failed(error)
+    }
+}
+
+impl From<&str> for StagingError {
+    fn from(error: &str) -> Self {
+        Self::Failed(error.into())
+    }
+}
+
+fn retain_if_shutdown_unconfirmed<T>(
+    result: Result<T, StagingError>,
+    staging: tempfile::TempDir,
+) -> Result<(T, tempfile::TempDir), String> {
+    match result {
+        Ok(value) => Ok((value, staging)),
+        Err(StagingError::Failed(error)) => Err(error),
+        Err(StagingError::ShutdownUnconfirmed(error)) => {
+            let retained = staging.keep();
+            Err(format!(
+                "{error} Staging was retained at {}.",
+                retained.display()
+            ))
+        }
+    }
+}
+
 fn fetch(
     url: &str,
     destination: &Path,
     token: Option<&str>,
     response: Response,
     cancelled: impl Fn() -> bool,
-) -> Result<u16, String> {
+) -> Result<u16, StagingError> {
     if cancelled() {
         return Err("The update check was cancelled.".into());
     }
     let mut command = Command::new("/usr/bin/curl");
     let (accept, timeout, limit) = match response {
-        Response::Metadata => ("application/vnd.github+json", "20", 2 * 1024 * 1024),
+        Response::Metadata => ("application/vnd.github+json", 20, 2 * 1024 * 1024),
         Response::Archive(size) => {
             unsafe {
                 command.pre_exec(move || {
@@ -221,10 +255,10 @@ fn fetch(
                     Ok(())
                 });
             }
-            ("application/octet-stream", "300", size)
+            ("application/octet-stream", 300, size)
         }
     };
-    command.arg("--disable");
+    command.process_group(0).arg("--disable");
     if token.is_some() {
         // Send the credential over stdin. curl drops Authorization on cross-host redirects.
         command.args(["--header", "@-"]).stdin(Stdio::piped());
@@ -244,7 +278,7 @@ fn fetch(
             "--connect-timeout",
             "10",
             "--max-time",
-            timeout,
+            &timeout.to_string(),
             "--max-filesize",
             &limit.to_string(),
             "--user-agent",
@@ -257,6 +291,7 @@ fn fetch(
         .args(["--write-out", "%{http_code}", "--", url])
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
+    let deadline = Instant::now() + Duration::from_secs(timeout);
     let mut child = command
         .spawn()
         .map_err(|error| format!("Could not start curl for the update ({error})."))?;
@@ -266,8 +301,19 @@ fn fetch(
             "Authorization: Bearer {token}"
         )
     });
-    let status = install::wait_for_child(&mut child, cancelled)
-        .map_err(|error| format!("Could not read the GitHub response ({error})."))?;
+    let status =
+        install::wait_for_child_group(&mut child, || cancelled() || Instant::now() >= deadline)
+            .map_err(|error| match error {
+                install::ChildWaitError::Interrupted if cancelled() => {
+                    "The update check was cancelled.".into()
+                }
+                install::ChildWaitError::Interrupted => "The GitHub download took too long.".into(),
+                install::ChildWaitError::ShutdownUnconfirmed(error) => {
+                    StagingError::ShutdownUnconfirmed(format!(
+                        "Could not confirm that curl stopped ({error})."
+                    ))
+                }
+            })?;
     if !status.success() || header.is_some_and(|result| result.is_err()) {
         return Err("Could not download from GitHub. Check your connection and try again.".into());
     }
@@ -349,7 +395,7 @@ fn latest_release(
     api: &str,
     destination: &Path,
     cancelled: impl Fn() -> bool + Copy,
-) -> Result<Option<(Release, Option<String>)>, String> {
+) -> Result<Option<(Release, Option<String>)>, StagingError> {
     let url = format!("{api}/releases/latest");
     let mut token = None;
     let mut status = fetch(&url, destination, None, Response::Metadata, cancelled)?;
@@ -384,9 +430,7 @@ fn latest_release(
         return Err("GitHub Releases is unavailable. For a private repository, run gh auth login and use an account with access.".into());
     }
     if status != 200 {
-        return Err(format!(
-            "GitHub could not check for updates (HTTP {status})."
-        ));
+        return Err(format!("GitHub could not check for updates (HTTP {status}).").into());
     }
     let json =
         fs::read(destination).map_err(|error| format!("Could not read the release ({error})."))?;
@@ -528,11 +572,14 @@ fn update(
         return Ok(UpdateOutcome::UnsupportedInstall);
     }
     let cancelled = || installation.cancelled();
-    let metadata = tempfile::NamedTempFile::new()
+    let metadata = tempfile::tempdir()
         .map_err(|error| format!("Could not prepare the update check ({error})."))?;
     let repo = release_repository()?;
     let api = format!("https://api.github.com/repos/{repo}");
-    let Some((release, token)) = latest_release(&api, metadata.path(), cancelled)? else {
+    let release = latest_release(&api, &metadata.path().join("release.json"), cancelled);
+    let (release, metadata) = retain_if_shutdown_unconfirmed(release, metadata)?;
+    drop(metadata);
+    let Some((release, token)) = release else {
         return Ok(UpdateOutcome::NoRelease);
     };
     let Some(version) = available_version(&release, installed_version)? else {
@@ -571,13 +618,14 @@ fn update(
         )
     };
     let archive = staging.path().join(name);
-    let status = fetch(
+    let download = fetch(
         &url,
         &archive,
         token.as_deref(),
         Response::Archive(asset.size),
         cancelled,
-    )?;
+    );
+    let (status, staging) = retain_if_shutdown_unconfirmed(download, staging)?;
     if status != 200 {
         return Err(format!(
             "GitHub could not serve the update package (HTTP {status})."
@@ -589,17 +637,8 @@ fn update(
     let unpacked = staging.path().join("unpacked");
     fs::create_dir(&unpacked)
         .map_err(|error| format!("Could not prepare the package extractor ({error})."))?;
-    match extract::extract(&archive, &unpacked, cancelled) {
-        Ok(()) => {}
-        Err(extract::ExtractionError::Failed(error)) => return Err(error),
-        Err(extract::ExtractionError::ShutdownUnconfirmed(error)) => {
-            let retained = staging.keep();
-            return Err(format!(
-                "Could not confirm the package extractor stopped ({error}). Staging was retained at {}.",
-                retained.display()
-            ));
-        }
-    }
+    let extracted = extract::extract(&archive, &unpacked, cancelled);
+    let ((), staging) = retain_if_shutdown_unconfirmed(extracted, staging)?;
     let bundle = package.staged_in(&unpacked).map_err(|_| INVALID_PACKAGE)?;
     validate_bundle(&bundle, package, &version, cancelled)?;
     #[cfg(target_os = "linux")]
@@ -607,10 +646,7 @@ fn update(
         format!("Could not preserve permissions for the HoH installation ({error}).")
     })?;
     candidate::qualify(bundle.join(package.binary_dir).join("hoh"), cancelled)?;
-    #[cfg(target_os = "linux")]
-    recovery::Recovery::check_exchange_permissions(installed, &bundle)
-        .map_err(|error| format!("Could not replace the HoH installation ({error})."))?;
-    installation.handoff(executable, installed, staging)?;
+    installation.handoff(executable, installed, staging, package)?;
     Ok(UpdateOutcome::Restarting(version))
 }
 
@@ -688,6 +724,18 @@ pub async fn auto_update(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn staging_survives_an_unconfirmed_helper_exit() {
+        let root = tempfile::tempdir().unwrap();
+        let staging = tempfile::tempdir_in(root.path()).unwrap();
+        let archive = staging.path().join("release.tar.zst");
+        fs::write(&archive, b"partial download").unwrap();
+        let error = StagingError::ShutdownUnconfirmed("curl did not stop".into());
+
+        assert!(retain_if_shutdown_unconfirmed::<()>(Err(error), staging).is_err());
+        assert!(archive.is_file());
+    }
 
     #[test]
     fn release_must_be_stable_and_newer() {

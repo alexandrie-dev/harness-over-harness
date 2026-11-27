@@ -2,7 +2,7 @@ use super::{
     Package,
     candidate::{
         CandidateEngine, ENGINE_GUARD, await_engine_stop, confirm_interrupted_engine_stopped,
-        engine_is_running, run_guard,
+        run_guard,
     },
     instance::{InstanceLock, pass_fd, take_fd},
     open_regular_file, package_for, read_install_metadata,
@@ -23,7 +23,7 @@ use std::{
         },
     },
     path::Path,
-    process::{Child, Stdio},
+    process::{Child, ExitStatus, Stdio},
     sync::{Arc, Mutex},
     thread,
     time::{Duration, Instant},
@@ -36,6 +36,7 @@ const RECOVERED: &str = "--hoh-update-recovered";
 const START_TIMEOUT: Duration = Duration::from_secs(45);
 const START_STABILITY: Duration = Duration::from_secs(1);
 const STOP_TIMEOUT: Duration = Duration::from_secs(10);
+const HELPER_STOP_TIMEOUT: Duration = Duration::from_secs(5);
 const WAIT_STEP: Duration = Duration::from_millis(75);
 const CHECK_READY: u8 = 1;
 const SHUTDOWN_COMPLETE: u8 = 1;
@@ -198,7 +199,7 @@ impl Installation {
             let lifecycle =
                 UnixStream::from(take_fd(args.next().as_deref()).map_err(connect_error)?);
             lifecycle.set_nonblocking(true).map_err(connect_error)?;
-            let recovery = Recovery::open(installed)
+            let recovery = Recovery::open(installed, package)
                 .map_err(connect_error)?
                 .ok_or("Could not find the pending HoH update.")?;
             installation.readiness = Some(Arc::new(CandidateReadiness {
@@ -262,6 +263,7 @@ impl Installation {
         executable: &Path,
         installed: &Path,
         staging: tempfile::TempDir,
+        package: Package,
     ) -> Result<(), String> {
         let mut job = self.job.lock().unwrap_or_else(|error| error.into_inner());
         if matches!(*job, Job::Cancelling) {
@@ -280,7 +282,7 @@ impl Installation {
                 error_message(error)
             }
         })?;
-        if Recovery::open(installed).map_err(error_message)?.is_some() {
+        if Recovery::open(installed, package).map_err(error_message)?.is_some() {
             return Err(
                 "An earlier HoH update is still pending. Restart HoH before trying again.".into(),
             );
@@ -296,6 +298,11 @@ impl Installation {
         }
         let result = (|| {
             check_lease(installed, lease)?;
+            #[cfg(target_os = "linux")]
+            Recovery::check_exchange_permissions(
+                installed,
+                &package.staged_in(&staging.path().join("unpacked"))?,
+            )?;
             let (until_exit, parent) = UnixStream::pair()?;
             let launch_args = current_launch_args();
             let output: OwnedFd = parent.into();
@@ -367,9 +374,7 @@ impl Installation {
             let confirmed = generation.filter(|(_, engine_ready_at)| {
                 ui.is_some_and(|(_, ui_ready_at)| {
                     (*engine_ready_at).max(ui_ready_at).elapsed() >= START_STABILITY
-                }) && !transport.exited()
-                    && !transport.disconnected()
-                    && engine_is_running(&readiness.engine_status)
+                }) && transport.confirm_running()
             });
             let reply = confirmed.map_or(0, |(generation, _)| generation).to_be_bytes();
             if let Err(error) = lifecycle.write_all(&reply) {
@@ -521,20 +526,20 @@ fn recover_pending(
     active: &File,
     instance: &InstanceLock,
 ) -> io::Result<bool> {
-    let Some(recovery) = Recovery::open(installed)? else {
+    let Some(recovery) = Recovery::open(installed, package)? else {
         return Ok(false);
     };
     let _gate = update_gate(installed)?;
     active.try_lock()?;
     check_lease(installed, active)?;
-    let backup = File::open(recovery.backup(package))?;
+    let backup = File::open(recovery.backup())?;
     backup.try_lock()?;
     let restored = recovery.is_swapped(active, &backup)? && !recovery.committed()?;
     if restored {
         if let Some(status) = recovery.engine_status()? {
             confirm_interrupted_engine_stopped(&status)?;
         }
-        recovery.exchange(installed, package)?;
+        recovery.exchange(installed)?;
     }
     recovery.sync_exchange(installed)?;
     if let Err(error) = recovery.finish() {
@@ -591,7 +596,7 @@ fn worker(
         }
     };
     let executable = installed.join(package.binary_dir).join("hoh-desktop");
-    if let Err(error) = recovery.exchange(installed, package) {
+    if let Err(error) = recovery.exchange(installed) {
         eprintln!("HoH could not replace the installation: {error}");
         let _ = recovery.finish();
         return restart_previous(package, installed, args, instance, &lease);
@@ -620,7 +625,7 @@ fn worker(
         }
         stop_candidate(&mut child, &mut lifecycle, &recovery)?;
     }
-    recovery.exchange(installed, package)?;
+    recovery.exchange(installed)?;
     let result = recovery.sync_exchange(installed).and_then(|()| recovery.finish());
     restart_previous(package, installed, args, instance, &lease)?;
     result
@@ -644,7 +649,7 @@ fn await_parent_exit(parent: &mut UnixStream) -> io::Result<()> {
 pub(super) fn wait_for_child(
     child: &mut Child,
     cancelled: impl Fn() -> bool,
-) -> io::Result<std::process::ExitStatus> {
+) -> io::Result<ExitStatus> {
     loop {
         if cancelled() {
             let _ = child.kill();
@@ -653,6 +658,59 @@ pub(super) fn wait_for_child(
         }
         if let Some(status) = child.try_wait()? {
             return Ok(status);
+        }
+        thread::sleep(WAIT_STEP);
+    }
+}
+
+pub(super) enum ChildWaitError {
+    Interrupted,
+    ShutdownUnconfirmed(io::Error),
+}
+
+pub(super) fn wait_for_child_group(
+    child: &mut Child,
+    stopped: impl Fn() -> bool,
+) -> Result<ExitStatus, ChildWaitError> {
+    loop {
+        if stopped() {
+            stop_child_group(child).map_err(ChildWaitError::ShutdownUnconfirmed)?;
+            return Err(ChildWaitError::Interrupted);
+        }
+        if let Some(status) = child
+            .try_wait()
+            .map_err(ChildWaitError::ShutdownUnconfirmed)?
+        {
+            confirm_child_group_stopped(child).map_err(ChildWaitError::ShutdownUnconfirmed)?;
+            return Ok(status);
+        }
+        thread::sleep(WAIT_STEP);
+    }
+}
+
+pub(super) fn stop_child_group(child: &mut Child) -> io::Result<()> {
+    if unsafe { libc::kill(-(child.id() as libc::pid_t), libc::SIGKILL) } < 0 {
+        let error = io::Error::last_os_error();
+        if error.raw_os_error() != Some(libc::ESRCH) {
+            return Err(error);
+        }
+    }
+    confirm_child_group_stopped(child)
+}
+
+fn confirm_child_group_stopped(child: &mut Child) -> io::Result<()> {
+    let deadline = Instant::now() + HELPER_STOP_TIMEOUT;
+    let group = -(child.id() as libc::pid_t);
+    loop {
+        if child.try_wait()?.is_some() && unsafe { libc::kill(group, 0) } < 0 {
+            let error = io::Error::last_os_error();
+            if error.raw_os_error() == Some(libc::ESRCH) {
+                return Ok(());
+            }
+            return Err(error);
+        }
+        if Instant::now() >= deadline {
+            return Err(io::ErrorKind::TimedOut.into());
         }
         thread::sleep(WAIT_STEP);
     }

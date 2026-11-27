@@ -20,6 +20,8 @@ use std::{
 const PENDING: &str = "pending.json";
 const ENGINE_STATUS: &str = "candidate-engine";
 const ROLLBACK_SUFFIX: &str = "-rollback";
+#[cfg(target_os = "linux")]
+const BACKUP_SUFFIX: &str = "-rollback-bundle";
 const RETIRED_PREFIX: &str = ".hoh-retired-";
 
 #[derive(Deserialize, Serialize)]
@@ -30,6 +32,7 @@ struct PendingSwap {
 
 pub(super) struct Recovery {
     directory: PathBuf,
+    backup: PathBuf,
     pending: PendingSwap,
 }
 
@@ -42,19 +45,27 @@ pub(super) fn sibling_path(installed: &Path, suffix: &str) -> io::Result<PathBuf
 }
 
 pub(super) fn is_backup(bundle: &Path) -> bool {
+    #[cfg(target_os = "linux")]
+    if bundle
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| {
+            name.starts_with(RETIRED_PREFIX) || is_recovery_name(name, BACKUP_SUFFIX)
+        })
+    {
+        return true;
+    }
     bundle
         .parent()
         .and_then(Path::file_name)
         .and_then(|name| name.to_str())
-        .is_some_and(|name| {
-            name.starts_with(RETIRED_PREFIX)
-                || name
-                    .strip_prefix(".hoh-")
-                    .and_then(|name| name.strip_suffix(ROLLBACK_SUFFIX))
-                    .is_some_and(|key| {
-                        key.len() == 24 && key.bytes().all(|byte| byte.is_ascii_hexdigit())
-                    })
-        })
+        .is_some_and(|name| name.starts_with(RETIRED_PREFIX) || is_recovery_name(name, ROLLBACK_SUFFIX))
+}
+
+fn is_recovery_name(name: &str, suffix: &str) -> bool {
+    name.strip_prefix(".hoh-")
+        .and_then(|name| name.strip_suffix(suffix))
+        .is_some_and(|key| key.len() == 24 && key.bytes().all(|byte| byte.is_ascii_hexdigit()))
 }
 
 impl Recovery {
@@ -62,8 +73,7 @@ impl Recovery {
     pub(super) fn check_exchange_permissions(installed: &Path, staged: &Path) -> io::Result<()> {
         let directory = parent(installed)?;
         for (path, mode) in [
-            (directory, libc::W_OK | libc::X_OK),
-            (installed, libc::W_OK),
+            (directory, libc::R_OK | libc::W_OK | libc::X_OK),
             (staged, libc::W_OK),
         ] {
             let path = std::ffi::CString::new(path.as_os_str().as_bytes())?;
@@ -71,27 +81,52 @@ impl Recovery {
                 return Err(io::Error::last_os_error());
             }
         }
-        let directory = directory.metadata()?;
+        let metadata = directory.metadata()?;
         let user = unsafe { libc::geteuid() };
-        if directory.mode() & libc::S_ISVTX != 0
-            && user != 0
-            && user != directory.uid()
-            && user != installed.metadata()?.uid()
-        {
-            return Err(io::ErrorKind::PermissionDenied.into());
+        for path in [
+            installed.to_owned(),
+            staged.to_owned(),
+            sibling_path(installed, ROLLBACK_SUFFIX)?,
+            sibling_path(installed, BACKUP_SUFFIX)?,
+        ] {
+            if let Some(entry) = directory_metadata(&path)?
+                && metadata.mode() & libc::S_ISVTX != 0
+                && user != 0
+                && user != metadata.uid()
+                && user != entry.uid()
+            {
+                return Err(io::ErrorKind::PermissionDenied.into());
+            }
         }
         Ok(())
     }
 
-    pub(super) fn open(installed: &Path) -> io::Result<Option<Self>> {
+    pub(super) fn open(installed: &Path, package: Package) -> io::Result<Option<Self>> {
         let directory = sibling_path(installed, ROLLBACK_SUFFIX)?;
+        if directory_metadata(&directory)?.is_none() {
+            return Ok(None);
+        }
         let metadata = match read_install_metadata(&directory.join(PENDING)) {
             Ok(metadata) => metadata,
             Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
             Err(error) => return Err(error),
         };
         let pending = serde_json::from_str(&metadata)?;
-        Ok(Some(Self { directory, pending }))
+        let backup = directory.join(package.install_dir);
+        #[cfg(target_os = "linux")]
+        let backup = {
+            let sibling = sibling_path(installed, BACKUP_SUFFIX)?;
+            if directory_metadata(&sibling)?.is_some() {
+                sibling
+            } else {
+                backup
+            }
+        };
+        Ok(Some(Self {
+            directory,
+            backup,
+            pending,
+        }))
     }
 
     pub(super) fn publish(
@@ -101,17 +136,23 @@ impl Recovery {
         previous: &File,
     ) -> io::Result<(Self, File)> {
         let directory = sibling_path(installed, ROLLBACK_SUFFIX)?;
-        if Self::open(installed)?.is_some() {
+        if Self::open(installed, package)?.is_some() {
             return Err(io::Error::new(
                 io::ErrorKind::AlreadyExists,
                 "an earlier update is pending",
             ));
         }
-        match directory.symlink_metadata() {
-            Ok(_) => retire_directory(&directory)?,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-            Err(error) => return Err(error),
+        if directory_metadata(&directory)?.is_some() {
+            retire_directory(&directory)?;
         }
+        #[cfg(target_os = "linux")]
+        let sibling = {
+            let sibling = sibling_path(installed, BACKUP_SUFFIX)?;
+            if directory_metadata(&sibling)?.is_some() {
+                retire_directory(&sibling)?;
+            }
+            sibling
+        };
         let unpacked = staging.join("unpacked");
         let staged_bundle = staging.join(package.install_dir);
         fs::rename(package.staged_in(&unpacked)?, &staged_bundle)?;
@@ -132,11 +173,26 @@ impl Recovery {
         sync_directory(staging)?;
         fs::rename(staging, &directory)?;
         sync_directory(parent(installed)?)?;
-        Ok((Self { directory, pending }, candidate))
+        let backup = directory.join(package.install_dir);
+        #[cfg(target_os = "linux")]
+        let backup = {
+            fs::rename(backup, &sibling)?;
+            sync_directory(&directory)?;
+            sync_directory(parent(installed)?)?;
+            sibling
+        };
+        Ok((
+            Self {
+                directory,
+                backup,
+                pending,
+            },
+            candidate,
+        ))
     }
 
-    pub(super) fn backup(&self, package: Package) -> PathBuf {
-        self.directory.join(package.install_dir)
+    pub(super) fn backup(&self) -> &Path {
+        &self.backup
     }
 
     pub(super) fn prepare_engine_status(&self) -> io::Result<File> {
@@ -191,8 +247,8 @@ impl Recovery {
         }
     }
 
-    pub(super) fn exchange(&self, installed: &Path, package: Package) -> io::Result<()> {
-        swap_directories(installed, &self.backup(package))
+    pub(super) fn exchange(&self, installed: &Path) -> io::Result<()> {
+        swap_directories(installed, self.backup())
     }
 
     pub(super) fn sync_exchange(&self, installed: &Path) -> io::Result<()> {
@@ -201,7 +257,20 @@ impl Recovery {
     }
 
     pub(super) fn finish(&self) -> io::Result<()> {
-        retire_directory(&self.directory)
+        retire_directory(&self.directory)?;
+        if self.backup.parent() != Some(self.directory.as_path()) {
+            retire_directory(&self.backup)?;
+        }
+        Ok(())
+    }
+}
+
+fn directory_metadata(path: &Path) -> io::Result<Option<fs::Metadata>> {
+    match path.symlink_metadata() {
+        Ok(metadata) if metadata.is_dir() => Ok(Some(metadata)),
+        Ok(_) => Err(io::ErrorKind::InvalidData.into()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error),
     }
 }
 
@@ -247,4 +316,45 @@ fn sync_tree(path: &Path) -> io::Result<()> {
         }
     }
     sync_directory(path)
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn linux_recovery_exchanges_sibling_bundles_without_widening_modes() {
+        let parent = tempfile::tempdir().unwrap();
+        fs::set_permissions(parent.path(), fs::Permissions::from_mode(0o2775)).unwrap();
+        let package = super::super::package_for("linux", "x86_64").unwrap();
+        let installed = parent.path().join(package.install_dir);
+        let staging = parent.path().join(".hoh-update-test");
+        let candidate = staging
+            .join("unpacked")
+            .join(package.name)
+            .join(package.install_dir);
+        fs::create_dir(&installed).unwrap();
+        fs::create_dir_all(&candidate).unwrap();
+        fs::set_permissions(&installed, fs::Permissions::from_mode(0o755)).unwrap();
+        fs::set_permissions(&candidate, fs::Permissions::from_mode(0o755)).unwrap();
+        fs::write(staging.join(package.asset_name()), b"archive").unwrap();
+
+        Recovery::check_exchange_permissions(&installed, &candidate).unwrap();
+        let previous = File::open(&installed).unwrap();
+        let (published, next) = Recovery::publish(&installed, &staging, package, &previous).unwrap();
+        assert_eq!(published.backup().parent(), installed.parent());
+        assert!(is_backup(published.backup()));
+        published.exchange(&installed).unwrap();
+
+        let reopened = Recovery::open(&installed, package).unwrap().unwrap();
+        assert!(reopened.is_swapped(&next, &previous).unwrap());
+        assert_eq!(reopened.backup().metadata().unwrap().mode() & 0o777, 0o755);
+        reopened.exchange(&installed).unwrap();
+        assert_eq!(
+            installed.metadata().unwrap().ino(),
+            previous.metadata().unwrap().ino()
+        );
+        reopened.finish().unwrap();
+        assert!(!published.backup().exists());
+    }
 }

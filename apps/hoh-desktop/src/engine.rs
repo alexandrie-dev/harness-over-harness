@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::{
     collections::HashMap,
-    io::{self, BufReader, PipeWriter},
+    io::{self, BufReader},
     path::PathBuf,
     process::{Child, Command, ExitStatus, Stdio},
     sync::{
@@ -51,6 +51,7 @@ pub type Reply = mpsc::Sender<Result<Value, String>>;
 pub type Sink = Arc<dyn Fn(HostEvent) + Send + Sync>;
 pub(crate) type ReadyHandler =
     Box<dyn FnMut(Option<(u64, Instant)>, &mut dyn Transport) -> bool + Send>;
+pub(crate) type GuardReadiness = Box<dyn FnMut() -> bool + Send>;
 #[derive(Clone)]
 pub enum HostEvent {
     Notification(Value),
@@ -84,6 +85,9 @@ pub trait Transport: Send {
     fn exited(&mut self) -> bool;
     fn disconnected(&self) -> bool {
         false
+    }
+    fn confirm_running(&mut self) -> bool {
+        !self.exited() && !self.disconnected()
     }
     fn close(&mut self);
     fn close_confirmed(&mut self) -> bool {
@@ -135,7 +139,7 @@ impl ProcessConfig {
     pub(crate) fn connect_process(
         &self,
         mut command: Command,
-        guard: Option<PipeWriter>,
+        guard: Option<GuardReadiness>,
         generation: u64,
         inbox: mpsc::Sender<Message>,
     ) -> Result<Box<dyn Transport>, String> {
@@ -206,7 +210,7 @@ impl ProcessConfig {
 }
 struct StdioTransport {
     child: Child,
-    guard: Option<PipeWriter>,
+    guard: Option<GuardReadiness>,
     tx: Option<mpsc::SyncSender<Value>>,
     threads: Vec<thread::JoinHandle<()>>,
     disconnected: Arc<AtomicBool>,
@@ -225,6 +229,11 @@ impl Transport for StdioTransport {
     }
     fn disconnected(&self) -> bool {
         self.disconnected.load(Ordering::Acquire)
+    }
+    fn confirm_running(&mut self) -> bool {
+        self.guard.as_mut().is_none_or(|confirm| confirm())
+            && !self.exited()
+            && !self.disconnected()
     }
     fn close(&mut self) {
         self.close_confirmed();

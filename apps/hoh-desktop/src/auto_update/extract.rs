@@ -1,3 +1,7 @@
+use super::{
+    StagingError,
+    install::{ChildWaitError, stop_child_group, wait_for_child_group},
+};
 use std::{
     fs::File,
     io::{self, Read},
@@ -7,8 +11,7 @@ use std::{
         unix::process::CommandExt,
     },
     path::Path,
-    process::{Child, Command, ExitStatus, Stdio},
-    thread,
+    process::{Child, Command, Stdio},
     time::{Duration, Instant},
 };
 
@@ -16,75 +19,21 @@ const MAX_EXPANDED_SIZE: u64 = 1024 * 1024 * 1024;
 const MAX_LISTING_SIZE: u64 = 8 * 1024 * 1024;
 const DISK_RESERVE: u64 = 64 * 1024 * 1024;
 const EXTRACTION_TIMEOUT: Duration = Duration::from_secs(300);
-const STOP_TIMEOUT: Duration = Duration::from_secs(5);
-const WAIT_STEP: Duration = Duration::from_millis(75);
-
-pub(super) enum ExtractionError {
-    Failed(String),
-    ShutdownUnconfirmed(io::Error),
-}
-
-impl From<String> for ExtractionError {
-    fn from(error: String) -> Self {
-        Self::Failed(error)
-    }
-}
-
-impl From<&str> for ExtractionError {
-    fn from(error: &str) -> Self {
-        Self::Failed(error.into())
-    }
-}
 
 fn wait_error(error: io::Error) -> String {
     format!("Could not complete package extraction ({error}).")
 }
 
-fn wait_for_extractor(
-    child: &mut Child,
-    stopped: impl Fn() -> bool,
-) -> Result<ExitStatus, ExtractionError> {
-    loop {
-        if stopped() {
-            stop_extractor(child).map_err(ExtractionError::ShutdownUnconfirmed)?;
-            return Err(wait_error(io::ErrorKind::Interrupted.into()).into());
-        }
-        if let Some(status) = child
-            .try_wait()
-            .map_err(ExtractionError::ShutdownUnconfirmed)?
-        {
-            confirm_extractor_stopped(child).map_err(ExtractionError::ShutdownUnconfirmed)?;
-            return Ok(status);
-        }
-        thread::sleep(WAIT_STEP);
-    }
+fn extractor_shutdown_error(error: io::Error) -> StagingError {
+    StagingError::ShutdownUnconfirmed(format!(
+        "Could not confirm the package extractor stopped ({error})."
+    ))
 }
 
-fn stop_extractor(child: &mut Child) -> io::Result<()> {
-    if unsafe { libc::kill(-(child.id() as libc::pid_t), libc::SIGKILL) } < 0 {
-        let error = io::Error::last_os_error();
-        if error.raw_os_error() != Some(libc::ESRCH) {
-            return Err(error);
-        }
-    }
-    confirm_extractor_stopped(child)
-}
-
-fn confirm_extractor_stopped(child: &mut Child) -> io::Result<()> {
-    let deadline = Instant::now() + STOP_TIMEOUT;
-    let group = -(child.id() as libc::pid_t);
-    loop {
-        if child.try_wait()?.is_some() && unsafe { libc::kill(group, 0) } < 0 {
-            let error = io::Error::last_os_error();
-            if error.raw_os_error() == Some(libc::ESRCH) {
-                return Ok(());
-            }
-            return Err(error);
-        }
-        if Instant::now() >= deadline {
-            return Err(io::ErrorKind::TimedOut.into());
-        }
-        thread::sleep(WAIT_STEP);
+fn extractor_wait_error(error: ChildWaitError) -> StagingError {
+    match error {
+        ChildWaitError::Interrupted => wait_error(io::ErrorKind::Interrupted.into()).into(),
+        ChildWaitError::ShutdownUnconfirmed(error) => extractor_shutdown_error(error),
     }
 }
 
@@ -230,7 +179,7 @@ pub(super) fn extract(
     archive: &Path,
     staging: &Path,
     cancelled: impl Fn() -> bool,
-) -> Result<(), ExtractionError> {
+) -> Result<(), StagingError> {
     let deadline = Instant::now() + EXTRACTION_TIMEOUT;
     let stopped = || cancelled() || Instant::now() >= deadline;
     let space_error = |error| format!("Could not check space for the HoH release ({error}).");
@@ -246,7 +195,7 @@ pub(super) fn extract(
     let size = match measure(&mut preview, limit, path_cost, stopped) {
         Ok(size) => size,
         Err(error) => {
-            stop_extractor(&mut preview).map_err(ExtractionError::ShutdownUnconfirmed)?;
+            stop_child_group(&mut preview).map_err(extractor_shutdown_error)?;
             return Err(if error.kind() == io::ErrorKind::FileTooLarge {
                 size_error.into()
             } else {
@@ -254,7 +203,10 @@ pub(super) fn extract(
             });
         }
     };
-    if !wait_for_extractor(&mut preview, stopped)?.success() {
+    if !wait_for_child_group(&mut preview, stopped)
+        .map_err(extractor_wait_error)?
+        .success()
+    {
         return Err(unpack_error.into());
     }
     if size > disk_budget(staging).map_err(space_error)?.0 {
@@ -265,7 +217,10 @@ pub(super) fn extract(
         .stderr(Stdio::null())
         .spawn()
         .map_err(start_error)?;
-    if !wait_for_extractor(&mut child, stopped)?.success() {
+    if !wait_for_child_group(&mut child, stopped)
+        .map_err(extractor_wait_error)?
+        .success()
+    {
         return Err(unpack_error.into());
     }
     Ok(())
