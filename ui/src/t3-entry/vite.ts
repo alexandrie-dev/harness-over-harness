@@ -119,6 +119,13 @@ const SIDEBAR_TOP = resolve(UI, 'src/t3-entry/hoh-screens/SidebarTop.tsx');
 const SIDEBAR_TOGGLE = resolve(UI, 'src/t3-entry/hoh-screens/SidebarToggle.tsx');
 const SIDEBAR_PAGES = resolve(UI, 'src/t3-entry/hoh-screens/pages.ts');
 const STEEL_BACKDROP = resolve(UI, 'src/t3-entry/hoh-screens/SteelBackdrop.tsx');
+
+// Tauri needs a titlebar hit area before a chat header exists.
+const NATIVE_TITLEBAR = [
+  '{isElectron ? <WorkspacePageHeader electron /> : null}',
+  '{(isElectron || isTauri()) && <WorkspacePageHeader electron={isElectron} className={isElectron ? undefined : "absolute inset-x-0 top-0"} />}',
+] as const;
+const TAURI_IMPORT = 'import { isTauri } from "@tauri-apps/api/core";\n';
 function chatIndexHome(code: string): string {
   return anchorPatch('_chat.index.tsx', code, [[
     '    void handleNewThread(projectRef, { replace: true })',
@@ -127,10 +134,11 @@ function chatIndexHome(code: string): string {
     try { sessionStorage.removeItem("hoh-project-new-chat"); } catch { /* Storage is optional. */ }
     window.dispatchEvent(new CustomEvent("hoh-project-new-chat", { detail: null }));
     void handleNewThread(projectRef, { replace: true })`,
-  ]]);
+  ], NATIVE_TITLEBAR], TAURI_IMPORT);
 }
 export function chatViewHome(code: string): string {
   return anchorPatch('ChatView.tsx', code, [
+    ['            data-chat-header\n', '            data-chat-header\n            data-tauri-drag-region="deep"\n'],
     ['"pointer-events-none absolute inset-0 z-20 flex items-center [@media(max-height:34rem)]:items-end"', '"hoh-draft-hero pointer-events-none absolute inset-0 z-20 flex flex-col justify-end"'],
     ['              <div ref={draftHeroTransitionGroupRef} className="chat-composer-lane w-full">', '              {isDraftHeroState ? <HohHomeBody /> : null}\n              <div ref={draftHeroTransitionGroupRef} className="chat-composer-lane w-full">'],
   ], `import { HomeBody as HohHomeBody } from ${JSON.stringify(HOME_BODY)};\n`);
@@ -191,7 +199,7 @@ export function sidebarChrome(code: string): string {
     ['  SidebarTrigger,\n', ''],
     ['aria-label={gt("T3 Code home")}', 'aria-label={gt("HoH home")}'],
     ['"relative flex h-[var(--workspace-topbar-height)] shrink-0 flex-row items-center gap-2 pr-3"', '"hoh-sidebar-header relative flex shrink-0 items-center"'],
-    ['        isElectron && "drag-region",\n      )}\n    >', '        isElectron && "drag-region",\n      )}\n      data-hoh-sidebar-header=""\n    >'],
+    ['        isElectron && "drag-region",\n      )}\n    >', '        isElectron && "drag-region",\n      )}\n      data-hoh-sidebar-header=""\n      data-tauri-drag-region="deep"\n    >'],
     [`      <div className="relative top-[calc(var(--workspace-controls-top)-env(safe-area-inset-top))] z-10 ml-[calc(var(--workspace-controls-left)+1px-env(safe-area-inset-left))] flex shrink-0 items-center md:hidden">
         <SidebarTrigger
           variant={backdropVariant ? "media-navigation" : "ghost"}
@@ -413,8 +421,9 @@ export function chatRouteCommands(code: string): string {
 /** Главная без проектов — «What should we work on?» T3 (эмблема, «Add project», «Start without a project»), заголовок — приветствие с датой. */
 export function noProjectsHero(code: string): string {
   return anchorPatch('NoProjectsHero.tsx', code, [
+    NATIVE_TITLEBAR,
     ['<T>What should we work on?</T>', '<HohGreeting />'],
-  ], `import { Greeting as HohGreeting } from ${JSON.stringify(HOME_BODY)};\n`);
+  ], TAURI_IMPORT + `import { Greeting as HohGreeting } from ${JSON.stringify(HOME_BODY)};\n`);
 }
 
 /** Модуль вместо модуля компонента T3: всё как у него, кроме названных компонентов — они ничего не рисуют. */
@@ -533,6 +542,25 @@ function hohT3(): Plugin {
       if (id === resolve(T3_BASE, 'shared/markdownPipeline.ts')) return { code: markdownHtmlMarker(code), map: null };
       if (id === resolve(T3_WEB, 'routes/_chat.index.tsx')) return { code: chatIndexHome(code), map: null };
       if (id === resolve(T3_WEB, 'components/ChatView.tsx')) return { code: chatViewHome(code), map: null };
+      if (id === resolve(T3_WEB, 'components/onboarding/WelcomePage.tsx')) return {
+        code: anchorPatch('WelcomePage.tsx', code, [NATIVE_TITLEBAR], TAURI_IMPORT), map: null,
+      };
+      if (id === resolve(T3_WEB, 'components/WorkspacePageHeader.tsx')) return {
+        code: anchorPatch('WorkspacePageHeader.tsx', code, [
+          ['    <header\n', '    <header\n      data-tauri-drag-region="deep"\n'],
+        ]), map: null,
+      };
+      if (id === resolve(T3_WEB, 'routes/_chat.settings.tsx')) return {
+        code: anchorPatch('_chat.settings.tsx', code, [
+          ['          <header className="flex h-12', '          <header data-tauri-drag-region="deep" className="flex h-12'],
+        ]), map: null,
+      };
+      if (id === resolve(T3_WEB, 'components/RightPanelTabs.tsx')) return {
+        code: anchorPatch('RightPanelTabs.tsx', code, [
+          ['        data-right-panel-tabbar\n', '        data-right-panel-tabbar\n        data-tauri-drag-region={props.mode === "inline" ? "deep" : undefined}\n'],
+          ['          data-right-panel-tab-list\n', '          data-right-panel-tab-list\n          data-tauri-drag-region={tabScrollState.hasOverflow ? "false" : undefined}\n'],
+        ]), map: null,
+      };
       if (id === resolve(T3_WEB, 'components/chat/TimelineUserMessageRow.tsx')) return { code: timelineMessageEdit(code), map: null };
       if (id === resolve(T3_WEB, 'components/Sidebar.tsx')) return { code: sidebarList(code), map: null };
       if (id === resolve(T3_WEB, 'components/AppSidebarLayout.tsx')) return { code: sidebarLayout(code), map: null };
