@@ -10,6 +10,7 @@ use crate::contract::{
     AccessMode, Discovery, HarnessCommands, HarnessEvent, HarnessFailure, HarnessPolicy,
     PromptParams, RespondParams, StartParams, StartResult, VersionStatus, code,
 };
+use crate::{ProcessSpec, Supervisor, SupervisorLimits};
 
 pub type HarnessResult<T> = Result<T, HarnessFailure>;
 
@@ -17,10 +18,49 @@ pub type HarnessResult<T> = Result<T, HarnessFailure>;
 pub struct TitleRequest {
     pub prompt: String,
     pub model: Option<String>,
-    /// The verified chat directory, for inspecting the chat's configured model route.
-    pub cwd: Option<PathBuf>,
-    pub trusted: bool,
+    pub workspace: Option<TitleWorkspace>,
     pub native_session_id: Option<String>,
+}
+
+pub struct TitleWorkspace {
+    cwd: PathBuf,
+    identity: [u64; 2],
+    profile: PathBuf,
+}
+
+impl TitleWorkspace {
+    pub fn new(cwd: PathBuf, identity: [u64; 2], profile: PathBuf) -> Self {
+        Self {
+            cwd,
+            identity,
+            profile,
+        }
+    }
+
+    pub fn path(&self) -> &std::path::Path {
+        &self.cwd
+    }
+
+    pub async fn spawn_probe(
+        &self,
+        limits: SupervisorLimits,
+        spec: impl FnOnce(&std::path::Path, bool) -> ProcessSpec,
+    ) -> HarnessResult<(Supervisor, bool)> {
+        crate::trust::with_status(&self.profile, &self.cwd, |trusted, changed| {
+            if changed {
+                return Err(HarnessFailure::new(
+                    code::POLICY_UNAVAILABLE,
+                    "The chat's directory trust changed before naming.",
+                ));
+            }
+            let mut spec = spec(&self.cwd, trusted);
+            spec.cwd = Some(self.cwd.clone());
+            spec.cwd_identity = Some(self.identity);
+            Ok((Supervisor::spawn(&spec, limits, None)?, trusted))
+        })
+        .await
+        .map_err(|_| HarnessFailure::new(code::IO, "The chat's directory trust is unavailable."))?
+    }
 }
 
 /// One kind of external harness (a CLI and its protocol), registered under a name through

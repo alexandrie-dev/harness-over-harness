@@ -545,6 +545,28 @@ async fn takes_the_title_from_the_first_nonempty_output_line() {
 }
 
 #[tokio::test]
+async fn keeps_natural_connectors_within_the_content_word_limit() {
+    let env = setup_with_route(
+        chunks([
+            json!({"type":"text-delta","index":0,"text":"Доступ к кабинету CEO"}),
+            json!({"type":"finish","reason":{"kind":"stop"}}),
+        ]),
+        &[],
+        Some(("title-route", "title-model")),
+        "title-route",
+        32,
+        Some(3),
+    )
+    .await;
+    let session = session(&env, "title-with-connector");
+    append_human(&session, "У CEO не открывается кабинет");
+
+    let title = env.titles.refresh(&session, None).await.unwrap().unwrap();
+    assert_eq!(title.title, "Доступ к кабинету CEO");
+    env.shutdown().await;
+}
+
+#[tokio::test]
 async fn keeps_the_three_word_fallback_when_the_model_exceeds_the_configured_limit() {
     let env = setup_with_route(
         chunks([
@@ -567,7 +589,7 @@ async fn keeps_the_three_word_fallback_when_the_model_exceeds_the_configured_lim
             .await
             .unwrap_err()
             .to_string(),
-        "session-title-llm: title output exceeds 3 words"
+        "session-title-llm: title output exceeds 3 content words"
     );
     let title = env.titles.get(&session).unwrap();
     assert_eq!(title.title, "Сократи названия чатов");
@@ -576,7 +598,7 @@ async fn keeps_the_three_word_fallback_when_the_model_exceeds_the_configured_lim
         .system
         .clone()
         .unwrap();
-    assert!(system.contains("maximum of 3 words"));
+    assert!(system.contains("maximum of 3 content words"));
     env.shutdown().await;
 }
 

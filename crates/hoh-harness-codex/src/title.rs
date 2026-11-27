@@ -249,10 +249,10 @@ pub(crate) async fn generate(config: &CodexConfig, request: TitleRequest) -> Har
         .as_deref()
         .filter(|model| !model.is_empty())
         .ok_or_else(unavailable)?;
-    let cwd = request
-        .cwd
-        .as_deref()
-        .filter(|cwd| cwd.is_absolute())
+    let workspace = request
+        .workspace
+        .as_ref()
+        .filter(|workspace| workspace.path().is_absolute())
         .ok_or_else(unavailable)?;
     let native_id = request
         .native_session_id
@@ -281,18 +281,18 @@ pub(crate) async fn generate(config: &CodexConfig, request: TitleRequest) -> Har
         if !matches!(check_version(config).await, VersionCheck::Supported(_)) {
             return Err(unavailable());
         }
-        let probe = Supervisor::spawn(
-            &app_server_spec(config, cwd, request.trusted),
-            config.limits,
-            None,
-        )?;
+        let (probe, trusted) = workspace
+            .spawn_probe(config.limits, |cwd, trusted| {
+                app_server_spec(config, cwd, trusted)
+            })
+            .await?;
         // The probe only reads configuration and the persisted thread header; it never resumes or
         // sends a prompt to the existing thread. Avoid leaking user config in a probe error.
         let (effective_config, thread, requirements) = CodexSession::read_title_context(
             probe,
             config.request_timeout.min(PROBE_TIMEOUT),
-            cwd.to_string_lossy().into_owned(),
-            request.trusted,
+            workspace.path().to_string_lossy().into_owned(),
+            trusted,
             native_id,
         )
         .await

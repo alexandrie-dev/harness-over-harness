@@ -584,7 +584,7 @@ fn real_stub_child_accepts_host_handshake_serves_settings_and_stops() {
 }
 
 #[test]
-fn window_may_call_exactly_the_nine_executor_methods_and_no_new_ones() {
+fn window_may_call_exactly_the_ten_executor_methods_and_no_new_ones() {
     let mut executor: Vec<&str> = bridge::WINDOW_METHODS
         .iter()
         .copied()
@@ -600,15 +600,19 @@ fn window_may_call_exactly_the_nine_executor_methods_and_no_new_ones() {
             "hoh/executor/discover",
             "hoh/executor/limits",
             "hoh/executor/select",
+            "hoh/executor/title/cancel",
             "hoh/executor/title/generate",
             "hoh/executor/trust/get",
             "hoh/executor/trust/set"
         ]
     );
-    // 47 methods before the executor ones, the nine executor ones, `hoh/workspace/entries` and
+    // 47 methods before the executor ones, the ten executor ones, `hoh/workspace/entries` and
     // `hoh/workspace/add` (HOH-41), delete, two folder-rebinding methods, plugin inventory,
     // dictation and side-chat forks.
-    assert_eq!(bridge::WINDOW_METHODS.len(), 47 + 9 + 2 + 1 + 2 + 2 + 1 + 1);
+    assert_eq!(
+        bridge::WINDOW_METHODS.len(),
+        47 + 10 + 2 + 1 + 2 + 2 + 1 + 1
+    );
     assert!(bridge::WINDOW_METHODS.contains(&"session/fork-side-chat"));
     assert!(bridge::WINDOW_METHODS.contains(&"session/working-directory/status"));
     assert!(bridge::WINDOW_METHODS.contains(&"session/working-directory/rebind"));
@@ -620,6 +624,7 @@ fn window_may_call_exactly_the_nine_executor_methods_and_no_new_ones() {
         "hoh/executor/access/get",
         "hoh/executor/discover",
         "hoh/executor/limits",
+        "hoh/executor/title/cancel",
         "hoh/executor/title/generate",
         "hoh/executor/trust/get",
     ] {

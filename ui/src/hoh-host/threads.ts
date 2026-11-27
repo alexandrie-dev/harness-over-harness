@@ -5,7 +5,7 @@
 import { EXECUTOR_INSTANCES, runtimeModeOf, type HohAccessMode, type HohExecutor, type T3InteractionMode } from './config.ts';
 import type { EngineQuestion } from './engine.ts';
 import { providerFailure } from './errors.ts';
-import { shortTitleFromPrompt } from './chat-title.ts';
+import { shortTitleFromPrompt, titleSource } from './chat-title.ts';
 import { isSecretaryThreadId, readSecretaryPromptPrefix } from './secretary-chat.ts';
 import { readThreadOrganization, type ThreadOrganization } from './thread-metadata.ts';
 import type { SearchableMessage, SearchableTurnItem } from './thread-search.ts';
@@ -1046,15 +1046,17 @@ export class ThreadModel {
   latestRunCompletion() { return this.currentRun()?.completedAt ?? null; }
   latestUserActivity() { return this.messages.findLast(message => message.role === 'user')?.createdAt ?? this.createdAt; }
   userMessageCount() { return this.userMessages; }
-  recentTitlePrompts(): string {
+  recentTitlePrompts(): string[] {
     const accepted = new Set(this.echoed.values());
     const prompts: string[] = [];
     for (const message of this.searchableMessages()) {
-      if (message.role !== 'user' || !accepted.has(message.id) || !shortTitleFromPrompt(message.text)) continue;
-      prompts.push(message.text.slice(0, 1_000));
+      if (message.role !== 'user' || !accepted.has(message.id)) continue;
+      const source = titleSource(message.text, 1_000);
+      if (!source) continue;
+      prompts.push(source);
       if (prompts.length === 6) break;
     }
-    return prompts.reverse().join('\n\n');
+    return prompts.reverse();
   }
   editableUserMessage(id: string) {
     const source = this.editableMessages.get(id);

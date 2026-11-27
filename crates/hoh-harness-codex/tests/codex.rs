@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 use hoh_external_harness::{
     AccessMode, ApprovalDecision, AuthState, ExternalHarness, HarnessEvent, HarnessPolicy,
     HarnessResponse, InteractionMode, PromptImage, PromptParams, QuestionAnswer, RespondParams,
-    StartParams, TitleRequest, VersionStatus,
+    StartParams, TitleRequest, TitleWorkspace, VersionStatus,
 };
 use hoh_harness_codex::{CodexConfig, CodexHarness};
 use serde_json::Value;
@@ -108,11 +108,18 @@ fn start_params(temp: &TempDir, resume: Option<String>) -> StartParams {
 }
 
 fn title_request(temp: &TempDir) -> TitleRequest {
+    use std::os::unix::fs::MetadataExt;
+
+    let cwd = temp.path().canonicalize().unwrap();
+    let metadata = cwd.metadata().unwrap();
     TitleRequest {
         prompt: "Generate a short title for: У CEO не открывается кабинет\n".into(),
         model: Some("gpt-stub".into()),
-        cwd: Some(temp.path().to_owned()),
-        trusted: true,
+        workspace: Some(TitleWorkspace::new(
+            cwd,
+            [metadata.dev(), metadata.ino()],
+            temp.path().to_owned(),
+        )),
         native_session_id: Some("thread-stub".into()),
     }
 }
@@ -169,6 +176,22 @@ async fn codex_title_uses_the_verified_thread_route_and_isolated_json_output() {
         assert!(args.contains(&required), "missing {required}: {args:?}");
     }
     assert!(!args.iter().any(|arg| arg.contains(prompt.as_str())));
+}
+
+#[tokio::test]
+async fn codex_title_requires_a_matching_workspace_identity() {
+    let temp = TempDir::new().unwrap();
+    let (harness, log) = harness(&temp, "title-default");
+    let mut request = title_request(&temp);
+    request.workspace = Some(TitleWorkspace::new(
+        temp.path().canonicalize().unwrap(),
+        [0, 0],
+        temp.path().to_owned(),
+    ));
+
+    let error = harness.generate_title(request).await.unwrap_err();
+    assert!(error.message.contains("conversation folder has changed"));
+    assert!(lines(&log).is_empty());
 }
 
 #[tokio::test]

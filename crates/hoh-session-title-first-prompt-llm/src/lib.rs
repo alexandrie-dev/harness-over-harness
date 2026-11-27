@@ -31,7 +31,7 @@ pub const NAME: &str = "session-title-first-prompt-llm";
 pub struct Config {
     #[schemars(range(min = 1), extend("multipleOf" = 1))]
     pub target_words: f64,
-    /// Optional ceiling for titles written with spaces between words.
+    /// Optional content-word ceiling for titles written with spaces between words.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_words: Option<NonZeroUsize>,
     #[schemars(range(min = 1), extend("multipleOf" = 1))]
@@ -114,8 +114,13 @@ fn select_reasoning_effort(model: &LlmResolvedModelInfo) -> Option<ReasoningEffo
 
 fn system_prompt(config: &ResolvedConfig) -> String {
     let word_limit = match config.max_words {
-        Some(max_words) => format!(" with a maximum of {max_words} words"),
+        Some(max_words) => format!(" with a maximum of {max_words} content words"),
         None => String::new(),
+    };
+    let connectors = if config.max_words.is_some() {
+        " Keep necessary connecting words."
+    } else {
+        ""
     };
     [
         "Create a concise title for an AI coding-assistant session from the supplied human messages.".into(),
@@ -123,7 +128,7 @@ fn system_prompt(config: &ResolvedConfig) -> String {
         "Use the language of the messages.".into(),
         "Name the specific subject or intended outcome so the user can recognize the session later. Prefer a compact noun phrase or action phrase. Leave out greetings, workflow details, and claims that work is complete.".into(),
         format!(
-            "Aim for about {} words in non-CJK languages{} or {} CJK characters.",
+            "Aim for about {} words in non-CJK languages{} or {} CJK characters.{connectors}",
             js_number_string(config.target_words),
             word_limit,
             js_number_string(config.target_cjk_characters)
@@ -181,6 +186,57 @@ fn title_from_output(text: &str) -> String {
     emphasis_inner(line).unwrap_or(line).into()
 }
 
+fn is_title_connector(word: &str) -> bool {
+    matches!(
+        word.to_lowercase().as_str(),
+        "a" | "an"
+            | "the"
+            | "and"
+            | "or"
+            | "of"
+            | "to"
+            | "for"
+            | "with"
+            | "in"
+            | "on"
+            | "at"
+            | "from"
+            | "by"
+            | "about"
+            | "before"
+            | "after"
+            | "during"
+            | "в"
+            | "во"
+            | "на"
+            | "и"
+            | "или"
+            | "с"
+            | "со"
+            | "к"
+            | "ко"
+            | "по"
+            | "из"
+            | "для"
+            | "без"
+            | "от"
+            | "про"
+            | "при"
+            | "о"
+            | "об"
+            | "обо"
+            | "у"
+            | "за"
+            | "до"
+            | "через"
+            | "после"
+            | "перед"
+            | "между"
+            | "над"
+            | "под"
+    )
+}
+
 fn title_from_response(
     response: &SessionTitleLlmResponse,
     max_words: Option<NonZeroUsize>,
@@ -214,9 +270,15 @@ fn title_from_response(
         return Err("session-title-llm: title model produced no text".into());
     }
     if let Some(max_words) = max_words
-        && title.split_whitespace().count() > max_words.get()
+        && title
+            .split_whitespace()
+            .filter(|word| !is_title_connector(word))
+            .count()
+            > max_words.get()
     {
-        return Err(format!("session-title-llm: title output exceeds {max_words} words").into());
+        return Err(
+            format!("session-title-llm: title output exceeds {max_words} content words").into(),
+        );
     }
     Ok(title)
 }

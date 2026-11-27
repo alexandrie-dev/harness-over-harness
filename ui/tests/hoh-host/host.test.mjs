@@ -1307,7 +1307,7 @@ test('Claude can refine a short local title without replacing a manual rename', 
   named.host.stop();
 });
 
-test('a Codex draft gets its first short title from a substantive prompt accepted by the engine', async () => {
+test('a Codex draft gets its first short title from a prompt accepted by the engine', async () => {
   const engine = new FakeEngine();
   const request = engine.request.bind(engine);
   engine.request = (method, params) => {
@@ -1333,8 +1333,9 @@ test('a Codex draft gets its first short title from a substantive prompt accepte
     await send('next', 'Обнови зависимости проекта');
     assert.equal((await client.call('orchestration.getThreadProjection', { threadId })).thread.title, 'Не запускается сервер');
     const requests = engine.requests.filter(request => request.method === 'hoh/executor/title/generate');
-    assert.deepEqual(requests.map(request => [request.params.executor, request.params.sessionId]), [['codex', threadId]]);
-    assert.match(requests[0].params.prompt, /Проверь, почему не запускается сервер/);
+    assert.deepEqual(requests.map(request => [request.params.executor, request.params.sessionId]), [['codex', threadId], ['codex', threadId]]);
+    assert.match(requests[0].params.prompt, /Привет!/);
+    assert.match(requests[1].params.prompt, /Проверь, почему не запускается сервер/);
   } finally {
     host.stop();
     client.close();
@@ -1347,7 +1348,12 @@ test('turning off automatic titles persists and explicit naming uses the bound c
   const engine = new FakeEngine();
   const request = engine.request.bind(engine);
   const titleRequests = [];
+  const cancellations = [];
   engine.request = (method, params) => {
+    if (method === 'hoh/executor/title/cancel') {
+      cancellations.push(params.cancellationId);
+      return Promise.resolve({ cancelled: true });
+    }
     if (method !== 'hoh/executor/title/generate') return request(method, params);
     return new Promise((resolve, reject) => titleRequests.push({ params, resolve, reject }));
   };
@@ -1365,19 +1371,23 @@ test('turning off automatic titles persists and explicit naming uses the bound c
   const observed = [];
   const unsubscribe = settings.subscribe(() => observed.push(settings.getEnabled()));
   await launch('pending-name');
-  assert.equal(titleRequests.length, 1);
+  await launch('queued-name');
+  assert.equal(titleRequests.length, 2);
+  assert.equal(titleRequests[0].params.cancellationId, titleRequests[1].params.cancellationId);
   settings.setEnabled(false);
+  assert.deepEqual(cancellations, [titleRequests[0].params.cancellationId]);
   settings.setEnabled(true);
-  titleRequests[0].resolve({ title: 'Доступ к кабинету CEO' });
+  for (const request of titleRequests) request.resolve({ title: 'Доступ к кабинету CEO' });
   await tick(5);
   const projection = threadId => client.call('orchestration.getThreadProjection', { threadId });
   assert.notEqual((await projection('pending-name')).thread.title, 'Доступ к кабинету CEO');
+  assert.notEqual((await projection('queued-name')).thread.title, 'Доступ к кабинету CEO');
 
   settings.setEnabled(false);
   assert.deepEqual(observed, [false, true, false]);
   unsubscribe();
   assert.equal((await launch('explicit-name')).projection.thread.title, text);
-  assert.equal(titleRequests.length, 1);
+  assert.equal(titleRequests.length, 2);
   const reopened = connect(new FakeEngine({ store: engine.store }), { storage });
   t.after(() => { reopened.host.stop(); reopened.client.close(); });
   assert.equal(reopened.host.chatTitles.getEnabled(), false);
@@ -1385,22 +1395,25 @@ test('turning off automatic titles persists and explicit naming uses the bound c
   const renaming = settings.rename('explicit-name');
   const duplicate = settings.rename('explicit-name');
   await tick(5);
-  assert.equal(titleRequests.length, 2);
-  assert.equal(titleRequests[1].params.executor, 'codex');
-  assert.equal(titleRequests[1].params.sessionId, 'explicit-name');
-  titleRequests[1].resolve({ title: 'Доступ к кабинету CEO' });
+  assert.equal(titleRequests.length, 3);
+  assert.equal(titleRequests[2].params.executor, 'codex');
+  assert.equal(titleRequests[2].params.sessionId, 'explicit-name');
+  assert.notEqual(titleRequests[2].params.cancellationId, cancellations[0]);
+  titleRequests[2].resolve({ title: 'Доступ к кабинету CEO' });
   assert.deepEqual(await Promise.all([renaming, duplicate]), ['Доступ к кабинету CEO', 'Доступ к кабинету CEO']);
   assert.equal((await projection('explicit-name')).thread.title, 'Доступ к кабинету CEO');
 
   const retry = settings.rename('explicit-name');
   const rejected = assert.rejects(retry, /valid chat title/);
   await tick(5);
-  titleRequests[2].resolve({ title: 'A very long generated title' });
+  titleRequests[3].resolve({ title: 'A very long generated title' });
   await rejected;
   assert.equal((await projection('explicit-name')).thread.title, 'Доступ к кабинету CEO');
 
   for (const [id, message, modelTitle, expected] of [
     ['named-object', 'Делаю плагин «OpenSearch»', 'Плагин OpenSearch', 'OpenSearch'],
+    ['named-dotnet', 'Update project ".NET"', '.NET', '.NET'],
+    ['named-cpp', 'Fix module "C++"', 'C++', 'C++'],
     ['title-connectors', 'Добавь уведомления о платежах Stripe', 'Уведомления о платежах Stripe', 'Уведомления о платежах Stripe'],
   ]) {
     await launch(id, message);
@@ -1410,6 +1423,74 @@ test('turning off automatic titles persists and explicit naming uses the bound c
     assert.equal(await rename, expected);
     assert.equal((await projection(id)).thread.title, expected);
   }
+
+  await launch('current-subject', 'Делаю плагин «OldSubject»');
+  await client.call('orchestration.dispatchCommand', {
+    type: 'message.dispatch', commandId: 'subject-change', threadId: 'current-subject',
+    messageId: 'subject-change', text: 'Проверь загрузку картинок', attachments: [],
+  });
+  const renamed = settings.rename('current-subject');
+  await tick(5);
+  assert.match(titleRequests.at(-1).params.prompt, /OldSubject.*Проверь загрузку картинок/);
+  titleRequests.at(-1).resolve({ title: 'Загрузка картинок' });
+  assert.equal(await renamed, 'Загрузка картинок');
+});
+
+test('executor naming accepts code and URLs without synthetic image references', async t => {
+  const engine = new FakeEngine();
+  const request = engine.request.bind(engine);
+  const titleCalls = [];
+  engine.request = (method, params) => {
+    if (method !== 'hoh/executor/title/generate') return request(method, params);
+    titleCalls.push(params);
+    return Promise.resolve({ title: 'Input Review' });
+  };
+  const { host, client } = connect(engine);
+  t.after(() => { host.stop(); client.close(); });
+  for (const [threadId, content] of [
+    ['title-code', '```js\nconsole.log(1);\n```'],
+    ['title-url', 'https://example.com/reference'],
+  ]) {
+    await client.call('orchestration.launchThread', {
+      commandId: threadId, threadId, projectId: 'hoh-project', generateTitle: true,
+      modelSelection: { instanceId: 'claudeAgent', model: 'claude-sonnet' }, runtimeMode: 'approval-required',
+      initialMessage: { messageId: 'm-' + threadId, text: content + ' ![picture](t3-context://v1/image/image_1)', attachments: [] },
+    });
+    assert.equal(titleCalls.at(-1).sessionId, threadId);
+    assert(titleCalls.at(-1).prompt.includes(JSON.stringify([content])));
+    assert.equal(await host.chatTitles.rename(threadId), 'Input Review');
+    assert(titleCalls.at(-1).prompt.includes(JSON.stringify([content])));
+    assert(!titleCalls.at(-1).prompt.includes('t3-context://'));
+  }
+  assert.equal(titleCalls.length, 4);
+});
+
+test('the first prompt names a side chat with the default placeholder', async t => {
+  const engine = new FakeEngine();
+  const request = engine.request.bind(engine);
+  engine.request = (method, params) => method === 'hoh/executor/title/generate'
+    ? Promise.resolve({ title: 'Side Topic' }) : request(method, params);
+  const { host, client } = connect(engine);
+  t.after(() => { host.stop(); client.close(); });
+  const modelSelection = { instanceId: 'claudeAgent', model: 'claude-sonnet' };
+  await client.call('orchestration.launchThread', {
+    commandId: 'parent-chat', threadId: 'parent-chat', projectId: 'hoh-project', title: 'Parent chat',
+    modelSelection, runtimeMode: 'approval-required',
+    initialMessage: { messageId: 'parent-prompt', text: 'Main conversation', attachments: [] },
+  });
+  engine.emitEvent('parent-chat', 'turn/end', { turn: 1, reason: { kind: 'completed' } });
+  await client.call('orchestration.dispatchCommand', {
+    type: 'thread.fork', commandId: 'create-side-chat', sourceThreadId: 'parent-chat', targetThreadId: 'new-side-chat',
+    sourcePoint: { type: 'latest_stable' }, title: 'Side chat', sideChat: true,
+  });
+  await client.call('orchestration.launchThread', {
+    commandId: 'side-prompt', threadId: 'new-side-chat', projectId: 'hoh-project', generateTitle: true,
+    modelSelection, runtimeMode: 'approval-required',
+    initialMessage: { messageId: 'side-message', text: 'Discuss the side topic', attachments: [] },
+  });
+  await tick(5);
+  const projection = await client.call('orchestration.getThreadProjection', { threadId: 'new-side-chat' });
+  assert.equal(projection.thread.title, 'Side Topic');
 });
 
 test('a follow-up message goes to the same chat; Stop is the engine\'s cancel and the run ends interrupted', async () => {

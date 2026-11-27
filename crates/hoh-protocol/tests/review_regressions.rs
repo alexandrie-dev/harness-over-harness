@@ -174,6 +174,24 @@ fn title_prompt_has_a_protocol_boundary() {
         bad["sessionId"] = session_id;
         assert!(validate_params("hoh/executor/title/generate", &bad).is_err());
     }
+    for id in [
+        Value::Null,
+        json!(""),
+        json!("x".repeat(129)),
+        json!("auto-1"),
+    ] {
+        let cancel = json!({"cancellationId":id});
+        let mut generate = bound.clone();
+        generate["cancellationId"] = id.clone();
+        assert_eq!(
+            validate_params("hoh/executor/title/generate", &generate).is_ok(),
+            id == "auto-1"
+        );
+        assert_eq!(
+            validate_params("hoh/executor/title/cancel", &cancel).is_ok(),
+            id == "auto-1"
+        );
+    }
     let refused = "x".repeat(EXECUTOR_TITLE_PROMPT_MAX_CHARS + 1);
     assert!(
         validate_params(

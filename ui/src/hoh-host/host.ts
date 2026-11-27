@@ -22,7 +22,7 @@ import {
   isAccessMode, KEYBINDINGS_LOCATION, presentProvider, type EnvironmentPlatform, type T3InteractionMode,
 } from './config.ts';
 import { usagePricing, usageSummary, type UsageSummaryInput } from './usage.ts';
-import { explicitTitleFromPrompt, shortGeneratedTitle, shortTitleFromPrompt, titleGenerationPrompt } from './chat-title.ts';
+import { explicitTitleFromPrompt, shortGeneratedTitle, shortTitleFromPrompt, titleGenerationPrompt, titleSource } from './chat-title.ts';
 import type { EngineNotification, EngineQuestion, EngineQuestionAnswer, HohEngine, LocalImageAsset } from './engine.ts';
 import { base64Of, readUploads, searchAnswer, skillsAsCommands, stripAttachedImageReferences, UPLOAD_PATH, UPLOAD_TTL_MS, uploadSlot, workspaceSnapshot, type KeptImage, type UploadSlot } from './composer.ts';
 import { englishError, hostFailure } from './errors.ts';
@@ -87,6 +87,7 @@ const interactionModeOf = (value: unknown): T3InteractionMode => {
 
 export const STORAGE_KEY = 'hoh-host.projects.v1';
 export const CHAT_TITLE_SETTINGS_KEY = 'hoh-host.chat-titles.enabled.v1';
+const SIDE_CHAT_PLACEHOLDER = 'Side chat';
 const PLACEHOLDER_ROOT = '~/Documents/HoH';
 const LOCAL_IMAGE_BYTES = 20 * 1024 * 1024;
 const LOCAL_IMAGE_TYPES = new Set(['image/gif', 'image/jpeg', 'image/png', 'image/webp']);
@@ -365,7 +366,8 @@ export class HohHost {
   private readonly localSettings?: ReturnType<CreateHohLocalSettings>;
   private autoTitlesEnabled = true;
   private readonly titleSettingListeners = new Set<() => void>();
-  private readonly titleRequests = new Map<string, { automatic: boolean; result: Promise<string> }>();
+  private automaticTitleCancellationId?: string;
+  private readonly titleRequests = new Map<string, { automatic: boolean; cancellationId: string; result: Promise<string> }>();
   private workspaceRoot: string;
   private workspaceKnown = false;
   private availableEditors: Awaited<ReturnType<NonNullable<HohEngine['availableProjectEditors']>>> = [];
@@ -553,9 +555,7 @@ export class HohHost {
       if (!this.storage) throw new Error('Chat settings could not be saved on this device.');
       this.storage.setItem(CHAT_TITLE_SETTINGS_KEY, String(enabled));
       this.autoTitlesEnabled = enabled;
-      if (!enabled) {
-        for (const [id, request] of this.titleRequests) if (request.automatic) this.titleRequests.delete(id);
-      }
+      if (!enabled) this.cancelAutomaticTitleRequests();
       for (const listener of this.titleSettingListeners) listener();
     },
     subscribe: (listener: () => void) => {
@@ -574,6 +574,9 @@ export class HohHost {
     thread.pluginAuthoringPrefixes = this.pluginAuthoringPrefixes;
     const metadata = this.threadMetadata.get(thread.id);
     thread.sideChat ??= this.readSideChat(metadata.sideChat);
+    if (thread.sideChat && thread.title === SIDE_CHAT_PLACEHOLDER && !this.titles.has(thread.id)) {
+      thread.automaticTitlePending = true;
+    }
     thread.restorePromptTimes(metadata.promptTimes);
     thread.restoreStopTimes(metadata.stopTimes);
     thread.applyOrganization(metadata);
@@ -877,6 +880,8 @@ export class HohHost {
 
   stop() {
     this.stopped = true;
+    this.cancelAutomaticTitleRequests();
+    for (const id of this.titleRequests.keys()) this.discardTitleRequest(id);
     this.git.stop();
     for (const off of this.unsubscribers) off();
     this.unsubscribers = [];
@@ -2850,8 +2855,8 @@ export class HohHost {
       this.sentPreviewIds.add(image.id);
     }
     const userText = stripAttachedImageReferences(text, images.map(image => image.id), context);
-    const fallbackTitle = !edit && !isSecretaryThreadId(thread.id) && thread.automaticTitlePending && !this.titles.has(thread.id)
-      && !this.threadMetadata.get(thread.id).title ? shortTitleFromPrompt(userText) : '';
+    const titleInput = !edit && thread.automaticTitlePending && !this.titles.has(thread.id)
+      && this.canApplyAutomaticTitle(thread) ? titleSource(userText) : '';
     const commandFolder = folderPath(thread.cwd) || (thread.projectId === HOH_PROJECT_ID ? this.workspaceRoot : '');
     const prompt = (edit?.authoringPrefix ?? this.secretaryContexts.get(thread.id)?.prefix ?? '') + skillsAsCommands(
       userText,
@@ -2905,12 +2910,14 @@ export class HohHost {
           } catch { /* the engine history remains usable if window storage is unavailable */ }
         }
       }
-      if (fallbackTitle && this.canApplyAutomaticTitle(thread)) {
+      if (titleInput && !this.titles.has(thread.id) && !this.titleRequests.has(thread.id) && this.canApplyAutomaticTitle(thread)) {
         if (this.autoTitlesEnabled) {
-          this.setAutomaticTitle(thread, fallbackTitle);
-          void this.generateTitle(thread, userText, true).catch(() => { /* Keep the local title. */ });
+          const fallbackTitle = shortTitleFromPrompt(titleInput);
+          if (fallbackTitle) this.setAutomaticTitle(thread, fallbackTitle);
+          else this.save();
+          void this.generateTitle(thread, titleInput, true).catch(() => { /* Keep the local title. */ });
         } else {
-          const title = thread.title.trim() || userText.trim().split('\n', 1)[0].slice(0, 80);
+          const title = thread.title.trim() || titleInput.split('\n', 1)[0].slice(0, 80);
           this.setAutomaticTitle(thread, title);
         }
       } else if (thread.automaticTitlePending) {
@@ -3033,9 +3040,26 @@ export class HohHost {
 
   private setManualTitle(thread: ThreadModel, title: string) {
     this.threadMetadata.update(thread.id, { title });
-    this.titleRequests.delete(thread.id);
+    this.discardTitleRequest(thread.id);
     thread.titleRegeneration = null;
     this.setAutomaticTitle(thread, title);
+  }
+
+  private cancelExecutorTitle(cancellationId: string) {
+    void this.engine.request('hoh/executor/title/cancel', { cancellationId }).catch(() => {});
+  }
+
+  private discardTitleRequest(threadId: string) {
+    const request = this.titleRequests.get(threadId);
+    this.titleRequests.delete(threadId);
+    if (request && !request.automatic) this.cancelExecutorTitle(request.cancellationId);
+  }
+
+  private cancelAutomaticTitleRequests() {
+    for (const [id, request] of this.titleRequests) if (request.automatic) this.titleRequests.delete(id);
+    const cancellationId = this.automaticTitleCancellationId;
+    this.automaticTitleCancellationId = undefined;
+    if (cancellationId) this.cancelExecutorTitle(cancellationId);
   }
 
   private armTitleRegeneration(thread: ThreadModel, requestId?: string): Promise<string> {
@@ -3063,6 +3087,8 @@ export class HohHost {
   private generateTitle(thread: ThreadModel, firstMessage: string | undefined, automatic: boolean): Promise<string> {
     const pending = this.titleRequests.get(thread.id);
     if (pending && (automatic || !pending.automatic)) return pending.result;
+    const newCancellationId = () => globalThis.crypto?.randomUUID?.() ?? `${this.now()}-${Math.random()}`;
+    const cancellationId = automatic ? this.automaticTitleCancellationId ??= newCancellationId() : newCancellationId();
     const regeneration = automatic ? null : thread.titleRegeneration;
     const current = (): boolean => this.titleRequests.get(thread.id) === request && this.titleThreadAvailable(thread);
     let status: 'renamed' | 'unchanged' | 'failed' = 'unchanged';
@@ -3071,15 +3097,17 @@ export class HohHost {
       if (!automatic) await this.loaded(thread.id);
       if (!current()) throw new Error('The title request was superseded.');
       if (!thread.bindingKnown && !thread.builtin) throw new Error('This chat is unavailable for title generation.');
-      const source = firstMessage ?? thread.recentTitlePrompts();
-      if (!source) throw new Error('Send a message describing the work before generating a title.');
+      const prompts = firstMessage === undefined ? thread.recentTitlePrompts() : [firstMessage];
+      const latest = prompts.at(-1);
+      if (!latest) throw new Error('Send a message describing the work before generating a title.');
       const baseline = thread.titleText();
       const response = await this.engine.request('hoh/executor/title/generate', {
         executor: thread.builtin ? 'builtin' : thread.executor,
         sessionId: thread.id,
-        prompt: titleGenerationPrompt(source, automatic ? undefined : baseline),
+        prompt: titleGenerationPrompt(prompts, automatic ? undefined : baseline),
+        cancellationId,
       });
-      const explicit = explicitTitleFromPrompt(source);
+      const explicit = explicitTitleFromPrompt(latest);
       const generated = shortGeneratedTitle(response?.title, Boolean(explicit));
       if (!generated) throw new Error('The model did not return a valid chat title.');
       if (!current() || (automatic && (!this.autoTitlesEnabled || !this.canApplyAutomaticTitle(thread)))) {
@@ -3090,6 +3118,8 @@ export class HohHost {
         if (!automatic) this.threadMetadata.update(thread.id, { title });
         this.setAutomaticTitle(thread, title);
         status = 'renamed';
+      } else if (automatic && thread.automaticTitlePending) {
+        this.setAutomaticTitle(thread, title);
       }
       return title;
     }).catch(error => {
@@ -3106,7 +3136,7 @@ export class HohHost {
       }
       this.flush();
     });
-    const request = { automatic, result };
+    const request = { automatic, cancellationId, result };
     this.titleRequests.set(thread.id, request);
     return result;
   }
@@ -3175,8 +3205,9 @@ export class HohHost {
       const sideChat = this.readSideChat({ parentSessionId: source.id, seedEndSeq: result?.seedEndSeq });
       if (!created || !sideChat) throw new Error('The engine did not confirm the side chat.');
 
+      const title = typeof command.title === 'string' ? command.title : SIDE_CHAT_PLACEHOLDER;
       const child = new ThreadModel({
-        id: targetId, title: typeof command.title === 'string' ? command.title : 'Side chat',
+        id: targetId, title, automaticTitle: title === SIDE_CHAT_PLACEHOLDER ? true : undefined,
         createdAt: this.now(), model: source.model, executor: source.executor, mode: 'confirm', projectId: source.projectId,
       });
       child.sideChat = sideChat;
@@ -3457,7 +3488,7 @@ export class HohHost {
           } else if (command.regenerateTitle === true) {
             void this.armTitleRegeneration(target, String(command.commandId ?? '')).catch(() => { /* The shell reports the outcome. */ });
           } else if (command.regenerateTitle === false && target.titleRegeneration) {
-            this.titleRequests.delete(target.id);
+            this.discardTitleRequest(target.id);
             target.titleRegeneration = null;
             this.changed(target.id);
           }
@@ -3498,7 +3529,7 @@ export class HohHost {
           this.deletingThreads.delete(target.id);
           this.threads.delete(target.id);
           this.secretaryContexts.delete(target.id);
-          this.titleRequests.delete(target.id);
+          this.discardTitleRequest(target.id);
           this.wakeLocalImageReaders();
           this.dirty.delete(target.id);
           this.streamChanges.delete(target.id);
@@ -3517,7 +3548,7 @@ export class HohHost {
           this.threadMetadata.update(target.id, { archivedAt });
           target.archivedAt = archivedAt;
           if (archivedAt !== null) {
-            this.titleRequests.delete(target.id);
+            this.discardTitleRequest(target.id);
             target.titleRegeneration = null;
           }
           if (archivedAt === null && !target.homeProjectStats) this.schedulePeekToday();

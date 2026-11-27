@@ -1,10 +1,11 @@
-use std::os::unix::fs::PermissionsExt;
+use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::Path;
 use std::time::Duration;
 
 use hoh_external_harness::{
     AccessMode, ExternalHarness, HarnessAction, HarnessEvent, HarnessPolicy, NetworkAccess,
-    PromptImage, PromptParams, SandboxMode, StartParams, TitleRequest, VersionStatus, code,
+    PromptImage, PromptParams, SandboxMode, StartParams, TitleRequest, TitleWorkspace,
+    VersionStatus, code,
 };
 use hoh_harness_pi::PiHarness;
 use tempfile::TempDir;
@@ -161,11 +162,15 @@ async fn titles_use_an_isolated_session_and_the_bound_model() {
     )
     .unwrap();
     let pi = stub(dir.path());
+    let identity = project.metadata().unwrap();
     let request = |prompt: &str, model: Option<&str>| TitleRequest {
         prompt: prompt.into(),
         model: model.map(str::to_owned),
-        cwd: Some(project.clone()),
-        trusted: true,
+        workspace: Some(TitleWorkspace::new(
+            project.clone(),
+            [identity.dev(), identity.ino()],
+            dir.path().to_owned(),
+        )),
         native_session_id: None,
     };
 

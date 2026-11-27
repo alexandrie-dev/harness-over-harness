@@ -1120,6 +1120,22 @@
       "properties": {
         "method": {
           "type": "string",
+          "const": "hoh/executor/title/cancel"
+        },
+        "params": {
+          "$ref": "#/$defs/ExecutorTitleCancelParams"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "type": "string",
           "const": "approval/request"
         },
         "params": {
@@ -2918,16 +2934,32 @@
           "maxLength": 16384
         },
         "sessionId": {
-          "type": [
-            "string",
-            "null"
-          ]
+          "type": "string"
+        },
+        "cancellationId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
         }
       },
       "additionalProperties": false,
       "required": [
         "executor",
         "prompt"
+      ]
+    },
+    "ExecutorTitleCancelParams": {
+      "type": "object",
+      "properties": {
+        "cancellationId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "cancellationId"
       ]
     },
     "ApprovalRequestParams": {

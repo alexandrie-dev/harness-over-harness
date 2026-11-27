@@ -2699,6 +2699,37 @@ const CONFIRM_TEXT: &str =
 const FULL_TEXT: &str = "Full access: Stub runs commands without asking";
 
 #[tokio::test]
+async fn cancelled_title_requests_do_not_reach_the_harness() {
+    let dirs = dirs();
+    let window = window(&dirs, quick(), Host::Absent, |_| {}).await;
+    assert_eq!(
+        window
+            .call(
+                "hoh/executor/title/cancel",
+                json!({"cancellationId":"automatic"}),
+            )
+            .await
+            .unwrap(),
+        json!({"cancelled":true})
+    );
+    let generate = |id| {
+        window.call(
+            "hoh/executor/title/generate",
+            json!({"executor":HARNESS,"prompt":"Name the chat","cancellationId":id}),
+        )
+    };
+    assert_eq!(
+        generate("automatic").await.unwrap_err(),
+        "The title request was cancelled."
+    );
+    assert_eq!(
+        generate("manual").await.unwrap_err(),
+        "this harness cannot generate conversation titles"
+    );
+    window.close().await;
+}
+
+#[tokio::test]
 async fn editing_branches_at_the_selected_turn_and_starts_a_fresh_native_session() {
     let dirs = dirs();
     let window = window(&dirs, quick(), Host::Allows, full_access_args).await;
