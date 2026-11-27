@@ -1,4 +1,4 @@
-use super::{Package, swap_directories};
+use super::{Package, read_install_metadata, swap_directories};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
@@ -6,7 +6,10 @@ use std::{
     io::{self, Write},
     os::{
         fd::AsRawFd,
-        unix::{ffi::OsStrExt, fs::{MetadataExt, PermissionsExt}},
+        unix::{
+            ffi::OsStrExt,
+            fs::{MetadataExt, PermissionsExt, symlink},
+        },
     },
     path::{Path, PathBuf},
 };
@@ -45,12 +48,12 @@ pub(super) fn is_backup(bundle: &Path) -> bool {
 impl Recovery {
     pub(super) fn open(installed: &Path) -> io::Result<Option<Self>> {
         let directory = sibling_path(installed, ROLLBACK_SUFFIX)?;
-        let bytes = match fs::read(directory.join(PENDING)) {
-            Ok(bytes) => bytes,
+        let metadata = match read_install_metadata(&directory.join(PENDING)) {
+            Ok(metadata) => metadata,
             Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
             Err(error) => return Err(error),
         };
-        let pending = serde_json::from_slice(&bytes)?;
+        let pending = serde_json::from_str(&metadata)?;
         Ok(Some(Self { directory, pending }))
     }
 
@@ -99,8 +102,30 @@ impl Recovery {
         self.directory.join(package.install_dir)
     }
 
-    pub(super) fn ready_path(&self) -> PathBuf {
-        self.directory.join("ready")
+    pub(super) fn decision_path(&self) -> PathBuf {
+        self.directory.join("decision")
+    }
+
+    pub(super) fn commit(decision: &Path) -> io::Result<()> {
+        symlink("commit", decision)
+    }
+
+    pub(super) fn committed(&self) -> io::Result<bool> {
+        match fs::read_link(self.decision_path()) {
+            Ok(decision) if decision == Path::new("commit") => Ok(true),
+            Ok(decision) if decision == Path::new("rollback") => Ok(false),
+            Ok(_) => Err(io::ErrorKind::InvalidData.into()),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
+            Err(error) => Err(error),
+        }
+    }
+
+    pub(super) fn claim_rollback(&self) -> io::Result<bool> {
+        match symlink("rollback", self.decision_path()) {
+            Ok(()) => Ok(true),
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => Ok(!self.committed()?),
+            Err(error) => Err(error),
+        }
     }
 
     pub(super) fn is_swapped(&self, active: &File, backup: &File) -> io::Result<bool> {

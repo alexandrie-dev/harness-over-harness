@@ -10,7 +10,11 @@ use std::{
     io::BufReader,
     path::PathBuf,
     process::{Child, Command, Stdio},
-    sync::{Arc, mpsc},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+        mpsc,
+    },
     thread,
     time::{Duration, Instant},
 };
@@ -45,6 +49,7 @@ fn error_code(error: &hoh_protocol::framing::RpcError) -> Option<&str> {
 pub type OnSend = Box<dyn FnOnce(u64, &str) + Send>;
 pub type Reply = mpsc::Sender<Result<Value, String>>;
 pub type Sink = Arc<dyn Fn(HostEvent) + Send + Sync>;
+pub(crate) type ReadyHandler = Box<dyn Fn(Instant) -> bool + Send>;
 #[derive(Clone)]
 pub enum HostEvent {
     Notification(Value),
@@ -76,6 +81,9 @@ pub enum Message {
 pub trait Transport: Send {
     fn send(&mut self, frame: Value) -> Result<(), String>;
     fn exited(&mut self) -> bool;
+    fn disconnected(&self) -> bool {
+        false
+    }
     fn close(&mut self);
 }
 pub trait Connector: Send + Sync + 'static {
@@ -145,6 +153,8 @@ impl Connector for ProcessConfig {
         let stdin = child.stdin.take().ok_or("Нет связи с Помощником")?;
         let (tx, rx) = mpsc::sync_channel::<Value>(64);
         let errors = inbox.clone();
+        let disconnected = Arc::new(AtomicBool::new(false));
+        let writer_disconnected = disconnected.clone();
         let writer = thread::spawn(move || {
             let mut writer = FrameWriter::new(stdin);
             while let Ok(frame) = rx.recv() {
@@ -152,8 +162,10 @@ impl Connector for ProcessConfig {
                     break;
                 }
             }
+            writer_disconnected.store(true, Ordering::Release);
             let _ = errors.send(Message::Disconnected(generation));
         });
+        let reader_disconnected = disconnected.clone();
         let reader = thread::spawn(move || {
             let mut reader =
                 FrameReader::with_line_limit(BufReader::new(stdout), Some(16 * 1024 * 1024));
@@ -162,12 +174,14 @@ impl Connector for ProcessConfig {
                     return;
                 }
             }
+            reader_disconnected.store(true, Ordering::Release);
             let _ = inbox.send(Message::Disconnected(generation));
         });
         Ok(Box::new(StdioTransport {
             child,
             tx: Some(tx),
             threads: vec![reader, writer],
+            disconnected,
             closed: false,
         }))
     }
@@ -176,6 +190,7 @@ struct StdioTransport {
     child: Child,
     tx: Option<mpsc::SyncSender<Value>>,
     threads: Vec<thread::JoinHandle<()>>,
+    disconnected: Arc<AtomicBool>,
     closed: bool,
 }
 impl Transport for StdioTransport {
@@ -205,6 +220,9 @@ impl Transport for StdioTransport {
         {
             !matches!(self.child.try_wait(), Ok(None))
         }
+    }
+    fn disconnected(&self) -> bool {
+        self.disconnected.load(Ordering::Acquire)
     }
     fn close(&mut self) {
         if self.closed {
@@ -239,11 +257,21 @@ pub struct Engine {
 }
 impl Engine {
     pub fn start(connector: Arc<dyn Connector>, initialize: Value, sink: Sink) -> Arc<Self> {
+        Self::start_with_ready_handler(connector, initialize, sink, None)
+    }
+
+    pub(crate) fn start_with_ready_handler(
+        connector: Arc<dyn Connector>,
+        initialize: Value,
+        sink: Sink,
+        ready_handler: Option<ReadyHandler>,
+    ) -> Arc<Self> {
         let (tx, rx) = mpsc::channel();
         let inbox = tx.clone();
         let initialize = Arc::new(std::sync::Mutex::new(initialize));
         let shared = initialize.clone();
-        let join = thread::spawn(move || supervise(connector, shared, sink, inbox, rx));
+        let join =
+            thread::spawn(move || supervise(connector, shared, sink, inbox, rx, ready_handler));
         Arc::new(Self {
             tx,
             initialize,
@@ -325,6 +353,7 @@ fn supervise(
     sink: Sink,
     inbox: mpsc::Sender<Message>,
     rx: mpsc::Receiver<Message>,
+    mut ready_handler: Option<ReadyHandler>,
 ) {
     let mut generation = 0;
     let mut next = 0_u64;
@@ -376,6 +405,7 @@ fn supervise(
             continue;
         }
         let mut ready = false;
+        let mut ready_at = None;
         let started = Instant::now();
         sink(HostEvent::Status(
             json!({"state":"starting","message":"Подключаю Помощника…"}),
@@ -450,6 +480,7 @@ fn supervise(
                                 break;
                             }
                             ready = true;
+                            ready_at = Some(Instant::now());
                             sink(HostEvent::Status(
                                 json!({"state":"ready","message":"Помощник готов"}),
                             ));
@@ -519,6 +550,13 @@ fn supervise(
             }
             if transport.exited() || (!ready && started.elapsed() > Duration::from_secs(10)) {
                 break;
+            }
+            if let Some(handler) = &ready_handler
+                && let Some(ready_at) = ready_at
+                && !transport.disconnected()
+                && handler(ready_at)
+            {
+                ready_handler = None;
             }
             pending.retain(|_, p| {
                 if p.started.elapsed() <= Duration::from_secs(310) {

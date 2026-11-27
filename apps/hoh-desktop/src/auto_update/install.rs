@@ -1,19 +1,23 @@
 use super::{
-    Package, instance::InstanceLock, package_for,
+    Package, instance::InstanceLock, open_regular_file, package_for, read_install_metadata,
     recovery::{Recovery, is_backup, sibling_path},
 };
 use semver::Version;
 use std::{
     ffi::{OsStr, OsString},
-    fs::{self, File, OpenOptions},
+    fs::{self, File, TryLockError},
     io::{self, Read},
     os::{
         fd::{AsFd, AsRawFd, OwnedFd},
-        unix::{ffi::OsStrExt, fs::MetadataExt, net::UnixStream},
+        unix::{
+            ffi::OsStrExt,
+            fs::{MetadataExt, PermissionsExt},
+            net::UnixStream,
+        },
     },
     path::{Path, PathBuf},
     process::{Child, Stdio},
-    sync::Mutex,
+    sync::{Arc, Mutex},
     thread,
     time::{Duration, Instant},
 };
@@ -23,6 +27,7 @@ const WORKER: &str = "--hoh-update-worker";
 const CANDIDATE: &str = "--hoh-update-candidate";
 const RECOVERED: &str = "--hoh-update-recovered";
 const START_TIMEOUT: Duration = Duration::from_secs(45);
+const START_STABILITY: Duration = Duration::from_secs(1);
 const WAIT_STEP: Duration = Duration::from_millis(75);
 
 #[derive(Default)]
@@ -40,23 +45,40 @@ pub struct Installation {
     instance: InstanceLock,
     lease: Option<File>,
     job: Mutex<Job>,
-    readiness: Option<Mutex<CandidateReadiness>>,
+    readiness: Option<Arc<CandidateReadiness>>,
     recovered: Mutex<bool>,
 }
 
 struct CandidateReadiness {
-    marker: PathBuf,
-    engine: bool,
-    ui: bool,
+    decision: PathBuf,
+    ui: Mutex<Option<(u32, Instant)>>,
 }
 
 fn update_gate(installed: &Path) -> io::Result<File> {
-    let gate = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(true)
-        .truncate(false)
-        .open(sibling_path(installed, "-update.lock")?)?;
+    let path = sibling_path(installed, "-update.lock")?;
+    let gate = match open_regular_file(&path) {
+        Ok(gate) => gate,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            let parent = path.parent().ok_or(io::ErrorKind::InvalidInput)?;
+            let new_gate = tempfile::NamedTempFile::new_in(parent)?;
+            new_gate
+                .as_file()
+                .set_permissions(fs::Permissions::from_mode(0o644))?;
+            match new_gate.persist_noclobber(&path) {
+                Ok(_) => {}
+                Err(error) if error.error.kind() == io::ErrorKind::AlreadyExists => {}
+                Err(error) => return Err(error.error),
+            }
+            open_regular_file(&path)?
+        }
+        Err(error) => return Err(error),
+    };
+    if gate.metadata()?.len() != 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "the HoH update gate must be empty",
+        ));
+    }
     gate.try_lock()?;
     Ok(gate)
 }
@@ -128,10 +150,9 @@ impl Installation {
             );
         }
         if candidate {
-            installation.readiness = Some(Mutex::new(CandidateReadiness {
-                marker: PathBuf::from(args.next().ok_or("Missing update readiness path.")?),
-                engine: false,
-                ui: false,
+            installation.readiness = Some(Arc::new(CandidateReadiness {
+                decision: PathBuf::from(args.next().ok_or("Missing update decision path.")?),
+                ui: Mutex::default(),
             }));
         }
         let lease_error = |error| format!("Could not lock the HoH installation ({error}).");
@@ -139,8 +160,11 @@ impl Installation {
             inherited_lease().map_err(lease_error)?
         } else {
             let lease = File::open(installed).map_err(lease_error)?;
-            lease.try_lock_shared().map_err(|error| {
-                format!("HoH is applying an update. Open it again when the update finishes ({error}).")
+            lease.try_lock_shared().map_err(|error| match error {
+                TryLockError::WouldBlock => {
+                    "HoH is applying an update. Open it again when the update finishes.".into()
+                }
+                TryLockError::Error(error) => lease_error(error),
             })?;
             check_lease(installed, &lease).map_err(lease_error)?;
             if recover_pending(package, installed, &lease, &installation.instance)
@@ -151,7 +175,7 @@ impl Installation {
             lease
         };
         check_lease(installed, &lease).map_err(lease_error)?;
-        let marker = fs::read_to_string(installed.join(package.version_file))
+        let marker = read_install_metadata(&installed.join(package.version_file))
             .map_err(|error| format!("Could not read the HoH installation version ({error})."))?;
         if marker.trim() != version.to_string() {
             return Err(
@@ -225,18 +249,26 @@ impl Installation {
             .ok_or("The HoH installation is read-only.")?;
         let error_message = |error| format!("Could not prepare the HoH restart ({error}).");
         // Serialize upgrades to exclusive mode. On some systems try_lock releases the old shared lock.
-        let _gate = update_gate(installed)
-            .map_err(|_| "Another HoH process is applying an update.")?;
+        let _gate = update_gate(installed).map_err(|error| {
+            if error.kind() == io::ErrorKind::WouldBlock {
+                "Another HoH process is applying an update.".into()
+            } else {
+                error_message(error)
+            }
+        })?;
         if Recovery::open(installed).map_err(error_message)?.is_some() {
             return Err(
                 "An earlier HoH update is still pending. Restart HoH before trying again.".into(),
             );
         }
-        if lease.try_lock().is_err() {
+        if let Err(error) = lease.try_lock() {
             lease.lock_shared().map_err(error_message)?;
-            return Err(
-                "Close the other HoH windows from this installation, then try again.".into(),
-            );
+            return Err(match error {
+                TryLockError::WouldBlock => {
+                    "Close the other HoH windows from this installation, then try again.".into()
+                }
+                TryLockError::Error(error) => error_message(error),
+            });
         }
         let result = (|| {
             let (until_exit, parent) = UnixStream::pair()?;
@@ -265,22 +297,39 @@ impl Installation {
         result.map_err(error_message)
     }
 
-    pub fn engine_status(app: &tauri::AppHandle, ready: bool) {
-        app.state::<Self>().report_readiness(|state| state.engine = ready);
-    }
-
-    pub(super) fn ui_ready(&self) {
-        self.report_readiness(|state| state.ui = true);
-    }
-
-    fn report_readiness(&self, update: impl FnOnce(&mut CandidateReadiness)) {
+    pub(super) fn ui_status(&self, view: u32, ready: bool) {
         if let Some(readiness) = &self.readiness {
-            let mut state = readiness.lock().unwrap_or_else(|error| error.into_inner());
-            update(&mut state);
-            if state.engine && state.ui {
-                let _ = File::create_new(&state.marker);
+            let mut ui = readiness.ui.lock().unwrap_or_else(|error| error.into_inner());
+            if ready {
+                *ui = Some((view, Instant::now()));
+            } else if ui.is_some_and(|(active, _)| active == view) {
+                *ui = None;
             }
         }
+    }
+
+    pub(crate) fn ui_loading(&self) {
+        if let Some(readiness) = &self.readiness {
+            *readiness.ui.lock().unwrap_or_else(|error| error.into_inner()) = None;
+        }
+    }
+
+    pub(crate) fn engine_ready_handler(&self) -> Option<crate::engine::ReadyHandler> {
+        let readiness = self.readiness.clone()?;
+        Some(Box::new(move |engine_ready_at| {
+            let ui = readiness.ui.lock().unwrap_or_else(|error| error.into_inner());
+            if !ui.is_some_and(|(_, ui_ready_at)| {
+                engine_ready_at.max(ui_ready_at).elapsed() >= START_STABILITY
+            }) {
+                return false;
+            }
+            if let Err(error) = Recovery::commit(&readiness.decision)
+                && error.kind() != io::ErrorKind::AlreadyExists
+            {
+                eprintln!("HoH could not confirm the updated installation: {error}");
+            }
+            true
+        }))
     }
 }
 
@@ -308,27 +357,27 @@ fn launch(
     instance: &InstanceLock,
     executable: &Path,
     mode: &str,
-    ready: Option<&Path>,
+    decision: Option<&Path>,
     args: &[OsString],
     lease: &File,
 ) -> io::Result<Child> {
     instance
         .restart_command(executable, mode)?
-        .args(ready)
+        .args(decision)
         .args(args)
         .stdin(Stdio::from(lease.try_clone()?))
         .stdout(Stdio::null())
         .spawn()
 }
 
-fn await_ready(child: &mut Child, ready: &Path) -> io::Result<bool> {
+fn await_ready(child: &mut Child, recovery: &Recovery) -> io::Result<bool> {
     let deadline = Instant::now() + START_TIMEOUT;
     while Instant::now() < deadline {
+        if recovery.committed()? {
+            return Ok(true);
+        }
         if child.try_wait()?.is_some() {
             return Ok(false);
-        }
-        if ready.is_file() {
-            return Ok(true);
         }
         thread::sleep(WAIT_STEP);
     }
@@ -349,7 +398,7 @@ fn recover_pending(
     check_lease(installed, active)?;
     let backup = File::open(recovery.backup(package))?;
     backup.try_lock()?;
-    let restored = recovery.is_swapped(active, &backup)?;
+    let restored = recovery.is_swapped(active, &backup)? && !recovery.committed()?;
     if restored {
         recovery.exchange(installed, package)?;
     }
@@ -414,7 +463,7 @@ fn worker(
             return restart_previous(package, installed, args, instance, &lease);
         }
     };
-    let ready = recovery.ready_path();
+    let decision = recovery.decision_path();
     let executable = installed.join(package.binary_dir).join("hoh-desktop");
     if let Err(error) = recovery.exchange(installed, package) {
         eprintln!("HoH could not replace the installation: {error}");
@@ -423,9 +472,9 @@ fn worker(
     }
     if recovery.sync_exchange(installed).is_ok()
         && let Ok(mut child) =
-            launch(instance, &executable, CANDIDATE, Some(&ready), args, &candidate)
+            launch(instance, &executable, CANDIDATE, Some(&decision), args, &candidate)
     {
-        if await_ready(&mut child, &ready).unwrap_or(false) {
+        if await_ready(&mut child, &recovery).unwrap_or(false) || !recovery.claim_rollback()? {
             let result = recovery.finish();
             candidate.lock_shared()?;
             return result;

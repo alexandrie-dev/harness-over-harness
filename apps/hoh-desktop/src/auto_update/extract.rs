@@ -45,7 +45,42 @@ fn extractor(archive: &Path, staging: &Path, flags: &str) -> Command {
         .stdin(Stdio::null());
     #[cfg(target_os = "macos")]
     command.args(["--no-acls", "--no-xattrs", "--no-fflags", "--no-mac-metadata"]);
+    #[cfg(target_os = "linux")]
+    unsafe {
+        command.pre_exec(|| {
+            libc::umask(0o022);
+            Ok(())
+        });
+    }
     command
+}
+
+#[cfg(target_os = "linux")]
+pub(super) fn preserve_access_modes(installed: &Path, staged: &Path) -> io::Result<()> {
+    use std::{
+        fs,
+        os::unix::fs::{MetadataExt, PermissionsExt, chown},
+    };
+
+    let previous = match installed.symlink_metadata() {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error),
+    };
+    let next = staged.symlink_metadata()?;
+    if previous.is_dir() && next.is_dir() {
+        for entry in fs::read_dir(staged)? {
+            let entry = entry?;
+            preserve_access_modes(&installed.join(entry.file_name()), &entry.path())?;
+        }
+    } else if !(previous.is_file() && next.is_file()) {
+        return Ok(());
+    }
+    let mode = previous.mode() & 0o777;
+    if next.gid() != previous.gid() && ((mode >> 3) & 0o7) != (mode & 0o7) {
+        chown(staged, None, Some(previous.gid()))?;
+    }
+    fs::set_permissions(staged, fs::Permissions::from_mode(mode))
 }
 
 fn measure(

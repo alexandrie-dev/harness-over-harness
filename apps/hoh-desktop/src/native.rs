@@ -291,7 +291,13 @@ pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     let notifications = EngineNotifications::default();
     let event_notifications = notifications.clone();
     let init = json!({"cwd":session_folder,"provider":config.provider,"model":config.model,"capabilities":{"approvals":"host","userQuestions":true},"hoh":{"protocolVersion":1,"approvalKey":hoh_protocol::approval::hex(&key)}});
-    let engine = Engine::start(
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    let ready_handler = handle
+        .try_state::<crate::auto_update::Installation>()
+        .and_then(|installation| installation.engine_ready_handler());
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    let ready_handler = None;
+    let engine = Engine::start_with_ready_handler(
         Arc::new(config),
         init,
         Arc::new(move |event| {
@@ -305,6 +311,7 @@ pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
                 event,
             )
         }),
+        ready_handler,
     );
     app.manage(Host {
         engine,
@@ -391,8 +398,6 @@ fn handle_event(
                 "engine:status:not-ready"
             });
             ready.store(is_ready, Ordering::Release);
-            #[cfg(any(target_os = "linux", target_os = "macos"))]
-            crate::auto_update::Installation::engine_status(handle, is_ready);
             if !is_ready {
                 questions.clear();
                 if let Some(host) = handle.try_state::<Host>() {
@@ -728,22 +733,29 @@ pub fn main_security_plugin<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin<R
             }
             allowed
         });
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    let builder = builder.on_page_load(|webview, payload| {
+        if webview.label() != "main" {
+            return;
+        }
+        if matches!(payload.event(), tauri::webview::PageLoadEvent::Started)
+            && let Some(installation) = webview.try_state::<crate::auto_update::Installation>()
+        {
+            installation.ui_loading();
+        }
+        #[cfg(all(feature = "probe", target_os = "linux"))]
+        crate::probe::trace(format!(
+            "main:page-load:{:?}:{}",
+            payload.event(),
+            payload.url().path()
+        ));
+    });
     #[cfg(all(feature = "probe", target_os = "linux"))]
-    let builder = builder
-        .on_page_load(|webview, payload| {
-            if webview.label() == "main" {
-                crate::probe::trace(format!(
-                    "main:page-load:{:?}:{}",
-                    payload.event(),
-                    payload.url().path()
-                ));
-            }
-        })
-        .on_window_ready(|window| {
-            if window.label() == "main" {
-                crate::probe::trace("main:window-ready");
-            }
-        });
+    let builder = builder.on_window_ready(|window| {
+        if window.label() == "main" {
+            crate::probe::trace("main:window-ready");
+        }
+    });
     #[cfg(target_os = "linux")]
     let builder = builder.on_webview_ready(|webview| {
         if webview.label() == "main" {

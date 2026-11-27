@@ -252,7 +252,8 @@ function chatIndexHome(code: string): string {
     window.dispatchEvent(new CustomEvent("hoh-project-new-chat", { detail: null }));
     void handleNewThread(projectRef, { replace: true })`,
     ], NATIVE_TITLEBAR,
-  ], TAURI_IMPORT + pageStore);
+    ['  return bootstrapped ? <NoProjectsHero /> : null;', '  return bootstrapped ? <><NoProjectsHero /><DesktopUpdateReady /></> : null;'],
+  ], TAURI_IMPORT + pageStore + DESKTOP_UPDATE_READY);
 }
 export function chatViewHome(code: string): string {
   return anchorPatch('ChatView.tsx', code, [
@@ -262,7 +263,8 @@ export function chatViewHome(code: string): string {
     ['                                  showGitControls={isGitRepo}', '                                  showGitControls={false}'],
     ['"pointer-events-none absolute inset-0 z-20 flex items-center [@media(max-height:34rem)]:items-end"', '"hoh-draft-hero pointer-events-none absolute inset-0 z-20 flex flex-col justify-end"'],
     ['              <div ref={draftHeroTransitionGroupRef} className="chat-composer-lane w-full">', '              {isDraftHeroState ? <HohHomeBody /> : null}\n              <div ref={draftHeroTransitionGroupRef} className="chat-composer-lane w-full">'],
-  ], `import { HomeBody as HohHomeBody } from ${JSON.stringify(HOME_BODY)};\n`);
+    ['              <WorkspaceMutationIdContext value={workspaceMutationId}>\n                <ThreadTimeline', '              {!embedded && !backgroundThread && !threadDetailLoading ? <DesktopUpdateReady /> : null}\n              <WorkspaceMutationIdContext value={workspaceMutationId}>\n                <ThreadTimeline'],
+  ], DESKTOP_UPDATE_READY + `import { HomeBody as HohHomeBody } from ${JSON.stringify(HOME_BODY)};\n`);
 }
 
 function timelineMessageEdit(code: string): string {
@@ -743,12 +745,6 @@ function hohT3(): Plugin {
       if (id === resolve(T3_BASE, 'shared/markdownPipeline.ts')) return { code: markdownHtmlMarker(code), map: null };
       if (id === resolve(T3_WEB, 'routes/_chat.index.tsx')) return { code: chatIndexHome(code), map: null };
       if (id === resolve(T3_WEB, 'components/ChatView.tsx')) return { code: chatViewHome(code), map: null };
-      if (id === resolve(T3_WEB, 'routes/__root.tsx')) return {
-        code: anchorPatch('__root.tsx', code, [[
-          '      <AppSidebarLayout showSidebar={!isWelcome}>\n        <Outlet />',
-          '      <AppSidebarLayout showSidebar={!isWelcome}>\n        <Outlet />\n        {primaryEnvironmentAuthenticated && !isWelcome ? <DesktopUpdateReady /> : null}',
-        ]], DESKTOP_UPDATE_READY), map: null,
-      };
       if (id === resolve(T3_WEB, 'components/onboarding/WelcomePage.tsx')) return {
         code: anchorPatch('WelcomePage.tsx', welcomeProviderActions(code), [
           NATIVE_TITLEBAR,

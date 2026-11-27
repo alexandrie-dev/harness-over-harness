@@ -9,9 +9,12 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
     ffi::{CString, OsStr},
-    fs::{self, File},
+    fs::{self, File, OpenOptions},
     io::{self, BufRead, BufReader, Read, Write},
-    os::unix::{ffi::OsStrExt, fs::PermissionsExt},
+    os::unix::{
+        ffi::OsStrExt,
+        fs::{OpenOptionsExt, PermissionsExt},
+    },
     path::{Path, PathBuf},
     process::{Command, Stdio},
     time::{Duration, Instant},
@@ -20,6 +23,7 @@ use tauri::{Manager, ipc::Channel};
 
 const DEFAULT_RELEASE_REPOSITORY: &str = "alexandrie-dev/harness-over-harness";
 const MAX_ASSET_SIZE: u64 = 512 * 1024 * 1024;
+const MAX_METADATA_SIZE: u64 = 4096;
 
 #[derive(Clone, Copy)]
 struct Package {
@@ -75,9 +79,36 @@ impl Package {
         } else {
             root.file_name() == Some(OsStr::new(self.install_dir))
         };
-        (valid_root && executable.ends_with(&binary) && root.join(self.version_file).is_file())
-            .then_some(root)
+        (valid_root
+            && executable.ends_with(&binary)
+            && root.join(self.version_file).symlink_metadata().is_ok())
+        .then_some(root)
     }
+}
+
+fn open_regular_file(path: &Path) -> io::Result<File> {
+    let invalid = || io::Error::new(io::ErrorKind::InvalidData, "expected a regular file");
+    if !path.symlink_metadata()?.is_file() {
+        return Err(invalid());
+    }
+    let file = OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+        .open(path)?;
+    if !file.metadata()?.is_file() {
+        return Err(invalid());
+    }
+    Ok(file)
+}
+
+fn read_install_metadata(path: &Path) -> io::Result<String> {
+    let file = open_regular_file(path)?;
+    let mut value = String::new();
+    file.take(MAX_METADATA_SIZE + 1).read_to_string(&mut value)?;
+    if value.len() as u64 > MAX_METADATA_SIZE {
+        return Err(io::ErrorKind::FileTooLarge.into());
+    }
+    Ok(value)
 }
 
 #[derive(Deserialize)]
@@ -369,11 +400,12 @@ fn validate_bundle(
         return Err("The update was cancelled.".into());
     }
     let invalid = || "The package does not contain a complete HoH installation for this release.";
+    if !bundle.symlink_metadata().is_ok_and(|file| file.is_dir()) {
+        return Err(invalid().into());
+    }
     let version_marker =
-        fs::read_to_string(bundle.join(package.version_file)).map_err(|_| invalid())?;
-    if !bundle.symlink_metadata().is_ok_and(|file| file.is_dir())
-        || version_marker.trim() != version.to_string()
-    {
+        read_install_metadata(&bundle.join(package.version_file)).map_err(|_| invalid())?;
+    if version_marker.trim() != version.to_string() {
         return Err(invalid().into());
     }
     for program in ["hoh-desktop", "hoh"] {
@@ -514,7 +546,12 @@ fn update(
     fs::create_dir(&unpacked)
         .map_err(|error| format!("Could not prepare the package extractor ({error})."))?;
     extract::extract(&archive, &unpacked, cancelled)?;
-    validate_bundle(&package.staged_in(&unpacked), package, &version, cancelled)?;
+    let bundle = package.staged_in(&unpacked);
+    validate_bundle(&bundle, package, &version, cancelled)?;
+    #[cfg(target_os = "linux")]
+    extract::preserve_access_modes(installed, &bundle).map_err(|error| {
+        format!("Could not preserve permissions for the HoH installation ({error}).")
+    })?;
     installation.handoff(executable, installed, staging)?;
     Ok(UpdateOutcome::Restarting(version))
 }
@@ -558,11 +595,11 @@ async fn run_update(
 }
 
 #[tauri::command]
-pub fn desktop_ui_ready(window: tauri::WebviewWindow, legacy: bool) {
+pub fn desktop_ui_ready(window: tauri::WebviewWindow, legacy: bool, view: u32, ready: bool) {
     let legacy_shell =
         crate::native::legacy_shell_requested(std::env::var_os("HOH_WINDOW_SHELL").as_deref());
     if window.label() == "main" && legacy == legacy_shell {
-        window.state::<Installation>().ui_ready();
+        window.state::<Installation>().ui_status(view, ready);
     }
 }
 
