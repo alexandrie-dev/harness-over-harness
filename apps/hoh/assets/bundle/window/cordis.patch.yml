@@ -36,6 +36,13 @@
     - id: session-projection
       name: '@deepseek-ai/dsh-session-projection'
 
+    - id: session-title
+      name: '@deepseek-ai/dsh-session-title'
+      config:
+        fallbackMaxWords: 3
+        fallbackMaxBytes: 80
+        maxTitleBytes: 80
+
     - id: system-prompt
       name: '@deepseek-ai/dsh-system-prompt'
       config:

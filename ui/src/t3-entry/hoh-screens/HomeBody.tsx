@@ -23,6 +23,7 @@ import { useThreadActions } from '~/hooks/useThreadActions';
 import { ensureLocalApi } from '~/localApi';
 import { HOH_ENVIRONMENT_ID } from '../../hoh-host/config';
 import type { HomeAgent as Agent, HomeEntry } from '../../hoh-host/threads';
+import { RenameChatTitleButton } from './ChatTitles';
 import { openQuickView, QuickViewDialog } from './QuickViewDialog';
 import {
   getGroupAgentsByProject,
@@ -186,6 +187,7 @@ function EntryCard({ entry, view, complete, grouped, archive, archiving }: {
       ) : null}
       {waiting || (entry.pluginCreator && entry.state === 'working') ? <Steps entry={entry} /> : null}
       {!entry.pluginCreator && entry.state === 'done' && entry.doneAt !== null ? <span className="hoh-card__time">{clock(entry.doneAt)}</span> : null}
+      <RenameChatTitleButton className="hoh-card__rename" threadId={entry.id} title={entry.title} />
       {archive ? (
         <Button className="hoh-card__archive" variant="ghost-muted" size="icon-xs"
           aria-label={`Archive ${entry.title}`} title="Archive chat" aria-disabled={archiving || undefined}
@@ -296,6 +298,7 @@ function AgentClusters({ entries, view, projectId = null, pluginCreator = false 
       const to = target.getBoundingClientRect();
       preview.classList.add('hoh-card--completing');
       preview.removeAttribute('data-thread-id');
+      preview.inert = true;
       const status = preview.querySelector('.hoh-card__state b');
       if (status) status.textContent = 'Done';
       Object.assign(preview.style, {

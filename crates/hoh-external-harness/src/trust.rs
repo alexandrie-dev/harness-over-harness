@@ -200,7 +200,20 @@ async fn save(profile: &Path, entries: &[Snapshot]) -> std::io::Result<()> {
 }
 
 pub(crate) async fn status(profile: &Path, folder: &Path) -> std::io::Result<(bool, bool)> {
+    with_status(profile, folder, |trusted, changed| (trusted, changed)).await
+}
+
+pub(crate) async fn with_status<T>(
+    profile: &Path,
+    folder: &Path,
+    action: impl FnOnce(bool, bool) -> T,
+) -> std::io::Result<T> {
     let _guard = SAVING.lock().await;
+    let (trusted, changed) = read_status(profile, folder).await?;
+    Ok(action(trusted, changed))
+}
+
+async fn read_status(profile: &Path, folder: &Path) -> std::io::Result<(bool, bool)> {
     let mut entries = load(profile).await;
     let current = match snapshot(folder) {
         Ok(current) => current,

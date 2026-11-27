@@ -207,6 +207,8 @@ pub enum Request {
     WorkspaceResolve(WorkspaceResolveParams),
     #[serde(rename = "hoh/executor/title/generate")]
     ExecutorTitleGenerate(ExecutorTitleGenerateParams),
+    #[serde(rename = "hoh/executor/title/cancel")]
+    ExecutorTitleCancel(ExecutorTitleCancelParams),
     #[serde(rename = "approval/request")]
     ApprovalRequest(ApprovalRequestParams),
     #[serde(rename = "user-question/ask")]
@@ -284,6 +286,7 @@ impl Request {
             Self::WorkspaceAdd(_) => "hoh/workspace/add",
             Self::WorkspaceResolve(_) => "hoh/workspace/resolve",
             Self::ExecutorTitleGenerate(_) => "hoh/executor/title/generate",
+            Self::ExecutorTitleCancel(_) => "hoh/executor/title/cancel",
             Self::ApprovalRequest(_) => "approval/request",
             Self::UserQuestionAsk(_) => "user-question/ask",
         }
@@ -397,6 +400,7 @@ pub const REQUEST_METHODS: &[&str] = &[
     "hoh/workspace/add",
     "hoh/workspace/resolve",
     "hoh/executor/title/generate",
+    "hoh/executor/title/cancel",
     "approval/request",
     "user-question/ask",
 ];
@@ -493,6 +497,7 @@ pub fn validate_params(method: &str, value: &Value) -> Result<(), String> {
         "hoh/workspace/add" => admit::<WorkspaceAddParams>(value),
         "hoh/workspace/resolve" => admit::<WorkspaceResolveParams>(value),
         "hoh/executor/title/generate" => admit::<ExecutorTitleGenerateParams>(value),
+        "hoh/executor/title/cancel" => admit::<ExecutorTitleCancelParams>(value),
         "approval/request" => admit::<ApprovalRequestParams>(value),
         "user-question/ask" => admit::<SdkUserQuestionRequest>(value),
         _ => Err(format!("unknown method: {method}")),
@@ -573,6 +578,7 @@ pub fn validate_result(method: &str, value: &Value) -> Result<(), String> {
         "hoh/workspace/add" => admit::<WorkspaceAddResult>(value),
         "hoh/workspace/resolve" => admit::<WorkspaceResolveResult>(value),
         "hoh/executor/title/generate" => admit::<ExecutorTitleGenerateResult>(value),
+        "hoh/executor/title/cancel" => admit::<ExecutorTitleCancelResult>(value),
         "approval/request" => admit::<ApprovalRequestResult>(value),
         "user-question/ask" => admit::<SdkUserQuestionResult>(value),
         _ => Err(format!("unknown method: {method}")),
@@ -1394,6 +1400,12 @@ pub fn schemas() -> Vec<(String, Value)> {
             schema_for!(ExecutorTitleGenerateParams),
             schema_for!(ExecutorTitleGenerateResult),
         ),
+        (
+            "ExecutorTitleCancel",
+            "hoh/executor/title/cancel",
+            schema_for!(ExecutorTitleCancelParams),
+            schema_for!(ExecutorTitleCancelResult),
+        ),
     ] {
         schemas.push((
             format!("{name}Params"),
@@ -1551,6 +1563,8 @@ enum RequestDecode {
     WorkspaceResolve(WorkspaceResolveParams),
     #[serde(rename = "hoh/executor/title/generate")]
     ExecutorTitleGenerate(ExecutorTitleGenerateParams),
+    #[serde(rename = "hoh/executor/title/cancel")]
+    ExecutorTitleCancel(ExecutorTitleCancelParams),
     #[serde(rename = "approval/request")]
     ApprovalRequest(ApprovalRequestParams),
     #[serde(rename = "user-question/ask")]

@@ -70,7 +70,22 @@ impl CodexHarness {
     }
 }
 
-fn app_server_spec(config: &CodexConfig, cwd: &Path, trusted: bool) -> ProcessSpec {
+pub(crate) fn projects_config(cwd: &Path, trusted: bool) -> String {
+    format!(
+        "projects={{{}}}",
+        crate::session::project_trust(cwd, trusted)
+            .keys()
+            .map(|path| format!(
+                "{}={{trust_level=\"{}\"}}",
+                serde_json::to_string(path).expect("path serializes"),
+                if trusted { "trusted" } else { "untrusted" }
+            ))
+            .collect::<Vec<_>>()
+            .join(",")
+    )
+}
+
+pub(crate) fn app_server_spec(config: &CodexConfig, cwd: &Path, trusted: bool) -> ProcessSpec {
     ProcessSpec {
         program: config.executable.clone(),
         args: vec![
@@ -78,18 +93,7 @@ fn app_server_spec(config: &CodexConfig, cwd: &Path, trusted: bool) -> ProcessSp
             "-c".to_owned(),
             "thread_unload_delay_secs=0".to_owned(),
             "-c".to_owned(),
-            format!(
-                "projects={{{}}}",
-                crate::session::project_trust(cwd, trusted)
-                    .keys()
-                    .map(|path| format!(
-                        "{}={{trust_level=\"{}\"}}",
-                        serde_json::to_string(path).expect("path serializes"),
-                        if trusted { "trusted" } else { "untrusted" }
-                    ))
-                    .collect::<Vec<_>>()
-                    .join(",")
-            ),
+            projects_config(cwd, trusted),
         ],
         cwd: Some(cwd.to_owned()),
         cwd_identity: None,
@@ -451,6 +455,7 @@ impl ExternalHarness for CodexHarness {
                     effort: params.effort,
                     resume,
                 },
+                config,
             )
             .await?;
             let (session, events, thread_id, resumed) = started;

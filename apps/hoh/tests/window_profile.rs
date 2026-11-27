@@ -36,6 +36,7 @@ fn window_profile_composes_every_required_engine_service() {
         "llm",
         "session",
         "session-projection",
+        "session-title",
         "system-prompt",
         "tools",
         "tool-executor-native",
@@ -65,6 +66,15 @@ fn window_profile_composes_every_required_engine_service() {
     ] {
         assert!(ids.contains(&required), "missing {required}: {ids:#?}");
     }
+    let titles = composition
+        .entries
+        .iter()
+        .find(|entry| entry.id == "session-title")
+        .unwrap();
+    assert_eq!(
+        titles.config,
+        json!({"fallbackMaxWords":3,"fallbackMaxBytes":80,"maxTitleBytes":80})
+    );
     let policy = composition
         .entries
         .iter()
@@ -167,14 +177,24 @@ async fn window_profile_initializes_streams_a_mock_prompt_and_shuts_down() {
     let mut mock = hoh_llm_openai_mock::MockServer::start(hoh_llm_openai_mock::MockOptions::new(
         hoh_llm_openai_mock::Scenario {
             model: "window-mock".to_owned(),
-            responses: vec![hoh_llm_openai_mock::ScenarioResponse {
-                text: vec!["window ".to_owned(), "mock answer".to_owned()],
-                tool_calls: vec![],
-                usage: hoh_llm_openai_mock::ScenarioUsage {
-                    prompt_tokens: 3,
-                    completion_tokens: 2,
+            responses: vec![
+                hoh_llm_openai_mock::ScenarioResponse {
+                    text: vec!["window ".to_owned(), "mock answer".to_owned()],
+                    tool_calls: vec![],
+                    usage: hoh_llm_openai_mock::ScenarioUsage {
+                        prompt_tokens: 3,
+                        completion_tokens: 2,
+                    },
                 },
-            }],
+                hoh_llm_openai_mock::ScenarioResponse {
+                    text: vec![r#"{"title":"Названия чатов"}"#.to_owned()],
+                    tool_calls: vec![],
+                    usage: hoh_llm_openai_mock::ScenarioUsage {
+                        prompt_tokens: 8,
+                        completion_tokens: 4,
+                    },
+                },
+            ],
         },
     ))
     .await
@@ -185,23 +205,20 @@ async fn window_profile_initializes_streams_a_mock_prompt_and_shuts_down() {
     let mut stdout = BufReader::new(child.stdout.take().unwrap()).lines();
     let mut seen = Vec::new();
 
-    send(
-        &mut stdin,
-        json!({
-            "jsonrpc":"2.0",
-            "id":"initialize",
-            "method":"initialize",
-            "params":{
-                "cwd":window_workspace(root.path()),
-                "provider":"openai-compatible",
-                // The window announces a placeholder: the engine uses the model it was configured with.
-                "model":"local",
-                "hoh":{"protocolVersion":1,"approvalKey":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
-                "capabilities":{"approvals":"host"}
-            }
-        }),
-    )
-    .await;
+    let initialize = json!({
+        "jsonrpc":"2.0",
+        "id":"initialize",
+        "method":"initialize",
+        "params":{
+            "cwd":window_workspace(root.path()),
+            "provider":"openai-compatible",
+            // The window announces a placeholder: the engine uses the model it was configured with.
+            "model":"local",
+            "hoh":{"protocolVersion":1,"approvalKey":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+            "capabilities":{"approvals":"host"}
+        }
+    });
+    send(&mut stdin, initialize.clone()).await;
     let initialized =
         receive_until(&mut stdout, &mut seen, |frame| frame["id"] == "initialize").await;
     assert!(initialized.get("result").is_some(), "{initialized}");
@@ -212,7 +229,7 @@ async fn window_profile_initializes_streams_a_mock_prompt_and_shuts_down() {
             "jsonrpc":"2.0",
             "id":"prompt",
             "method":"session/prompt",
-            "params":{"sessionId":"window-main","contentBlocks":[{"type":"text","text":"hello"}]}
+            "params":{"sessionId":"window-main","contentBlocks":[{"type":"text","text":"Сократи названия чатов до трёх слов"}]}
         }),
     )
     .await;
@@ -222,9 +239,16 @@ async fn window_profile_initializes_streams_a_mock_prompt_and_shuts_down() {
         frame["method"] == "session.status" && frame["params"]["status"] == "idle"
     })
     .await;
-    assert!(
-        seen.iter().any(|frame| frame["method"] == "session.event"),
-        "{seen:#?}"
+    let is_title = |frame: &Value| {
+        frame["method"] == "session.event" && frame["params"]["event"]["type"] == "session/title"
+    };
+    let title = match seen.iter().find(|frame| is_title(frame)) {
+        Some(frame) => frame.clone(),
+        None => receive_until(&mut stdout, &mut seen, is_title).await,
+    };
+    assert_eq!(
+        title["params"]["event"]["data"]["title"],
+        "Сократи названия чатов"
     );
 
     // The session log reaches the window as ordered events; the model's text is one message.
@@ -264,6 +288,34 @@ async fn window_profile_initializes_streams_a_mock_prompt_and_shuts_down() {
     assert_eq!(body["model"], "window-mock", "{body}");
     assert_eq!(body["stream"], true, "{body}");
 
+    for (id, executor) in [("wrong-harness", "codex"), ("generate-title", "builtin")] {
+        send(
+            &mut stdin,
+            json!({
+                "jsonrpc":"2.0",
+                "id":id,
+                "method":"hoh/executor/title/generate",
+                "params":{"executor":executor,"sessionId":"window-main","prompt":"Return a short title as JSON"}
+            }),
+        )
+        .await;
+        let result = receive_until(&mut stdout, &mut seen, |frame| frame["id"] == id).await;
+        if executor == "builtin" {
+            assert_eq!(result["result"]["title"], "Названия чатов", "{result}");
+        } else {
+            assert!(result.get("error").is_some(), "{result}");
+        }
+    }
+    let requests = mock.requests().await;
+    let completions = requests
+        .iter()
+        .filter(|request| request.method == "POST" && request.path.ends_with("/chat/completions"))
+        .collect::<Vec<_>>();
+    assert_eq!(completions.len(), 2, "{requests:#?}");
+    let naming = completions[1].body.as_ref().expect("title request body");
+    assert_eq!(naming["model"], "window-mock", "{naming}");
+    assert!(naming["tools"].is_null(), "{naming}");
+
     send(
         &mut stdin,
         json!({"jsonrpc":"2.0","id":"shutdown","method":"shutdown","params":{}}),
@@ -279,8 +331,32 @@ async fn window_profile_initializes_streams_a_mock_prompt_and_shuts_down() {
     drop(stdin);
     let stderr = engine_stderr(root.path());
     assert_eq!(status.code(), Some(0), "{stderr}");
-    mock.close().await;
     assert!(stderr.is_empty(), "{stderr}");
+
+    let mut reopened = command(root.path()).spawn().unwrap();
+    let mut stdin = reopened.stdin.take().unwrap();
+    let mut stdout = BufReader::new(reopened.stdout.take().unwrap()).lines();
+    let mut seen = Vec::new();
+    send(&mut stdin, initialize).await;
+    receive_until(&mut stdout, &mut seen, |frame| frame["id"] == "initialize").await;
+    send(
+        &mut stdin,
+        json!({"jsonrpc":"2.0","id":"list","method":"session/list","params":{}}),
+    )
+    .await;
+    let list = receive_until(&mut stdout, &mut seen, |frame| frame["id"] == "list").await;
+    assert_eq!(list["result"]["sessions"][0]["id"], "window-main", "{list}");
+    assert_eq!(
+        list["result"]["sessions"][0]["title"], "Сократи названия чатов",
+        "{list}"
+    );
+    drop(stdin);
+    let status = tokio::time::timeout(Duration::from_secs(10), reopened.wait())
+        .await
+        .expect("the reopened engine did not exit after stdin closed")
+        .unwrap();
+    assert_eq!(status.code(), Some(0), "{}", engine_stderr(root.path()));
+    mock.close().await;
 }
 
 #[tokio::test]

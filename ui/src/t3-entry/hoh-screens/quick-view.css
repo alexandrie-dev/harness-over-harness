@@ -61,6 +61,7 @@
 }
 .hoh-quick-view__heading { min-width: 0; flex: 1 1 auto; }
 .hoh-quick-view__title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 1rem; line-height: 1.5rem; }
+.hoh-quick-view__actions { display: flex; flex: 0 0 auto; align-items: center; gap: 0.25rem; }
 .hoh-quick-view__full { flex: 0 0 auto; }
 .hoh-quick-view__chat { display: flex; min-height: 0; flex: 1 1 0; overflow: hidden; background: var(--background); }
 

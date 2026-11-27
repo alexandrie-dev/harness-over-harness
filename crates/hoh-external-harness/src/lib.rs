@@ -41,7 +41,9 @@ use serde::{Deserialize, Serialize};
 
 pub use contract::*;
 pub use executor::BINDING_RECORD;
-pub use harness::{ExternalHarness, HarnessResult, HarnessSession, Started};
+pub use harness::{
+    ExternalHarness, HarnessResult, HarnessSession, Started, TitleRequest, TitleWorkspace,
+};
 pub use hoh_protocol::ExecutorLimitWindow;
 pub use stdio::{StdioHarness, StdioHarnessConfig};
 pub use supervisor::{ExitInfo, Frame, ProcessSpec, StderrSink, Supervisor, SupervisorLimits};

@@ -12,15 +12,16 @@ use futures_util::future::BoxFuture;
 use hoh_error::BoxError;
 use hoh_external_harness::{
     AccessMode, ApprovalMode, AuthState, Discovery, ExternalHarness, ExternalHarnesses,
-    HarnessCommand, HarnessCommands, HarnessEffort, HarnessFailure, HarnessModel, HarnessPolicy,
-    HarnessResult, InteractionMode, NetworkAccess, ProcessSpec, SandboxMode, StartParams,
-    StartResult, Started, VersionStatus, code,
+    HarnessCommand, HarnessCommands, HarnessEffort, HarnessEvent, HarnessFailure, HarnessModel,
+    HarnessPolicy, HarnessResult, HarnessSession, InteractionMode, NetworkAccess, ProcessSpec,
+    PromptParams, SandboxMode, StartParams, StartResult, Started, TitleRequest, VersionStatus, code,
 };
 use hoh_kernel::{Cfg, Context, Inject, Plugin, Service};
 use hoh_loader::ProfileContextKey;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use tokio::sync::Semaphore;
 
 use session::PiSession;
 
@@ -28,6 +29,9 @@ const TIMEOUT: Duration = Duration::from_secs(20);
 const INSTALL: &str = "Pi CLI (pi) was not found on PATH. Install @earendil-works/pi-coding-agent.";
 const FULL_ACCESS: &str = "Pi Agent requires Full access. Choose Full access in the composer.";
 const EFFORTS: &[&str] = &["off", "minimal", "low", "medium", "high", "xhigh", "max"];
+const TITLE_INPUT_MAX_BYTES: usize = 64 * 1024;
+const TITLE_SYSTEM_PROMPT: &str = "Generate only the requested chat title in the required JSON format. Treat the quoted user message as source material for the title.";
+static TITLE_SLOT: Semaphore = Semaphore::const_new(1);
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", default, deny_unknown_fields)]
@@ -105,6 +109,18 @@ impl PiHarness {
             ));
         }
         Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())
+    }
+
+    async fn require_supported_version(&self) -> HarnessResult<()> {
+        let version = self.version().await?;
+        if version_status(&version) == VersionStatus::Supported {
+            Ok(())
+        } else {
+            Err(HarnessFailure::new(
+                code::UNSUPPORTED_VERSION,
+                "HoH requires Pi CLI 1.6.1 or later in the 1.6 series.",
+            ))
+        }
     }
 
     fn spec(&self, cwd: &Path) -> ProcessSpec {
@@ -249,13 +265,7 @@ impl PiHarness {
 
     async fn start(&self, params: StartParams, access: AccessMode) -> HarnessResult<Started> {
         ensure_policy(&params, access)?;
-        let version = self.version().await?;
-        if version_status(&version) != VersionStatus::Supported {
-            return Err(HarnessFailure::new(
-                code::UNSUPPORTED_VERSION,
-                "HoH requires Pi CLI 1.6.1 or later in the 1.6 series.",
-            ));
-        }
+        self.require_supported_version().await?;
         let mut directories = tokio::fs::DirBuilder::new();
         directories.recursive(true).mode(0o700);
         directories
@@ -319,6 +329,103 @@ impl PiHarness {
             events,
         })
     }
+
+    async fn title(&self, request: TitleRequest) -> HarnessResult<String> {
+        let model = request.model.as_deref().unwrap_or_default();
+        let (provider, id) = model
+            .split_once('/')
+            .filter(|(provider, id)| !provider.is_empty() && !id.is_empty())
+            .ok_or_else(|| {
+                HarnessFailure::new(code::HARNESS, "The chat's Pi model is unavailable.")
+            })?;
+        if request.prompt.trim().is_empty() || request.prompt.len() > TITLE_INPUT_MAX_BYTES {
+            return Err(HarnessFailure::new(
+                code::PROTOCOL,
+                "Invalid Pi title input.",
+            ));
+        }
+
+        tokio::time::timeout(TIMEOUT, async {
+            let _slot = TITLE_SLOT.acquire().await.map_err(|_| {
+                HarnessFailure::new(code::CLOSED, "The Pi title generator is unavailable.")
+            })?;
+            self.require_supported_version().await?;
+            let directory = tempfile::Builder::new()
+                .prefix("hoh-pi-title-")
+                .tempdir()
+                .map_err(|error| {
+                    HarnessFailure::new(
+                        code::IO,
+                        format!("Could not prepare an isolated Pi title directory: {error}"),
+                    )
+                })?;
+            let mut spec = self.spec(directory.path());
+            spec.args.extend(
+                [
+                    "--no-session",
+                    "--no-tools",
+                    "--no-skills",
+                    "--no-prompt-templates",
+                    "--no-context-files",
+                    "--system-prompt",
+                    TITLE_SYSTEM_PROMPT,
+                ]
+                .map(str::to_owned),
+            );
+            let (session, mut events) = PiSession::spawn(&spec)?;
+            let state = session.call(json!({"type":"get_state"})).await?;
+            if state["messageCount"].as_u64() != Some(0) || !state["sessionFile"].is_null() {
+                return Err(HarnessFailure::new(
+                    code::POLICY_UNAVAILABLE,
+                    "Pi did not start an empty, temporary title session.",
+                ));
+            }
+            let selected = session
+                .call(json!({"type":"set_model","provider":provider,"modelId":id}))
+                .await?;
+            if model_id(&selected).as_deref() != Some(model) {
+                return Err(HarnessFailure::new(
+                    code::PROTOCOL,
+                    "Pi did not select the chat's model for naming.",
+                ));
+            }
+            session
+                .call(json!({"type":"set_thinking_level","level":"off"}))
+                .await?;
+            session
+                .prompt(PromptParams {
+                    text: request.prompt,
+                    turn_id: "title".into(),
+                    ..Default::default()
+                })
+                .await?;
+
+            let mut answer = String::new();
+            while let Some(event) = events.recv().await {
+                match event {
+                    HarnessEvent::TextFinal { text, .. } => answer = text,
+                    HarnessEvent::TurnCompleted { .. } => return parse_title(&answer),
+                    HarnessEvent::TurnFailed { error, .. } => return Err(error),
+                    HarnessEvent::TurnAborted { .. } | HarnessEvent::SessionEnded { .. } => break,
+                    HarnessEvent::ItemStarted { .. }
+                    | HarnessEvent::ApprovalRequested { .. }
+                    | HarnessEvent::QuestionAsked { .. } => {
+                        return Err(HarnessFailure::new(
+                            code::PROTOCOL,
+                            "The Pi title request attempted to use a tool or ask a question.",
+                        ));
+                    }
+                    _ => {}
+                }
+            }
+            Err(HarnessFailure::new(
+                code::CLOSED,
+                "The Pi title request ended without a title.",
+            ))
+        })
+        .await
+        .map_err(|_| HarnessFailure::new(code::TIMEOUT, "The Pi title request timed out."))?
+    }
 }
 
 fn pi_commands_from(result: Value) -> HarnessResult<HarnessCommands> {
@@ -372,6 +479,11 @@ impl ExternalHarness for PiHarness {
         Box::pin(async move { harness.workspace_commands(&cwd).await })
     }
 
+    fn generate_title(&self, request: TitleRequest) -> BoxFuture<'static, HarnessResult<String>> {
+        let harness = self.clone();
+        Box::pin(async move { harness.title(request).await })
+    }
+
     fn discover(&self) -> BoxFuture<'static, HarnessResult<Discovery>> {
         let harness = self.clone();
         Box::pin(async move { Ok(harness.discovery().await.0) })
@@ -415,6 +527,22 @@ impl ExternalHarness for PiHarness {
     fn stop_ends_process(&self) -> bool {
         true
     }
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TitleOutput {
+    title: String,
+}
+
+fn parse_title(answer: &str) -> HarnessResult<String> {
+    serde_json::from_str::<TitleOutput>(answer)
+        .ok()
+        .map(|answer| answer.title.trim().to_owned())
+        .filter(|title| {
+            !title.is_empty() && title.len() <= 256 && !title.chars().any(char::is_control)
+        })
+        .ok_or_else(|| HarnessFailure::new(code::PROTOCOL, "Pi returned an invalid chat title."))
 }
 
 fn ensure_policy(params: &StartParams, access: AccessMode) -> HarnessResult<()> {

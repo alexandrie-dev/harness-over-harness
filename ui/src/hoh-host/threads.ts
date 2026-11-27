@@ -5,6 +5,7 @@
 import { EXECUTOR_INSTANCES, runtimeModeOf, type HohAccessMode, type HohExecutor, type T3InteractionMode } from './config.ts';
 import type { EngineQuestion } from './engine.ts';
 import { providerFailure } from './errors.ts';
+import { shortTitleFromPrompt, titleSource } from './chat-title.ts';
 import { isSecretaryThreadId, readSecretaryPromptPrefix } from './secretary-chat.ts';
 import { readThreadOrganization, type ThreadOrganization } from './thread-metadata.ts';
 import type { SearchableMessage, SearchableTurnItem } from './thread-search.ts';
@@ -154,6 +155,7 @@ const isSubagentCall = (item: Item) => item.type === 'dynamic_tool' && ['task', 
 export interface ThreadSeed {
   readonly id: string;
   readonly title?: string;
+  readonly automaticTitle?: boolean;
   readonly createdAt: number;
   readonly updatedAt?: number;
   readonly model: string;
@@ -168,6 +170,7 @@ export interface ThreadSeed {
 export class ThreadModel {
   readonly id: string;
   title: string;
+  automaticTitlePending: boolean;
   createdAt: number;
   updatedAt: number;
   model: string;
@@ -252,6 +255,7 @@ export class ThreadModel {
   constructor(seed: ThreadSeed) {
     this.id = seed.id;
     this.title = seed.title ?? '';
+    this.automaticTitlePending = seed.automaticTitle ?? (!this.title.trim() || /^(?:new chat|new thread)$/i.test(this.title.trim()));
     this.createdAt = seed.createdAt;
     this.updatedAt = seed.updatedAt ?? seed.createdAt;
     this.model = seed.model;
@@ -393,7 +397,14 @@ export class ThreadModel {
     const hasSavedSend = typeof saved === 'number' && Number.isFinite(saved) && saved > 0 && saved <= at;
     // Legacy journals have no local send time. The user message event is the
     // earliest durable evidence of this particular prompt.
-    this.addUserMessage(messageId, value, hasSavedSend ? saved : at);
+    const prompt = this.addUserMessage(messageId, value, hasSavedSend ? saved : at);
+    if (this.automaticTitlePending || !this.title) {
+      const title = shortTitleFromPrompt(prompt);
+      if (title) {
+        if (!this.title) this.title = title;
+        this.automaticTitlePending = false;
+      }
+    }
     this.currentRun()!.lastJournalAt = at;
     if (hasSavedSend) {
       this.currentRun()!.useEngineStartOnStop = true;
@@ -425,7 +436,6 @@ export class ThreadModel {
       previous.status = 'completed';
       previous.completedAt = this.inferredEnd(previous, at);
     }
-    if (!this.title) this.title = value.split('\n')[0].trim().slice(0, 80);
     const run: Run = { id: 'run-' + messageId, ordinal: this.runs.length + 1, model: this.model, userMessageId: messageId, status: 'running', requestedAt: at, startedAt: at, completedAt: null };
     this.runs.push(run);
     this.runsById.set(run.id, run);
@@ -443,6 +453,7 @@ export class ThreadModel {
       createdBy: 'user', creationSource: 'web', messageId, inputIntent: 'turn_start', text: value, attachments,
     });
     this.running = true;
+    return value;
   }
 
   private assistantText(key: string, messageId: string, value: string, at: number, parentItemId: string | null) {
@@ -734,11 +745,18 @@ export class ThreadModel {
   }
 
   /** One durable session event of the engine (`session/events` or `session.event`). Returns whether it changed the thread. */
-  applyEvent(event: { seq?: unknown; type?: unknown; time?: unknown; data?: unknown }): boolean {
+  applyEvent(event: { seq?: unknown; type?: unknown; time?: unknown; data?: unknown }, acceptEngineTitle = false): boolean {
     if (!Number.isSafeInteger(event?.seq) || this.seen.has(event.seq as number)) return false;
     this.seen.add(event.seq as number);
     const at = typeof event.time === 'number' && event.time > 0 ? event.time : Date.now();
     const data = record(event.data);
+    if (event.type === 'session/title') {
+      const title = text(data.title).trim();
+      if (!acceptEngineTitle || !title || title === this.title) return false;
+      this.title = title;
+      this.automaticTitlePending = false;
+      return true;
+    }
     // Keep the last durable event of an open run for legacy histories missing turn/end.
     // A new user message/start can belong to the next run, so do not assign it here.
     const current = this.currentRun();
@@ -1028,6 +1046,18 @@ export class ThreadModel {
   latestRunCompletion() { return this.currentRun()?.completedAt ?? null; }
   latestUserActivity() { return this.messages.findLast(message => message.role === 'user')?.createdAt ?? this.createdAt; }
   userMessageCount() { return this.userMessages; }
+  recentTitlePrompts(): string[] {
+    const accepted = new Set(this.echoed.values());
+    const prompts: string[] = [];
+    for (const message of this.searchableMessages()) {
+      if (message.role !== 'user' || !accepted.has(message.id)) continue;
+      const source = titleSource(message.text, 1_000);
+      if (!source) continue;
+      prompts.push(source);
+      if (prompts.length === 6) break;
+    }
+    return prompts.reverse();
+  }
   editableUserMessage(id: string) {
     const source = this.editableMessages.get(id);
     const message = this.messagesById.get(id);

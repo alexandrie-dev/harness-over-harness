@@ -99,6 +99,10 @@ body:has([data-slot="dialog-popup"].hoh-quick-view) [data-hoh-home-body] + .chat
 .hoh-home__cards--compact .hoh-card__title { display: block; font-size: 0.8125rem; min-width: 0; text-overflow: ellipsis; white-space: nowrap; }
 .hoh-card__time { margin-inline-start: auto; white-space: nowrap; color: var(--muted-foreground); font-size: 0.6875rem; }
 .hoh-card > .hoh-card__archive { pointer-events: auto; }
+.hoh-card > .hoh-card__rename { position: absolute; inset-block-start: 8px; inset-inline-end: 8px; pointer-events: auto; }
+.hoh-home__cards--compact .hoh-card > .hoh-card__rename { position: relative; inset-block-start: auto; inset-inline-end: auto; }
+.hoh-home__cards--compact .hoh-card:not(:has(.hoh-card__time)) > .hoh-card__rename { margin-inline-start: auto; }
+.hoh-card--plugin-creator:has(.hoh-card__rename) .hoh-card__title { padding-inline-end: 26px; }
 .hoh-card__where { color: var(--muted-foreground); font-size: 0.75rem; }
 .hoh-card__state { margin-top: auto; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; font-size: 0.75rem; color: var(--muted-foreground); }
 .hoh-card__elapsed { margin-inline-start: auto; white-space: nowrap; }

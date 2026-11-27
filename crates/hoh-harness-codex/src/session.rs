@@ -2,17 +2,20 @@
 
 use std::collections::{HashMap, HashSet, hash_map::Entry};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 use std::time::Duration;
 
 use futures_util::future::BoxFuture;
 use hoh_external_harness::{
     ApprovalDecision, EndReason, FileChange, FileChangeKind, Frame, HarnessAction, HarnessEvent,
     HarnessFailure, HarnessQuestion, HarnessResponse, HarnessSession, ItemOutcome, PromptParams,
-    QuestionOption, RespondParams, Supervisor, code,
+    QuestionOption, RespondParams, Supervisor, TitleRequest, code,
 };
 use serde_json::{Map, Value, json};
 use tokio::sync::{mpsc, oneshot};
+
+use crate::harness::CodexConfig;
+use crate::title::{self, TitleRoute};
 
 /// Explicit per-process trust masks previously trusted parent entries for an untrusted folder.
 pub(crate) fn project_trust(cwd: &std::path::Path, trusted: bool) -> Map<String, Value> {
@@ -268,8 +271,10 @@ struct Inner {
     trusted: bool,
     model: Option<String>,
     effort: Option<String>,
+    title_route: OnceLock<TitleRoute>,
 }
 
+#[derive(Clone)]
 pub(crate) struct CodexSession {
     inner: Arc<Inner>,
     owner: Arc<Owner>,
@@ -329,6 +334,7 @@ impl CodexSession {
             trusted,
             model,
             effort,
+            title_route: OnceLock::new(),
         });
         tokio::spawn(read_loop(inner.clone(), frames));
         let session = Arc::new(Self { inner, owner });
@@ -354,6 +360,7 @@ impl CodexSession {
     pub(crate) async fn start(
         supervisor: Supervisor,
         settings: StartSettings,
+        config: CodexConfig,
     ) -> Result<(Arc<Self>, mpsc::Receiver<HarnessEvent>, String, bool), HarnessFailure> {
         let StartSettings {
             event_queue,
@@ -365,7 +372,7 @@ impl CodexSession {
             effort,
             resume,
         } = settings;
-        let (session, events, _) = Self::open(
+        let (session, events, initialization) = Self::open(
             supervisor,
             event_queue,
             request_timeout,
@@ -377,6 +384,20 @@ impl CodexSession {
         )
         .await?;
         let mut params = session.thread_policy();
+        let title_route = if let Some(version) = crate::version::from_initialize(&initialization)
+            && title::supports_environment(&config)
+        {
+            tokio::time::timeout(title::PROBE_TIMEOUT, session.read_title_auth_store())
+                .await
+                .ok()
+                .and_then(Result::ok)
+                .map(|auth_store| TitleRoute::new(config, version, auth_store))
+        } else {
+            None
+        };
+        if let Some(route) = &title_route {
+            route.pin(&mut params["config"]);
+        }
         let requested_resume = resume.clone();
         let resumed = requested_resume.is_some();
         let method = if let Some(thread_id) = resume {
@@ -430,6 +451,11 @@ impl CodexSession {
             ));
         }
         lock(&session.inner.state).thread_id.clone_from(&thread_id);
+        if result["modelProvider"].as_str() == Some("openai")
+            && let Some(title_route) = title_route
+        {
+            let _ = session.inner.title_route.set(title_route);
+        }
         Ok((session, events, thread_id, resumed))
     }
 
@@ -453,6 +479,65 @@ impl CodexSession {
             .request("skills/list", json!({ "cwds": [cwd] }))
             .await;
         session.terminate_now(Duration::from_millis(300)).await;
+        result
+    }
+
+    async fn read_title_auth_store(&self) -> Result<&'static str, HarnessFailure> {
+        let config = self
+            .request(
+                "config/read",
+                json!({"cwd": self.inner.cwd, "includeLayers": false}),
+            )
+            .await?;
+        let requirements = self.request("configRequirements/read", json!({})).await?;
+        title::verified_auth_store(&config, &requirements)
+    }
+
+    pub(crate) fn title_workspace(&self) -> (&str, bool) {
+        (&self.inner.cwd, self.inner.trusted)
+    }
+
+    pub(crate) fn is_running(&self) -> bool {
+        !self.inner.terminated.load(Ordering::SeqCst) && !lock(&self.inner.state).closed
+    }
+
+    pub(crate) async fn title_account(&self) -> Result<Value, HarnessFailure> {
+        let account = self
+            .request("account/read", json!({"refreshToken": false}))
+            .await?;
+        title::verified_account(account)
+    }
+
+    pub(crate) async fn probe_title_route(
+        supervisor: Supervisor,
+        request_timeout: Duration,
+        cwd: String,
+        trusted: bool,
+        expected_version: &str,
+    ) -> Result<(&'static str, Value), HarnessFailure> {
+        let (session, _events, initialization) = Self::open(
+            supervisor,
+            1,
+            request_timeout,
+            mode_settings(hoh_external_harness::AccessMode::Confirm),
+            cwd,
+            trusted,
+            None,
+            None,
+        )
+        .await?;
+        let result = async {
+            if crate::version::from_initialize(&initialization).as_deref() != Some(expected_version)
+            {
+                return Err(title::unavailable());
+            }
+            Ok((
+                session.read_title_auth_store().await?,
+                session.title_account().await?,
+            ))
+        }
+        .await;
+        session.terminate_now(Duration::from_millis(200)).await;
         result
     }
 
@@ -676,6 +761,21 @@ fn interrupt_failure_is_current(inner: &Inner, context: &RequestContext) -> bool
 }
 
 impl HarnessSession for CodexSession {
+    fn generate_title(
+        &self,
+        request: TitleRequest,
+    ) -> BoxFuture<'static, Result<String, HarnessFailure>> {
+        let session = self.clone();
+        Box::pin(async move {
+            let route = session
+                .inner
+                .title_route
+                .get()
+                .ok_or_else(title::unavailable)?;
+            route.generate(request, &session).await
+        })
+    }
+
     fn prompt(&self, params: PromptParams) -> BoxFuture<'static, Result<(), HarnessFailure>> {
         let session = Arc::new(Self {
             inner: self.inner.clone(),
