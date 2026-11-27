@@ -207,6 +207,12 @@
           "markdownDescription": "Enables the confirm_external_image command without any pre-configured scope."
         },
         {
+          "description": "Enables the copy_file_path command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-copy-file-path",
+          "markdownDescription": "Enables the copy_file_path command without any pre-configured scope."
+        },
+        {
           "description": "Enables the engine_request command without any pre-configured scope.",
           "type": "string",
           "const": "allow-engine-request",
@@ -367,6 +373,12 @@
           "type": "string",
           "const": "deny-confirm-external-image",
           "markdownDescription": "Denies the confirm_external_image command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the copy_file_path command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-copy-file-path",
+          "markdownDescription": "Denies the copy_file_path command without any pre-configured scope."
         },
         {
           "description": "Denies the engine_request command without any pre-configured scope.",

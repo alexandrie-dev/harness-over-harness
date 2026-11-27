@@ -46,6 +46,8 @@ fn main() {
             hoh_desktop::external_ui::update_external_ui_panel,
             #[cfg(target_os = "linux")]
             hoh_desktop::clipboard_image::read_pasted_image,
+            #[cfg(target_os = "linux")]
+            hoh_desktop::native::copy_file_path,
             hoh_desktop::native::open_link,
             hoh_desktop::native::question_answer,
             hoh_desktop::native::question_secret_answer,

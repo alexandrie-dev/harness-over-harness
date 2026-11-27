@@ -545,15 +545,87 @@ function markdownHtml(code: string): string {
   const componentState = {`],
     ['    const chip = fileLinkChip(fileLinkMeta, copyMarkdown, normalizedHref);',
       '    const chip = fileLinkChip(fileLinkMeta, copyMarkdown, normalizedHref, _title === "hoh-preview");'],
+    ['  const searchProjectEntries = useAtomQueryRunner(projectEnvironment.searchEntries, {',
+      '  const clipboardSearchRegistry = useContext(RegistryContext);\n  const searchProjectEntries = useAtomQueryRunner(projectEnvironment.searchEntries, {'],
+    ['  const findWorkspaceFileMatch = async (fileLinkMeta: MarkdownFileLinkMeta) => {', `  const findWorkspaceFileMatch = async (fileLinkMeta: MarkdownFileLinkMeta, signal?: AbortSignal) => {
+    signal?.throwIfAborted();`],
+    [`    const searchRoot = async (root: string) => {
+      const rootQuery = workspaceLinkLookupQuery(workspaceRelativePath, root);
+      if (rootQuery === null) return { root, entries: [] };
+      const result = await searchProjectEntries({
+        environmentId,
+        input: {
+          cwd: root,
+          query: rootQuery,
+          limit: WORKSPACE_BASENAME_LOOKUP_LIMIT,
+          kind: "file",
+        },
+      });
+      return { root, entries: result._tag === "Success" ? result.value.entries : [] };
+    };`, `    const searchRoot = async (root: string) => {
+      signal?.throwIfAborted();
+      const rootQuery = workspaceLinkLookupQuery(workspaceRelativePath, root);
+      if (rootQuery === null) return { root, entries: [] };
+      const target = {
+        environmentId,
+        input: {
+          cwd: root,
+          query: rootQuery,
+          limit: WORKSPACE_BASENAME_LOOKUP_LIMIT,
+          kind: "file" as const,
+        },
+      };
+      const search = async () => {
+        const result = await searchProjectEntries(target);
+        return { root, entries: result._tag === "Success" ? result.value.entries : [] };
+      };
+      if (!signal) return search();
+
+      const key = JSON.stringify([environmentId, root]);
+      let previous = clipboardWorkspaceScans.get(key);
+      while (previous !== undefined) {
+        const queryAtom = projectEnvironment.searchEntries(target);
+        const node = clipboardSearchRegistry.getNodes().get(queryAtom.initialValueTarget ?? queryAtom);
+        const cached = node?.currentState() === "valid" ? node.valueOption() : undefined;
+        const result = cached?._tag === "Some" ? cached.value : undefined;
+        // Match the 15-second searchEntries freshness window.
+        if (result?._tag === "Success" && !result.waiting && Date.now() - result.timestamp < 15_000) {
+          return { root, entries: result.value.entries };
+        }
+        await previous.catch(() => undefined);
+        signal.throwIfAborted();
+        previous = clipboardWorkspaceScans.get(key);
+      }
+      const scan = search();
+      clipboardWorkspaceScans.set(key, scan);
+      try {
+        return await scan;
+      } finally {
+        clipboardWorkspaceScans.delete(key);
+      }
+    };`],
+    ['    const own = await searchRoot(cwd);', `    const own = await searchRoot(cwd);
+    signal?.throwIfAborted();`],
+    ['    if (projectMatch !== null || agentRoots.length === 0) return projectMatch;', `    signal?.throwIfAborted();
+    if (projectMatch !== null || agentRoots.length === 0) return projectMatch;`],
+    ['    const resolveHostPath = () =>', '    const resolveHostPath = (signal?: AbortSignal) =>'],
+    ['        findWorkspaceMatch: () => findWorkspaceFileMatch(fileLinkMeta),',
+      '        findWorkspaceMatch: () => findWorkspaceFileMatch(fileLinkMeta, signal),'],
+    ['        resolveCopyPaths={async () =>\n          markdownFileCopyPaths(fileLinkMeta, await resolveHostPath(), cwd)',
+      '        resolveCopyPaths={async (signal) =>\n          markdownFileCopyPaths(fileLinkMeta, await resolveHostPath(signal), cwd)'],
   ], 'import { isTauri } from "@tauri-apps/api/core";\n'
     + `import { HtmlDocument as HohHtmlDocument } from ${JSON.stringify(preview)};\n`
-    + `import { HOH_ENVIRONMENT_ID } from ${JSON.stringify(config)};\n`);
+    + `import { HOH_ENVIRONMENT_ID } from ${JSON.stringify(config)};\n`
+    + 'import { RegistryContext } from "@effect/atom-react";\n'
+    + 'import { useContext } from "react";\n'
+    + 'const clipboardWorkspaceScans = new Map<string, Promise<unknown>>();\n');
 }
 
-function markdownHtmlFileLink(code: string): string {
+function markdownFileLink(code: string): string {
   return anchorPatch('MarkdownFileLink.tsx', code, [
     ['  onOpenInPanel:', '  onPreviewHtml?: (() => void) | undefined;\n  onOpenInPanel:'],
     ['  onOpenInPanel,', '  onPreviewHtml,\n  onOpenInPanel,'],
+    ['  resolveCopyPaths: () =>', '  resolveCopyPaths: (signal?: AbortSignal) =>'],
     ['          hasPrimaryAction ? (', '          hasPrimaryAction || onPreviewHtml ? ('],
     ['                if (useBrowserPrimaryAction) {', `                if (onPreviewHtml) {
                   onPreviewHtml();
@@ -562,7 +634,111 @@ function markdownHtmlFileLink(code: string): string {
                 if (useBrowserPrimaryAction) {`],
     ['    previous.onOpenInPanel === next.onOpenInPanel &&',
       '    previous.onPreviewHtml === next.onPreviewHtml &&\n    previous.onOpenInPanel === next.onOpenInPanel &&'],
-  ]);
+    ['  const handleCopy = (resolveValue: () => Promise<string>, title: string) => {', `  const handleCopy = (
+    resolveValue: (() => Promise<string>) | { path: string } | { error: unknown },
+    title: string,
+  ) => {`],
+    ['    if (typeof window === "undefined" || !navigator.clipboard?.writeText) {', `    if (typeof resolveValue !== "function") {
+      const request = ++latestNativePathCopy;
+      if ("error" in resolveValue) {
+        reportCopyFailure(resolveValue.error);
+      } else {
+        void invoke<void>("copy_file_path", {
+          path: formatFilePathForClipboard(resolveValue.path, targetPath),
+        }).catch((error: unknown) => {
+          if (request === latestNativePathCopy) reportCopyFailure(error);
+        });
+      }
+      return;
+    }
+    if (typeof window === "undefined" || !navigator.clipboard?.writeText) {`],
+    ['    void Promise.all([write, value]).catch((error) => {', `    void Promise.all([write, value]).catch(reportCopyFailure);
+
+    function reportCopyFailure(error: unknown) {`],
+    ['    });\n  };\n\n  const showFileContextMenu', '    }\n  };\n\n  const showFileContextMenu'],
+    ['          title: failureTitle,\n          description: error instanceof Error ? error.message : gt("An error occurred."),', `          title: failureTitle,
+          description:
+            typeof error === "string" ? error : error instanceof Error ? error.message : gt("An error occurred."),`],
+    ['    try {\n      const copyItems', `    const nativeCopy: {
+      lookupController: AbortController;
+      result?: { paths: Awaited<ReturnType<typeof resolveCopyPaths>> } | { error: unknown };
+    } | undefined = isTauri() && navigator.platform.startsWith("Linux")
+      ? { lookupController: new AbortController() }
+      : undefined;
+
+    try {
+      const copyItems`],
+    ['      const clicked = await api.contextMenu.show(', `      if (nativeCopy) {
+        cancelPendingNativeFileMenu?.();
+        const request = new AbortController();
+        const cancelMenu = () => {
+          nativeCopy.lookupController.abort();
+          request.abort();
+        };
+        cancelPendingNativeFileMenu = cancelMenu;
+        const capture = { capture: true, signal: request.signal };
+        window.addEventListener("blur", cancelMenu, { signal: request.signal });
+        window.addEventListener("pointerdown", cancelMenu, capture);
+        window.addEventListener("contextmenu", cancelMenu, capture);
+        window.addEventListener("focusin", cancelMenu, capture);
+        window.addEventListener("keydown", (event) => {
+          if (
+            event.defaultPrevented || event.isComposing || event.altKey || event.ctrlKey || event.metaKey
+          ) return;
+          if (event.key === "Escape") {
+            event.preventDefault();
+            event.stopPropagation();
+          } else if (event.key !== "Tab") {
+            return;
+          }
+          cancelMenu();
+        }, capture);
+        let timeout: number | undefined;
+        const deadline = new Promise<void>((resolve) => {
+          timeout = window.setTimeout(resolve, 150);
+          request.signal.addEventListener("abort", () => resolve(), { once: true });
+        });
+        const lookup = (async () => {
+          try {
+            nativeCopy.result = { paths: await resolveCopyPaths(nativeCopy.lookupController.signal) };
+          } catch (error) {
+            nativeCopy.result = { error };
+          }
+        })();
+        await Promise.race([lookup, deadline]);
+        window.clearTimeout(timeout);
+        const canceled = request.signal.aborted;
+        request.abort();
+        if (cancelPendingNativeFileMenu === cancelMenu) cancelPendingNativeFileMenu = undefined;
+        if (canceled || !document.hasFocus()) return;
+      }
+      const clicked = await api.contextMenu.show(`],
+    [`        handleCopy(
+          () =>
+            resolveCopyPaths().then((paths) =>
+              clicked === "copy-relative" ? paths.relativePath : paths.fullPath,
+            ),
+          clicked === "copy-relative" ? "Relative path" : "Full path",
+        );`, `        const relative = clicked === "copy-relative";
+        const pathKey = relative ? "relativePath" : "fullPath";
+        handleCopy(
+          nativeCopy === undefined
+            ? () => resolveCopyPaths().then((paths) => paths[pathKey])
+            : nativeCopy.result === undefined
+              ? { error: gt("The file path is still being resolved. Try copying it again.") }
+              : "error" in nativeCopy.result
+                ? nativeCopy.result
+                : { path: nativeCopy.result.paths[pathKey] },
+          relative ? "Relative path" : "Full path",
+        );`],
+    ['        { operation: "show-file-context-menu", target: targetPath },\n        cause,\n      );\n    }',
+      `        { operation: "show-file-context-menu", target: targetPath },
+        cause,
+      );
+    } finally {
+      nativeCopy?.lookupController.abort();
+    }`],
+  ], 'import { invoke, isTauri } from "@tauri-apps/api/core";\nlet latestNativePathCopy = 0;\nlet cancelPendingNativeFileMenu: (() => void) | undefined;\n');
 }
 
 function markdownHtmlMarker(code: string): string {
@@ -748,7 +924,7 @@ function hohT3(): Plugin {
       if (id === resolve(T3_WEB, 'components/settings/SettingsPanels.tsx')) return { code: chatSettings(code), map: null };
       if (id === resolve(T3_WEB, 'components/ComposerPromptEditorTiptap.tsx')) return { code: editorPaste(code), map: null };
       if (id === resolve(T3_WEB, 'components/ChatMarkdown.tsx')) return { code: markdownHtml(code), map: null };
-      if (id === resolve(T3_WEB, 'components/chat/MarkdownFileLink.tsx')) return { code: markdownHtmlFileLink(code), map: null };
+      if (id === resolve(T3_WEB, 'components/chat/MarkdownFileLink.tsx')) return { code: markdownFileLink(code), map: null };
       if (id === resolve(T3_BASE, 'shared/markdownPipeline.ts')) return { code: markdownHtmlMarker(code), map: null };
       if (id === resolve(T3_WEB, 'routes/_chat.index.tsx')) return { code: chatIndexHome(code), map: null };
       if (id === resolve(T3_WEB, 'components/ChatView.tsx')) return { code: chatViewHome(code), map: null };

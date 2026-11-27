@@ -629,6 +629,72 @@ fn trusted_app_origin(url: &tauri::Url) -> bool {
     url.port().is_none() && trusted
 }
 
+#[cfg(target_os = "linux")]
+#[tauri::command]
+pub fn copy_file_path(webview: tauri::Webview, path: String) -> Result<(), String> {
+    use gtk::{gdk, glib::translate::ToGlibPtr, prelude::*};
+
+    if webview.label() != "main" || !webview.url().is_ok_and(|url| trusted_app_origin(&url)) {
+        return Err("Copying a file path is available only in the main HoH window.".into());
+    }
+    if path.is_empty() || path.contains('\0') {
+        return Err("Invalid file path.".into());
+    }
+
+    // This synchronous command runs on the GTK thread.
+    let window = webview
+        .window()
+        .gtk_window()
+        .map_err(|_| "Could not open the clipboard.".to_owned())?;
+    let clipboard = window.clipboard(&gdk::SELECTION_CLIPBOARD);
+    let is_x11 = window.display().type_().name() == "GdkX11Display";
+    let target_names: &[&str] = if is_x11 {
+        &[
+            "UTF8_STRING",
+            "COMPOUND_TEXT",
+            "TEXT",
+            "STRING",
+            "text/plain;charset=utf-8",
+            "text/plain",
+        ]
+    } else {
+        &["text/plain;charset=utf-8", "text/plain", "UTF8_STRING"]
+    };
+    let mut targets: Vec<_> = target_names
+        .iter()
+        .map(|target| gtk::TargetEntry::new(target, gtk::TargetFlags::empty(), 0))
+        .collect();
+    if is_x11 && let (false, Some(charset)) = gtk::glib::charset() {
+        targets.insert(
+            targets.len() - 1,
+            gtk::TargetEntry::new(
+                &format!("text/plain;charset={charset}"),
+                gtk::TargetFlags::empty(),
+                0,
+            ),
+        );
+    }
+    if !window.is_active() {
+        return Err("Focus the HoH window and try copying the file path again.".into());
+    }
+    if !clipboard.set_with_data(&targets, move |_, selection, _| {
+        if is_x11 {
+            selection.set_text(&path);
+        } else {
+            selection.set(&selection.target(), 8, path.as_bytes());
+        }
+    }) {
+        return Err("Could not write to the clipboard.".into());
+    }
+    if is_x11 {
+        // SAFETY: The clipboard is live on the GTK thread, and GTK accepts null for all targets.
+        unsafe {
+            gtk::ffi::gtk_clipboard_set_can_store(clipboard.to_glib_none().0, std::ptr::null(), 0);
+        }
+    }
+    Ok(())
+}
+
 /// The chat composer captures audio in the trusted application view. Preview documents
 /// have their own origin and a sandboxed frame. Camera and screen permissions use defaults.
 pub fn webview_permission(

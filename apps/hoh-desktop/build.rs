@@ -17,6 +17,7 @@ fn main() {
             "read_image_asset",
             "confirm_external_image",
             "read_pasted_image",
+            "copy_file_path",
             "preview_html",
             "list_external_ui_plugins",
             "install_external_ui_plugin",
