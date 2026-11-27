@@ -137,7 +137,7 @@ test('handshake: config snapshot, probe, settings, ping; Claude and Codex are of
   assert.equal(first.version, 1);
   assert.equal(first.config.environment.environmentId, 'hoh-local');
   assert.equal(first.config.environment.orchestrationProtocolVersion, 2);
-  assert.deepEqual(first.config.providers.map(provider => provider.instanceId), ['claudeAgent', 'codex', 'pi']);
+  assert.deepEqual(first.config.providers.map(provider => provider.instanceId), ['claudeAgent', 'codex', 'pi', 'kimi']);
   assert.deepEqual(first.config.providers[0].models.map(model => model.slug), ['claude-sonnet', 'claude-opus']);
   assert.equal(first.config.providers[0].status, 'ready');
   assert.deepEqual(first.config.providers[0].supportedRuntimeModes, ['approval-required', 'auto-accept-edits', 'auto', 'full-access']);
@@ -1892,6 +1892,75 @@ test('a restored global Codex selection remains the default provider and model',
   const { client } = connect(engine);
   const config = await client.call('server.getConfig', {});
   assert.deepEqual(config.settings.defaultModelSelection, { instanceId: 'codex', model: 'gpt-6-sol' });
+});
+
+test('Kimi Code exposes its native default after a session-free login check', async () => {
+  const engine = new FakeEngine({ kimiDiscovery: {
+    executor: 'kimi', installed: true, version: '2.5.3', versionStatus: 'supported',
+    auth: 'authenticated', models: [],
+  } });
+  const { host, client } = connect(engine);
+  try {
+    const { providers: [kimi] } = await client.call('server.refreshProviders', { instanceId: 'kimi' });
+    assert.equal(kimi.status, 'ready');
+    assert.equal(kimi.models[0].slug, 'default');
+    assert.equal(kimi.models[0].name, 'Kimi Code');
+  } finally {
+    host.stop();
+  }
+});
+
+test('Kimi advertises its models and binds a thread only with explicit Full access', async () => {
+  const executor = 'kimi';
+  const discovery = {
+    executor, installed: true, version: '2.5.3', versionStatus: 'supported', auth: 'authenticated',
+    models: [{ id: 'local/demo', displayName: 'Demo', isDefault: true, defaultEffort: 'off', effortLevels: [{ id: 'off' }, { id: 'high' }] }],
+  };
+  const providers = { [`${executor}Discovery`]: discovery };
+  const engine = new FakeEngine(providers);
+  const { host, client } = connect(engine);
+  const args = {
+    commandId: 'launch-external', threadId: 'external-conversation', projectId: 'hoh-project',
+    modelSelection: { instanceId: executor, model: 'local/demo', options: [{ id: 'reasoningEffort', value: 'high' }] },
+    interactionMode: 'default', workspaceStrategy: { type: 'root' },
+    initialMessage: { messageId: 'msg-external', text: 'Hello', attachments: [] },
+  };
+  try {
+    const config = await client.call('server.refreshProviders', { instanceId: executor });
+    const provider = config.providers.find(provider => provider.instanceId === executor);
+    assert.equal(provider.status, 'ready');
+    assert.deepEqual(provider.supportedRuntimeModes, ['full-access']);
+    assert.equal(provider.models[0].slug, 'local/demo');
+    assert.equal(provider.showInteractionModeToggle, false);
+    assert.deepEqual(provider.models[0].capabilities.optionDescriptors[0].options.map(option => option.id), ['off', 'high']);
+
+    await assert.rejects(client.call('orchestration.launchThread', { ...args, runtimeMode: 'approval-required' }), /Choose Full access/);
+    await assert.rejects(client.call('orchestration.launchThread', { ...args, interactionMode: 'plan', runtimeMode: 'full-access' }), /does not support Plan/);
+    assert.equal(engine.store.has(args.threadId), false);
+    const launched = await client.call('orchestration.launchThread', { ...args, runtimeMode: 'full-access' });
+    assert.equal(launched.projection.thread.providerInstanceId, executor);
+    assert.equal(engine.store.get(args.threadId).executor, executor);
+    assert.equal(engine.store.get(args.threadId).runtimeMode, 'full');
+    const live = await client.stream('orchestration.subscribeThread', { threadId: args.threadId });
+    await live.until(value => value.kind === 'snapshot' && value.projection.thread.runtimeMode === 'full-access');
+    const access = engine.requests.findIndex(r => r.method === 'hoh/executor/access/set' && r.params.executor === executor);
+    const prompt = engine.requests.findIndex(r => r.method === 'session/prompt' && r.params.sessionId === args.threadId);
+    assert(access >= 0 && prompt > access);
+    assert.equal(engine.requests[prompt].params.effort, 'high');
+
+    const restarted = connect(new FakeEngine({ ...providers, store: engine.store, access: engine.access }));
+    try {
+      const config = await restarted.client.call('server.getConfig', {});
+      assert.deepEqual(config.settings.defaultModelSelection, { instanceId: executor, model: 'local/demo' });
+      const snapshot = await restarted.client.call('orchestration.getThreadProjection', { threadId: args.threadId });
+      assert.equal(snapshot.thread.providerInstanceId, executor);
+      assert.equal(snapshot.thread.runtimeMode, 'full-access');
+    } finally {
+      restarted.host.stop();
+    }
+  } finally {
+    host.stop();
+  }
 });
 
 test('Pi advertises its models and binds a thread only with explicit Full access', async () => {

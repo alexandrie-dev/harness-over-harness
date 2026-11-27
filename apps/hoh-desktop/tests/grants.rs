@@ -1024,6 +1024,32 @@ fn codex_select_and_folder_are_main_window_actions_but_unknown_executors_are_not
     }
 }
 
+#[test]
+fn choosing_kimi_uses_the_same_main_window_grant_as_other_builtin_executors() {
+    let broker = broker();
+    let select = json!({"executor":"kimi","model":"default"});
+    let full = json!({"executor":"kimi","mode":"full"});
+    let folder = json!({"sessionId":"s-kimi","path":"/home/u/work"});
+    for (index, (method, params, executor)) in [
+        (SELECT, &select, None),
+        (ACCESS_SET, &full, None),
+        (FOLDER_SET, &folder, Some("kimi")),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        broker
+            .confirm_from_main_window(method, params, executor, NOW)
+            .unwrap();
+        arm(&broker, method, params, NOW);
+        assert!(is_signed(&begin(
+            &broker,
+            engine_request(method, params, &format!("kimi-{index}"), NOW + 5),
+            NOW + 5,
+        )));
+    }
+}
+
 const SELECT: &str = "hoh/executor/select";
 const FOLDER_SET: &str = "session/working-directory/set";
 

@@ -14,8 +14,16 @@ export const KEYBINDINGS_LOCATION = 'HoH window preferences';
 export const CLAUDE_INSTANCE_ID = 'claudeAgent';
 export const CODEX_INSTANCE_ID = 'codex';
 export const PI_INSTANCE_ID = 'pi';
-export const EXECUTOR_INSTANCES = { claude: CLAUDE_INSTANCE_ID, codex: CODEX_INSTANCE_ID, pi: PI_INSTANCE_ID } as const;
-export const HOH_EXECUTORS = ['claude', 'codex', 'pi'] as const;
+export const KIMI_INSTANCE_ID = 'kimi';
+export const EXECUTOR_INSTANCES = { claude: CLAUDE_INSTANCE_ID, codex: CODEX_INSTANCE_ID, pi: PI_INSTANCE_ID, kimi: KIMI_INSTANCE_ID } as const;
+export const HOH_EXECUTORS = ['claude', 'codex', 'pi', 'kimi'] as const;
+export const FULL_ACCESS_EXECUTORS = ['pi', 'kimi'] as const;
+export type FullAccessExecutor = typeof FULL_ACCESS_EXECUTORS[number];
+export const FULL_ACCESS_LABELS = { pi: 'Pi Agent', kimi: 'Kimi Code' } as const;
+
+export function isFullAccessExecutor(executor: unknown): executor is FullAccessExecutor {
+  return executor === 'pi' || executor === 'kimi';
+}
 /** T3's orchestration protocol (packages/contracts/src/environment.ts `ORCHESTRATION_PROTOCOL_VERSION`). */
 export const ORCHESTRATION_PROTOCOL_VERSION = 2;
 
@@ -238,8 +246,19 @@ export function codexModels(discovery: CodexDiscovery | null) {
   return nativeModels(discovery, 'Codex');
 }
 
-export function piModel(discovery: HarnessDiscovery | null, preferred?: unknown): string {
-  const models = nativeModels(discovery, 'Pi Agent');
+function fullAccessModels(executor: FullAccessExecutor, discovery: HarnessDiscovery | null) {
+  const label = FULL_ACCESS_LABELS[executor];
+  const models = nativeModels(discovery, label);
+  if (executor !== 'kimi' || !discovery?.models.length) return models;
+  const nativeDefault = models.find(model => model.isDefault) ?? models[0];
+  return models.some(model => model.slug === 'default') ? models : [
+    ...models,
+    { ...nativeDefault, slug: 'default', name: `${label} default`, isDefault: false },
+  ];
+}
+
+export function fullAccessModel(executor: FullAccessExecutor, discovery: HarnessDiscovery | null, preferred?: unknown): string {
+  const models = fullAccessModels(executor, discovery);
   return (models.find(model => model.slug === preferred) ?? models.find(model => model.isDefault) ?? models[0]).slug;
 }
 
@@ -293,14 +312,16 @@ export function codexProvider(discovery: CodexDiscovery | null, now: string, req
   };
 }
 
-export function piProvider(discovery: HarnessDiscovery | null, now: string, accessKnown = true) {
+export function fullAccessProvider(executor: FullAccessExecutor, discovery: HarnessDiscovery | null, now: string, accessKnown = true) {
+  const label = FULL_ACCESS_LABELS[executor];
   const ready = discovery?.installed === true && discovery.versionStatus === 'supported'
-    && discovery.models.length > 0 && !discovery.detail;
-  const message = discovery?.detail ?? (discovery === null ? 'Pi Agent discovery is unavailable.' : undefined);
+    && (executor === 'kimi' ? discovery.auth === 'authenticated' : discovery.models.length > 0)
+    && !discovery.detail;
+  const message = discovery?.detail ?? (discovery === null ? `${label} discovery is unavailable.` : undefined);
   return {
-    instanceId: PI_INSTANCE_ID,
-    driver: PI_INSTANCE_ID,
-    displayName: 'Pi Agent',
+    instanceId: executor,
+    driver: executor,
+    displayName: label,
     showInteractionModeToggle: false,
     supportedRuntimeModes: accessKnown ? ['full-access'] : [],
     supportsConversationRollback: false,
@@ -312,7 +333,7 @@ export function piProvider(discovery: HarnessDiscovery | null, now: string, acce
     auth: { status: discovery?.auth ?? 'unknown' },
     checkedAt: now,
     ...(message ? { message } : {}),
-    models: nativeModels(discovery, 'Pi Agent'),
+    models: fullAccessModels(executor, discovery),
     slashCommands: [],
     skills: [],
   };
@@ -367,13 +388,13 @@ export function serverSettings(
     // client-runtime/src/operations/projects.ts `isSourceControlProviderOffered`). HoH adds local folders.
     offeredSourceControlProviders: { github: false },
     defaultModelSelection: { instanceId, model },
-    // HoH manages the built-in Pi instance. T3 leaves unconfigured Pi instances disabled.
+    // HoH manages these instances. T3 leaves unconfigured external instances disabled.
     providerInstances: {
       ...windowPreferences?.providerInstances,
-      [PI_INSTANCE_ID]: {
-        ...windowPreferences?.providerInstances[PI_INSTANCE_ID as ProviderInstanceId],
-        driver: PI_INSTANCE_ID, enabled: true, config: { enabled: true },
-      },
+      ...Object.fromEntries(FULL_ACCESS_EXECUTORS.map(driver => [driver, {
+        ...windowPreferences?.providerInstances[driver as ProviderInstanceId],
+        driver, enabled: true, config: { enabled: true },
+      }])),
     },
     // The native T3 context-window component lives in Thread details and is opt-in by default.
     // HoH reports Claude usage, so keep that row visible without requiring a hidden Labs setting.
@@ -393,7 +414,7 @@ export interface ConfigInput {
   readonly availableEditors?: readonly EditorId[];
   readonly claudeDiscovery: ClaudeDiscovery | null;
   readonly codexDiscovery: CodexDiscovery | null;
-  readonly piDiscovery?: HarnessDiscovery | null;
+  readonly fullAccessDiscovery?: Readonly<Record<FullAccessExecutor, HarnessDiscovery | null>>;
   readonly discoveryFailure?: unknown;
   readonly codexDiscoveryFailure?: unknown;
   readonly defaultMode: HohAccessMode;
@@ -435,7 +456,8 @@ export function serverConfig(input: ConfigInput) {
   const model = input.defaultModel ?? ({
     [CLAUDE_INSTANCE_ID]: () => defaultClaudeModel(input.claudeDiscovery),
     [CODEX_INSTANCE_ID]: () => defaultCodexModel(input.codexDiscovery),
-    [PI_INSTANCE_ID]: () => piModel(input.piDiscovery ?? null),
+    [PI_INSTANCE_ID]: () => fullAccessModel('pi', input.fullAccessDiscovery?.pi ?? null),
+    [KIMI_INSTANCE_ID]: () => fullAccessModel('kimi', input.fullAccessDiscovery?.kimi ?? null),
   })[instanceId]();
   return {
     environment: environmentDescriptor(input.platform),
@@ -458,7 +480,8 @@ export function serverConfig(input: ConfigInput) {
     providers: [
       claudeProvider(input.claudeDiscovery, input.now, input.accessKnown !== false, input.discoveryFailure),
       codexProvider(input.codexDiscovery, input.now, input.codexDiscoveryFailure),
-      piProvider(input.piDiscovery ?? null, input.now, input.accessKnown !== false),
+      ...FULL_ACCESS_EXECUTORS.map(executor =>
+        fullAccessProvider(executor, input.fullAccessDiscovery?.[executor] ?? null, input.now, input.accessKnown !== false)),
     ].map(provider => presentProvider(provider, input.windowPreferences)),
     availableEditors: input.availableEditors ?? [],
     observability: {

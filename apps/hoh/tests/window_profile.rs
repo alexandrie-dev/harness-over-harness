@@ -61,6 +61,7 @@ fn window_profile_composes_every_required_engine_service() {
         "tool-ask-user",
         "tool-todo",
         "agent-loop",
+        "harness-kimi",
         "sdk-app-startup",
         "sdk-jsonrpc-server",
     ] {

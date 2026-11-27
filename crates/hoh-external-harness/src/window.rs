@@ -65,9 +65,10 @@ const SESSION_ACCESS_PAIRS_FILE: &str = "external-harness-session-access-pairs.j
 /// Codex selection for new conversations. Kept in a versioned sidecar so an older HoH ignores
 /// an executor it does not know instead of rejecting or restoring it from the legacy file.
 pub const CODEX_SELECTION_FILE: &str = "external-harness-codex-selection.json";
-const EXECUTOR_SELECTION_FILES: [(&str, &str); 2] = [
+const EXECUTOR_SELECTION_FILES: [(&str, &str); 3] = [
     ("codex", CODEX_SELECTION_FILE),
     ("pi", "external-harness-pi-selection.json"),
+    ("kimi", "external-harness-kimi-selection.json"),
 ];
 /// The file in the engine's profile folder that keeps the project folders the person added.
 pub const FOLDERS_FILE: &str = "workspace-folders.json";
@@ -1094,7 +1095,7 @@ impl Window {
                 // An unavailable external plugin is not evidence that the agent is built-in.
                 // Preserve an unknown binding for both the standard routes and a recorded
                 // channel plugin whose registration is currently absent.
-                if matches!(chosen.provider.as_str(), "claude" | "codex" | "pi")
+                if matches!(chosen.provider.as_str(), "claude" | "codex" | "pi" | "kimi")
                     || stored_executor_binding(&self.ctx, &id).await?.is_some()
                 {
                     (None, None, None)

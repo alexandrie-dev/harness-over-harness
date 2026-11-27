@@ -12,7 +12,7 @@ import { formatCount, formatTokens, formatUsd } from '@t3tools/shared/usageForma
 import { ProviderDriverKind } from '@t3tools/contracts';
 import { ClaudeAI, OpenAI } from '~/components/Icons';
 import { ProviderInstanceIcon } from '~/components/chat/ProviderInstanceIcon';
-import type { HohExecutor } from '../../hoh-host/config';
+import { FULL_ACCESS_LABELS, isFullAccessExecutor, type FullAccessExecutor, type HohExecutor } from '../../hoh-host/config';
 import { T3AppIcon } from '~/components/T3AppIcon';
 import { Button } from '~/components/ui/button';
 import { stackedThreadToast, toastManager } from '~/components/ui/toast';
@@ -80,12 +80,12 @@ interface View {
 }
 
 /** The executor's mark from T3's own provider set. */
-const runnerName: Record<HohExecutor, string> = { claude: 'Claude', codex: 'Codex', pi: 'Pi Agent' };
-const runnerFor = (instance: unknown): HohExecutor => instance === 'pi' ? 'pi' : instance === 'codex' ? 'codex' : 'claude';
+const runnerName: Record<HohExecutor, string> = { claude: 'Claude', codex: 'Codex', ...FULL_ACCESS_LABELS };
+const runnerFor = (instance: unknown): HohExecutor => isFullAccessExecutor(instance) ? instance : instance === 'codex' ? 'codex' : 'claude';
 
-const PiMark = () => <ProviderInstanceIcon driverKind={ProviderDriverKind.make('pi')} displayName="Pi Agent" showBadge={false} iconClassName="hoh-mark" />;
-const Mark = ({ entry }: { entry: Entry }) => entry.runner === 'pi'
-  ? <PiMark />
+const ExternalMark = ({ runner }: { runner: FullAccessExecutor }) => <ProviderInstanceIcon driverKind={ProviderDriverKind.make(runner)} displayName={FULL_ACCESS_LABELS[runner]} showBadge={false} iconClassName="hoh-mark" />;
+const Mark = ({ entry }: { entry: Entry }) => isFullAccessExecutor(entry.runner)
+  ? <ExternalMark runner={entry.runner} />
   : entry.runner === 'codex'
     ? <OpenAI className="hoh-mark" role="img" aria-label="Codex" />
     : <ClaudeAI className="hoh-mark" role="img" aria-label="Claude" />;
@@ -403,7 +403,7 @@ function Runners({ runners }: { runners: ProjectGroup<Entry>['runners'] }) {
     <span className="hoh-project__runners" aria-label={`Runners: ${runners.join(', ')}`}>
       {visible.map((runner, index) => (
         <span key={`${runner}-${index}`} className="hoh-project__runner" title={runnerName[runner]}>
-          {runner === 'pi' ? <PiMark /> : runner === 'codex' ? <OpenAI aria-hidden /> : <ClaudeAI aria-hidden />}
+          {isFullAccessExecutor(runner) ? <ExternalMark runner={runner} /> : runner === 'codex' ? <OpenAI aria-hidden /> : <ClaudeAI aria-hidden />}
         </span>
       ))}
       {runners.length > visible.length ? <span className="hoh-project__runner-more">+{runners.length - visible.length}</span> : null}

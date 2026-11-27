@@ -233,8 +233,13 @@ impl HarnessSdkJsonRpcServer {
         let selection = source
             .model()
             .current()
-            .filter(|selection| matches!(selection.provider.as_str(), "claude" | "codex" | "pi"))
-            .ok_or_else(|| error("Branching requires a Claude, Codex or Pi conversation."))?;
+            .filter(|selection| {
+                matches!(
+                    selection.provider.as_str(),
+                    "claude" | "codex" | "pi" | "kimi"
+                )
+            })
+            .ok_or_else(|| error("Branching requires a Claude, Codex, Pi or Kimi conversation."))?;
         let (prefix, attachments) = match boundary {
             ForkBoundary::Edit(message_id) => edit_boundary(&events, &message_id)?,
             ForkBoundary::SideChat => (

@@ -7,7 +7,7 @@ export const DEFAULT_FOLDER = '/home/person/Documents/HoH';
 const FOLDERS = [HOME, '/home/person/Documents', DEFAULT_FOLDER, '/home/person/Projects', '/home/person/Projects/site', '/home/person/Projects/tools', '/home/person/.config'];
 
 export class FakeEngine {
-  constructor({ store = new Map(), discovery, codexDiscovery, piDiscovery, access = { mode: 'confirm', selected: { executor: 'claude', model: 'claude-sonnet' } }, folders = FOLDERS } = {}) {
+  constructor({ store = new Map(), discovery, codexDiscovery, piDiscovery, kimiDiscovery, access = { mode: 'confirm', selected: { executor: 'claude', model: 'claude-sonnet' } }, folders = FOLDERS } = {}) {
     /** Folders on the fake disk; `refuseFolder` makes the person press «Отклонить» in the protection window. */
     this.folders = new Set(folders); this.refuseFolder = false;
     /** Folders added as projects (`hoh/workspace/add`). */
@@ -21,6 +21,7 @@ export class FakeEngine {
     this.codexDiscovery = codexDiscovery ?? { executor: 'codex', installed: true, version: '0.166.0', versionStatus: 'supported', auth: 'authenticated',
       models: [{ id: 'gpt-6-sol', displayName: 'GPT-6 Sol', isDefault: true, defaultEffort: 'medium', effortLevels: [{ id: 'low' }, { id: 'medium' }, { id: 'high' }] }], detail: null };
     this.piDiscovery = piDiscovery ?? { executor: 'pi', installed: false, version: null, versionStatus: 'unknown', auth: 'unknown', models: [], detail: 'Pi CLI (pi) was not found on PATH.' };
+    this.kimiDiscovery = kimiDiscovery ?? { executor: 'kimi', installed: false, version: null, versionStatus: 'unknown', auth: 'unknown', models: [], detail: 'Kimi Code CLI was not found.' };
     this.access = access;
     this.sessionAccess = new Map();
   }
@@ -77,7 +78,7 @@ export class FakeEngine {
   async request(method, params) {
     this.requests.push({ method, params });
     switch (method) {
-      case 'hoh/executor/discover': return params.executor === 'pi' ? this.piDiscovery : params.executor === 'codex' ? this.codexDiscovery : this.discovery;
+      case 'hoh/executor/discover': return ({ pi: this.piDiscovery, kimi: this.kimiDiscovery, codex: this.codexDiscovery })[params.executor] ?? this.discovery;
       case 'hoh/executor/access/get': {
         const answer = { executor: params.executor, mode: this.access.mode, runtimeMode: this.access.mode, effective: { mode: this.access.mode, flags: [] }, selected: this.access.selected };
         const session = params.sessionId ? this.store.get(params.sessionId) : undefined;

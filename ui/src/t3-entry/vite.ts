@@ -444,6 +444,30 @@ function localSettingsRoute(code: string, panel: string, original: string, repla
   ]]);
 }
 
+function fullAccessComposer(code: string): string {
+  return anchorPatch('ChatComposer.tsx', code, [
+    ['// Pi requires an explicit choice of Full access, even when it is the only supported mode.',
+      '// Pi and Kimi require explicit Full access, even when it is the only supported mode.'],
+    ['selectedProviderEntry?.snapshot.driver === "pi" &&',
+      '(selectedProviderEntry?.snapshot.driver === "pi" || selectedProviderEntry?.snapshot.driver === "kimi") &&'],
+    ['gt("Choose Full access in the composer to use Pi Agent.")',
+      'gt("Choose Full access in the composer to use {provider}.", { provider: selectedProviderEntry?.snapshot.displayName })'],
+    ['onProviderModelSelect={onProviderModelSelect}', `onProviderModelSelect={(instanceId, model, options) => {
+        if (routeKind === "draft" && (instanceId === "pi" || instanceId === "kimi")) {
+          setComposerDraftInteractionMode(composerDraftTarget, "default");
+        }
+        onProviderModelSelect(instanceId, model, options);
+      }}`],
+  ]).replaceAll('piNeedsFullAccess', 'needsExplicitFullAccess');
+}
+
+function kimiProviderClient(code: string): string {
+  return anchorPatch('providerClients.ts', code, [[
+    '  piClient,\n',
+    '  piClient,\n  { driverKind: ProviderDriverKind.make("kimi"), label: "Kimi Code" },\n',
+  ]]);
+}
+
 /** HoH accepts pasted text as text. The native engine only accepts raster attachments. */
 function composerPaste(code: string): string {
   const pastedImage = resolve(UI, 'src/t3-entry/pastedImage.ts');
@@ -719,7 +743,8 @@ function hohT3(): Plugin {
         ]]),
         map: null,
       };
-      if (id === resolve(T3_WEB, 'components/chat/ChatComposer.tsx')) return { code: composerSecret(composerWhisper(composerPaste(code))), map: null };
+      if (id === resolve(T3_BASE, 'client-runtime/providerClients.ts')) return { code: kimiProviderClient(code), map: null };
+      if (id === resolve(T3_WEB, 'components/chat/ChatComposer.tsx')) return { code: composerSecret(composerWhisper(composerPaste(fullAccessComposer(code)))), map: null };
       if (id === resolve(T3_WEB, 'components/settings/SettingsPanels.tsx')) return { code: chatSettings(code), map: null };
       if (id === resolve(T3_WEB, 'components/ComposerPromptEditorTiptap.tsx')) return { code: editorPaste(code), map: null };
       if (id === resolve(T3_WEB, 'components/ChatMarkdown.tsx')) return { code: markdownHtml(code), map: null };
