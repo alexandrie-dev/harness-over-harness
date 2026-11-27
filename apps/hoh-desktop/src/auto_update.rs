@@ -561,8 +561,6 @@ fn validate_bundle(
         return Err("The update was cancelled.".into());
     }
     validate_bundle_layout(bundle, package, version).map_err(|_| INVALID_PACKAGE)?;
-    #[cfg(target_os = "linux")]
-    require_managed_linux_bundle(bundle).map_err(|_| INVALID_PACKAGE)?;
     #[cfg(target_os = "macos")]
     {
         let error =
@@ -935,6 +933,18 @@ mod tests {
             fs::write(&path, b"executable").unwrap();
             fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
         }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn staged_linux_bundle_accepts_additional_release_files() {
+        let directory = tempfile::tempdir().unwrap();
+        let package = package_for("linux", "x86_64").unwrap();
+        let bundle = directory.path().join(package.install_dir);
+        write_bundle_layout(&bundle, package);
+        fs::write(bundle.join("README.md"), b"release notes").unwrap();
+
+        assert!(validate_bundle(&bundle, package, &Version::new(0, 0, 1), || false).is_ok());
     }
 
     #[test]

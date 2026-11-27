@@ -226,6 +226,8 @@ impl Recovery {
     }
 
     pub(super) fn commit(&self) -> io::Result<()> {
+        #[cfg(target_os = "linux")]
+        require_managed_linux_bundle(self.backup())?;
         let path = self.decision_path();
         symlink("commit", &path)?;
         if let Err(error) = sync_directory(&self.directory) {
@@ -432,7 +434,7 @@ mod tests {
 
     #[cfg(target_os = "linux")]
     #[test]
-    fn cleanup_preserves_a_plugin_displaced_by_the_exchange() {
+    fn commit_rejects_a_plugin_displaced_by_the_exchange() {
         let parent = tempfile::tempdir().unwrap();
         let package = super::super::package_for("linux", "x86_64").unwrap();
         let (installed, staging) = prepare_update(parent.path(), package);
@@ -441,7 +443,35 @@ mod tests {
         fs::create_dir(installed.join("my-plugin")).unwrap();
         fs::write(installed.join("my-plugin/hoh-package.json"), b"plugin").unwrap();
         swap_directories(&installed, recovery.backup()).unwrap();
+        assert_eq!(
+            recovery.commit().unwrap_err().kind(),
+            io::ErrorKind::Unsupported
+        );
+        assert!(recovery.decision().unwrap() == Decision::Pending);
+
+        recovery.restore_previous(&installed).unwrap();
+        recovery.sync_exchange(&installed).unwrap();
+        recovery.finish(package).unwrap();
+        assert_eq!(
+            fs::read(installed.join("my-plugin/hoh-package.json")).unwrap(),
+            b"plugin"
+        );
+        assert!(retired_directories(parent.path()).is_empty());
+        assert!(Recovery::open(&installed, package).unwrap().is_none());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn cleanup_preserves_a_plugin_added_after_commit() {
+        let parent = tempfile::tempdir().unwrap();
+        let package = super::super::package_for("linux", "x86_64").unwrap();
+        let (installed, staging) = prepare_update(parent.path(), package);
+        let (recovery, _candidate) = Recovery::publish(&installed, &staging, package).unwrap();
+        recovery.install_candidate(&installed).unwrap();
         recovery.commit().unwrap();
+        let plugin = recovery.backup().join("my-plugin");
+        fs::create_dir(&plugin).unwrap();
+        fs::write(plugin.join("hoh-package.json"), b"plugin").unwrap();
 
         recovery.finish(package).unwrap();
 
@@ -514,6 +544,7 @@ mod tests {
                 marker_lease: false,
             },
         };
+        fs::create_dir(recovery.backup()).unwrap();
         recovery.request_user_quit().unwrap();
         assert_eq!(
             recovery.commit().unwrap_err().kind(),
