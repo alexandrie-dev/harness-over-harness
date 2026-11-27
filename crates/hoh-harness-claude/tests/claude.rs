@@ -379,6 +379,39 @@ async fn discover_reports_install_version_sign_in_and_models() {
     assert!(args.contains(&"--strict-mcp-config".to_owned()));
 }
 
+#[tokio::test]
+async fn the_native_session_expands_a_declared_inline_skill() {
+    let mut env = Env::new();
+    env.mode = Some("skill-prompt");
+    let mut started = env
+        .harness()
+        .start_with_access(
+            params(env.dir.path(), None, HarnessPolicy::default()),
+            AccessMode::Confirm,
+        )
+        .await
+        .unwrap();
+    started
+        .session
+        .prompt(PromptParams {
+            session_id: "hoh-1".into(),
+            turn_id: "skill-turn".into(),
+            text: "Check $release-notes for v2 with $unknown".into(),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    let events = until(&mut started.events, turn_end).await;
+    assert!(
+        matches!(
+            events.last(),
+            Some(HarnessEvent::TurnCompleted { turn_id }) if turn_id == "skill-turn"
+        ),
+        "unexpected events: {events:?}"
+    );
+    started.session.terminate(Duration::from_millis(500)).await;
+}
+
 /// HOH-41: `/` and `$` are what the CLI itself declares for the folder — the commands of its
 /// `initialize`, the skills of its `reload_skills` — trimmed and one per name, nothing added; the
 /// probe runs in the folder with user settings but no project/local setting files, no hooks, no

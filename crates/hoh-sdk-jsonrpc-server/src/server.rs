@@ -1494,6 +1494,7 @@ impl HarnessSdkJsonRpcServer {
             "session/list" => self.session_list(params).await,
             "session/events" => self.session_events(params).await,
             "session/fork-for-edit" => self.session_fork_for_edit(params).await,
+            "session/fork-side-chat" => self.session_fork_side_chat(params).await,
             "session/cancel" => self.session_cancel(params),
             "shutdown" => self.shutdown().await,
             method if method.starts_with("hoh/") => self.hoh_method(method, params).await,

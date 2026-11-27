@@ -1,5 +1,6 @@
 //! Discovery and process launch for the installed Codex CLI.
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::Arc;
@@ -7,9 +8,10 @@ use std::time::Duration;
 
 use futures_util::future::BoxFuture;
 use hoh_external_harness::{
-    AccessMode, AuthState, Discovery, ExecutorLimitWindow, ExternalHarness, HarnessEffort,
-    HarnessFailure, HarnessModel, HarnessPolicy, HarnessResult, ProcessSpec, StartParams, StartResult,
-    Started, Supervisor, SupervisorLimits, VersionStatus, code,
+    AccessMode, AuthState, Discovery, ExecutorLimitWindow, ExternalHarness, HarnessCommand,
+    HarnessCommands, HarnessEffort, HarnessFailure, HarnessModel, HarnessPolicy, HarnessResult,
+    ProcessSpec, StartParams, StartResult, Started, Supervisor, SupervisorLimits, VersionStatus,
+    code,
 };
 use serde_json::Value;
 
@@ -345,7 +347,9 @@ async fn discover_codex(config: &CodexConfig) -> (Discovery, VersionStatus) {
 
 fn rate_limit_windows(response: &Value) -> Vec<ExecutorLimitWindow> {
     let mut windows = Vec::new();
-    let snapshots = response.get("rateLimitsByLimitId").and_then(Value::as_object);
+    let snapshots = response
+        .get("rateLimitsByLimitId")
+        .and_then(Value::as_object);
     let main = response.get("rateLimits");
     let main_id = main
         .and_then(|snapshot| snapshot.get("limitId"))
@@ -399,7 +403,88 @@ fn rate_limit_windows(response: &Value) -> Vec<ExecutorLimitWindow> {
     windows
 }
 
+fn skills_from(answer: &Value, cwd: &str) -> HarnessResult<Vec<HarnessCommand>> {
+    let entries = answer["data"].as_array().ok_or_else(|| {
+        HarnessFailure::new(code::PROTOCOL, "Codex did not return a skill catalog.")
+    })?;
+    let entry = entries
+        .iter()
+        .find(|entry| entry["cwd"].as_str() == Some(cwd))
+        .ok_or_else(|| {
+            HarnessFailure::new(code::PROTOCOL, "Codex did not list skills for this folder.")
+        })?;
+    let skills = entry["skills"].as_array().ok_or_else(|| {
+        HarnessFailure::new(
+            code::PROTOCOL,
+            "Codex did not return skills for this folder.",
+        )
+    })?;
+    let mut names = HashSet::new();
+    Ok(skills
+        .iter()
+        .filter_map(|skill| {
+            if skill["enabled"].as_bool() != Some(true) {
+                return None;
+            }
+            let name = skill["name"].as_str()?.trim();
+            if name.is_empty()
+                || name.chars().any(|ch| ch.is_control() || ch.is_whitespace())
+                || !names.insert(name.to_owned())
+            {
+                return None;
+            }
+            let description = skill["shortDescription"]
+                .as_str()
+                .or_else(|| skill["description"].as_str())
+                .map(str::trim)
+                .filter(|description| !description.is_empty())
+                .map(str::to_owned);
+            Some(HarnessCommand {
+                name: name.to_owned(),
+                description,
+                argument_hint: None,
+            })
+        })
+        .collect())
+}
+
 impl ExternalHarness for CodexHarness {
+    fn commands(&self, cwd: PathBuf) -> BoxFuture<'static, HarnessResult<HarnessCommands>> {
+        let config = self.config.clone();
+        Box::pin(async move {
+            match check_version(&config).await {
+                VersionCheck::Supported(_) => {}
+                VersionCheck::NotInstalled => {
+                    return Err(HarnessFailure::new(
+                        code::NOT_INSTALLED,
+                        version::not_installed_message(),
+                    ));
+                }
+                VersionCheck::Refused { message, .. } => {
+                    return Err(HarnessFailure::new(code::UNSUPPORTED_VERSION, message));
+                }
+            }
+            let cwd_string = cwd.to_str().ok_or_else(|| {
+                HarnessFailure::new(code::IO, "The workspace folder is not a UTF-8 path.")
+            })?;
+            // App-server accepts a cwd per catalog request. Start outside the project, with
+            // the target and its ancestors explicitly untrusted, and never start a turn.
+            let mut spec = app_server_spec(&config, &cwd, false);
+            spec.cwd = Some(std::env::temp_dir());
+            let supervisor = Supervisor::spawn(&spec, config.limits, None)?;
+            let result = CodexSession::read_skills(
+                supervisor,
+                config.request_timeout,
+                cwd_string.to_owned(),
+            )
+            .await?;
+            Ok(HarnessCommands {
+                commands: Vec::new(),
+                skills: skills_from(&result, cwd_string)?,
+            })
+        })
+    }
+
     fn rate_limits(&self) -> BoxFuture<'static, HarnessResult<Option<Vec<ExecutorLimitWindow>>>> {
         let config = self.config.clone();
         Box::pin(async move {

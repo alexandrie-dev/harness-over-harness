@@ -63,6 +63,16 @@ for line in sys.stdin:
         data = {"models": [model]}
     elif method == "get_available_thinking_levels":
         data = {"levels": ["off", "high"]}
+    elif method == "get_commands":
+        assert saved is None and "--no-tools" in args
+        assert pathlib.Path("workspace-marker").is_file()
+        data = {"commands": [
+            {"name": "summary", "source": "extension"},
+            {"name": "summary", "source": "prompt", "description": "Summarize the release"},
+            {"name": "skill:ship", "source": "skill", "description": "Prepare release"},
+            {"name": "skill:ship", "source": "skill"},
+            {"name": "run-extension", "source": "extension"},
+        ]}
     elif method == "set_model":
         assert request["provider"] == "mock" and request["modelId"] == "model"
     elif method == "set_thinking_level":
@@ -96,6 +106,25 @@ for line in sys.stdin:
 "#).unwrap();
     std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700)).unwrap();
     PiHarness::new(path, dir.join("sessions"))
+}
+
+#[tokio::test]
+async fn workspace_get_commands_uses_no_session_or_extensions() {
+    let dir = TempDir::new().unwrap();
+    let cwd = dir.path().canonicalize().unwrap();
+    std::fs::write(cwd.join("workspace-marker"), "probe cwd").unwrap();
+    let pi = stub(&cwd);
+
+    let catalog = pi.commands(cwd.clone()).await.unwrap();
+    assert_eq!(catalog.commands.len(), 1);
+    assert_eq!(catalog.commands[0].name, "summary");
+    assert_eq!(catalog.skills.len(), 1);
+    assert_eq!(catalog.skills[0].name, "ship");
+    assert_eq!(
+        catalog.skills[0].description.as_deref(),
+        Some("Prepare release")
+    );
+    assert!(!cwd.join("sessions").exists());
 }
 
 #[tokio::test]

@@ -49,7 +49,7 @@ export function ProjectsSettings() {
         unavailable
       ) : (
         <SettingsScopeNotice target="project">
-          {gt("Choose a project to manage its name, icon, checkouts and actions.")}
+          {gt("Choose a project to manage its name, checkouts and archive status.")}
         </SettingsScopeNotice>
       )}
     </div>

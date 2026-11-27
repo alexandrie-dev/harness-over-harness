@@ -16,18 +16,22 @@
 // `hoh/workspace/add`, so both answer before the project's first chat); `@` lists a folder project's files
 // (`projects.searchEntries` → `hoh/workspace/entries`, nothing for "No project"); pictures are checked and kept
 // (`assets.persistChatAttachments`) until their message goes to the engine with them (`session/prompt`).
+import { WorkspaceGit } from './workspace-git.ts';
 import {
   accessModeOf, CLAUDE_INSTANCE_ID, CODEX_INSTANCE_ID, PI_INSTANCE_ID, EXECUTOR_INSTANCES, HOH_EXECUTORS, isHohExecutor, piModel, piProvider, claudeProvider, codexEffortOf, codexProvider, defaultClaudeModel, defaultCodexModel, effortOf, listedClaudeModel, listedCodexModel, runtimeModeOf, serverConfig, serverSettings, type ClaudeDiscovery, type CodexDiscovery, type HarnessDiscovery, type HohAccessMode, type HohExecutor, type T3RuntimeMode,
-  isAccessMode, type EnvironmentPlatform, type T3InteractionMode,
+  isAccessMode, KEYBINDINGS_LOCATION, presentProvider, type EnvironmentPlatform, type T3InteractionMode,
 } from './config.ts';
 import { usagePricing, usageSummary, type UsageSummaryInput } from './usage.ts';
 import type { EngineNotification, EngineQuestion, EngineQuestionAnswer, HohEngine, LocalImageAsset } from './engine.ts';
 import { base64Of, readUploads, searchAnswer, skillsAsCommands, stripAttachedImageReferences, UPLOAD_PATH, UPLOAD_TTL_MS, uploadSlot, workspaceSnapshot, type KeptImage, type UploadSlot } from './composer.ts';
 import { englishError, hostFailure } from './errors.ts';
+import { projectFileHandlers } from './project-files.ts';
 import { folderProject, HOH_PROJECT_ID, hohProject, ThreadModel, type FolderProject, type HomeEntry, type Item, type ShownAttachment } from './threads.ts';
 import type { SessionForkForEditResult } from '../protocol.ts';
 import { RpcFailure, type Handlers, type StreamSink } from './wire.ts';
-import { ThreadMetadataStore } from './thread-metadata.ts';
+import { ThreadMetadataStore, threadTag, type ThreadMetadata, type ThreadOrganization } from './thread-metadata.ts';
+import type { FindInput, FindResult } from './thread-search.ts';
+import type { CreateHohLocalSettings } from '../t3-entry/local-settings.ts';
 import {
   MAX_PLUGIN_BRIEF, pluginAuthoringPrefixes,
   type PluginCreatorApi, type PluginCreatorOptions,
@@ -43,6 +47,7 @@ export interface HohHostOptions {
   readonly throttleMs?: number;
   /** Where folder projects are kept between runs (the window's localStorage by default; null: not kept). */
   readonly storage?: HohStorage | null;
+  readonly createLocalSettings?: CreateHohLocalSettings;
   /** The engine may still be starting when the window asks (its handshake takes seconds): the first reads are repeated this often, and this many times, until it answers. */
   readonly loadRetryMs?: number;
   readonly loadRetries?: number;
@@ -236,16 +241,11 @@ interface JournalRead {
   delivered: number;
   watermark: number;
 }
-const NO_OP_COMMANDS = new Set([
+const THREAD_ORGANIZATION_COMMANDS = new Set([
   'thread.visit', 'thread.mark-unread', 'thread.settle', 'thread.unsettle', 'thread.auto-settle', 'thread.auto-settle.set',
   'thread.active.reorder', 'thread.tag.set', 'thread.snooze', 'thread.unsnooze',
 ]);
-
-/** The chat folder is not a git repository for T3: no branch, no worktree, nothing to commit. */
-const NOT_A_REPO_LOCAL = {
-  isRepo: false, hasPrimaryRemote: false, isDefaultRef: false, refName: null, hasWorkingTreeChanges: false,
-  workingTree: { files: [], insertions: 0, deletions: 0 },
-};
+const loadThreadSearch = () => import('./thread-search.ts');
 
 function dispatchError(command: Record<string, any>, message: string) {
   return new RpcFailure({
@@ -313,6 +313,7 @@ export class HohHost {
   private homeVersion = 0;
   private sessionsKnown = false;
   private readonly homeListeners = new Set<() => void>();
+  private readonly git: WorkspaceGit;
   private claudeDiscovery: ClaudeDiscovery | null = null;
   private codexDiscovery: CodexDiscovery | null = null;
   private piDiscovery: HarnessDiscovery | null = null;
@@ -354,8 +355,10 @@ export class HohHost {
   /** A reply from an access/set sent to a process that has since gone away is never authoritative. */
   private accessProcessGeneration = 0;
   private settingsOverrides: Record<string, unknown> = {};
+  private readonly localSettings?: ReturnType<CreateHohLocalSettings>;
   private workspaceRoot: string;
   private workspaceKnown = false;
+  private availableEditors: Awaited<ReturnType<NonNullable<HohEngine['availableProjectEditors']>>> = [];
   /** Whether the "No project" project is in the list (see the head of this file). */
   private projectShown = false;
   private readonly storage: HohStorage | null;
@@ -420,6 +423,13 @@ export class HohHost {
   constructor(options: HohHostOptions) {
     this.engine = options.engine;
     this.platform = options.platform;
+    this.git = new WorkspaceGit(async (input, query) => {
+      if (!this.engine.projectGit) return null;
+      await this.start();
+      const cwd = folderPath(input);
+      if (!cwd || (!this.folderAt(cwd) && !(this.workspaceKnown && cwd === this.workspaceRoot))) return null;
+      return this.engine.projectGit({ cwd, query });
+    });
     this.now = options.now ?? Date.now;
     this.throttleMs = options.throttleMs ?? 40;
     this.loadRetryMs = options.loadRetryMs ?? 500;
@@ -429,6 +439,7 @@ export class HohHost {
     this.workspaceRoot = options.workspaceRoot ?? PLACEHOLDER_ROOT;
     this.startedAt = this.now();
     this.storage = options.storage === undefined ? windowStorage() : options.storage;
+    this.localSettings = options.createLocalSettings?.(this.storage);
     this.threadMetadata = new ThreadMetadataStore(this.storage);
     this.restore();
   }
@@ -516,11 +527,21 @@ export class HohHost {
     if ([...this.threads.values()].some(thread => thread.projectId === HOH_PROJECT_ID)) this.projectShown = true;
   }
 
+  private readSideChat(value: unknown) {
+    if (!value || typeof value !== 'object') return undefined;
+    const { parentSessionId, seedEndSeq } = value as Record<string, unknown>;
+    if (typeof parentSessionId !== 'string' || !parentSessionId || typeof seedEndSeq !== 'number'
+      || !Number.isSafeInteger(seedEndSeq) || seedEndSeq < 0) return undefined;
+    return { parentSessionId, seedEndSeq };
+  }
+
   private applyThreadMetadata(thread: ThreadModel) {
     thread.pluginAuthoringPrefixes = this.pluginAuthoringPrefixes;
     const metadata = this.threadMetadata.get(thread.id);
+    thread.sideChat ??= this.readSideChat(metadata.sideChat);
     thread.restorePromptTimes(metadata.promptTimes);
     thread.restoreStopTimes(metadata.stopTimes);
+    thread.applyOrganization(metadata);
     if (typeof metadata.title === 'string' && metadata.title.trim()) thread.title = metadata.title;
     if (typeof metadata.pinnedAt === 'number' || metadata.pinnedAt === null) thread.pinnedAt = metadata.pinnedAt;
     if (typeof metadata.pinOrderKey === 'string' || metadata.pinOrderKey === null) thread.pinOrderKey = metadata.pinOrderKey;
@@ -659,11 +680,11 @@ export class HohHost {
   readonly home = {
     version: () => this.homeVersion,
     subscribe: (listener: () => void) => { this.homeListeners.add(listener); return () => { this.homeListeners.delete(listener); }; },
-    entries: (): HomeEntry[] => [...this.threads.values()].filter(thread => thread.archivedAt === null).map(thread => this.homeEntry(thread)).filter((entry): entry is HomeEntry => entry !== null),
+    entries: (): HomeEntry[] => [...this.threads.values()].filter(thread => !thread.sideChat && thread.archivedAt === null).map(thread => this.homeEntry(thread)).filter((entry): entry is HomeEntry => entry !== null),
     // Grouped Home uses the same visible chats as Recent chats, even before their turns replay.
     projectEntries: (): HomeEntry[] => [...this.threads.values()].flatMap(thread => {
       const shell = thread.shell();
-      if (thread.archivedAt !== null || shell.latestUserMessageAt === null) return [];
+      if (thread.sideChat || thread.archivedAt !== null || shell.latestUserMessageAt === null) return [];
       const entry: HomeEntry = this.homeEntry(thread) ?? {
         id: thread.id, title: shell.title, projectId: thread.projectId, providerInstanceId: instanceOf(thread.executor),
         ...(thread.pluginCreator ? { pluginCreator: true } : {}),
@@ -675,7 +696,7 @@ export class HohHost {
     // This count is also consumed independently by the project view.
     projectCounts: (): Record<string, number> => {
       const counts: Record<string, number> = {};
-      for (const thread of this.threads.values()) if (thread.archivedAt === null) counts[thread.projectId] = (counts[thread.projectId] ?? 0) + 1;
+      for (const thread of this.threads.values()) if (!thread.sideChat && thread.archivedAt === null) counts[thread.projectId] = (counts[thread.projectId] ?? 0) + 1;
       return counts;
     },
     projectTitle: (projectId: string) => projectId === HOH_PROJECT_ID ? 'Chats' : this.folders.get(projectId)?.title ?? 'No project',
@@ -793,6 +814,7 @@ export class HohHost {
 
   stop() {
     this.stopped = true;
+    this.git.stop();
     for (const off of this.unsubscribers) off();
     this.unsubscribers = [];
     if (this.flushTimer) clearTimeout(this.flushTimer);
@@ -1221,6 +1243,11 @@ export class HohHost {
   }
 
   private async load() {
+    void this.engine.availableProjectEditors?.().then(editors => {
+      if (this.stopped) return;
+      this.availableEditors = editors;
+      this.configChanged();
+    }).catch(() => undefined);
     this.unsubscribers.push(await this.engine.subscribe(notification => this.onNotification(notification)));
     if (this.engine.subscribeQuestions) this.unsubscribers.push(await this.engine.subscribeQuestions(question => this.onQuestion(question)));
     if (this.engine.subscribeStatus) this.unsubscribers.push(await this.engine.subscribeStatus(status => {
@@ -1420,6 +1447,7 @@ export class HohHost {
         createdAt: at, updatedAt: at, model: 'unknown', mode: 'confirm', executor: 'claude', bindingKnown: false,
         projectId: this.homeOf(session.id),
       });
+      provisional.sideChat = this.readSideChat(session.sideChat);
       this.applyThreadMetadata(provisional);
       this.threads.set(session.id, provisional);
       inventoryChanged = true;
@@ -1493,6 +1521,7 @@ export class HohHost {
           // The cache is only continuity for the first snapshot. Once this session is visible on
           // disk, let its current list entry and history replace stale presentation metadata.
           existing.title = this.titles.get(session.id) ?? (typeof session.title === 'string' ? session.title : '');
+          existing.sideChat = this.readSideChat(session.sideChat) ?? existing.sideChat;
           this.applyThreadMetadata(existing);
           existing.updatedAt = Math.max(existing.updatedAt, at);
           inventoryChanged = true;
@@ -1514,6 +1543,7 @@ export class HohHost {
         projectId: this.homeOf(session.id),
       });
       if (runningInteraction !== null) discovered.setRunningInteractionMode(runningInteraction);
+      discovered.sideChat = this.readSideChat(session.sideChat);
       this.applyThreadMetadata(discovered);
       this.threads.set(session.id, discovered);
       if ((executor === 'pi' ? this.piDiscovery : executor === 'codex' ? this.codexDiscovery : this.claudeDiscovery) === null) this.catalogPending.add(session.id);
@@ -1669,7 +1699,7 @@ export class HohHost {
     let journal = this.journals.get(thread);
     if (!journal || journal.generation !== this.accessProcessGeneration) {
       journal = {
-        generation: this.accessProcessGeneration, afterSeq: journal?.afterSeq, ready: false,
+        generation: this.accessProcessGeneration, afterSeq: journal?.afterSeq ?? thread.sideChat?.seedEndSeq, ready: false,
         notifications: [], watermarks: [], delivered: 0, watermark: 0,
       };
       this.journals.set(thread, journal);
@@ -1900,7 +1930,12 @@ export class HohHost {
   private onNotification(notification: EngineNotification, at = this.now(), replaying = false) {
     const params = notification.params ?? {};
     if (this.creatingEditBranches.has(params.sessionId)) return;
-    const eventType = params.event?.type;
+    const event = params.event;
+    if (notification.method === 'session.event') {
+      const seedEnd = this.threads.get(params.sessionId)?.sideChat?.seedEndSeq;
+      if (seedEnd !== undefined && typeof event?.seq === 'number' && event.seq <= seedEnd) return;
+    }
+    const eventType = event?.type;
     if (!replaying && notification.method === 'session.event'
       && (eventType === 'plugin:external-harness/folder-trust-changed' || eventType === 'plugin:external-harness/launch')) {
       const thread = this.threadFor(params.sessionId);
@@ -2008,6 +2043,12 @@ export class HohHost {
     this.resumedSessions.clear();
     this.resumingSessions.clear();
     this.loading.clear();
+    for (const question of this.questions.values()) {
+      const thread = this.threads.get(question.sessionId);
+      if (thread?.pendingRequest(question.requestId)?.kind === 'secret'
+        && thread.questionClosed(question.requestId, null, this.now())) this.changed(thread.id);
+    }
+    this.questions.clear();
     this.notificationAccess.clear();
     this.sessionAccessKnown.clear();
     this.mode = null;
@@ -2156,6 +2197,67 @@ export class HohHost {
     };
   }
 
+  private async findInChat(payload: FindInput & { threadId: string }, onProgress?: (result: FindResult) => void, signal?: AbortSignal) {
+    try {
+      await this.start();
+      signal?.throwIfAborted();
+      const [thread, search] = await Promise.all([this.loaded(payload?.threadId), loadThreadSearch()]);
+      signal?.throwIfAborted();
+      if (!thread || this.threads.get(thread.id) !== thread || this.deletingThreads.has(thread.id)) {
+        throw new Error('This chat does not exist.');
+      }
+      const cwd = thread.cwd ?? this.folders.get(thread.projectId)?.workspaceRoot ?? this.workspaceRoot;
+      return await search.findInThread(thread.searchableTimeline(), cwd, this.projectionSequence(thread), payload, onProgress, signal);
+    } catch (error) {
+      throw new RpcFailure({ _tag: 'OrchestrationV2SearchThreadError', cause: { name: 'Error', message: errorText(error) } });
+    }
+  }
+
+  private async *searchSources(projects?: ReadonlySet<string>) {
+    const threads = [...this.threads.values()].filter(thread => !thread.sideChat && thread.archivedAt === null)
+      .sort((left, right) => right.updatedAt - left.updatedAt);
+    let read = 0;
+    let failure: unknown;
+    for (let index = 0; index < threads.length && !this.stopped; index += 3) {
+      // Reuse pending journal reads. Today's Home and future searches can use the same pages,
+      // and opening a hit is the only action that resumes its native session.
+      const batch = threads.slice(index, index + 3);
+      await Promise.all(batch.map(async thread => {
+        if (thread.loaded || this.deletingThreads.has(thread.id)) return;
+        const journal = this.journalFor(thread);
+        if (!journal.ready) await this.replayJournal(thread, journal).catch(error => { failure = error; });
+      }));
+      for (const thread of batch) {
+        if (this.threads.get(thread.id) !== thread || this.deletingThreads.has(thread.id) || thread.archivedAt !== null) continue;
+        if (!thread.loaded && !this.journals.get(thread)?.ready) continue;
+        read++;
+        const projectId = thread.cwd ? this.folderAt(thread.cwd)?.id ?? thread.projectId : thread.projectId;
+        if (projects && !projects.has(projectId)) continue;
+        yield {
+          threadId: thread.id, projectId, messages: thread.searchableMessages(),
+          subject: { title: thread.titleText(), activityAt: thread.latestUserActivity(), opens: thread.organization.opens },
+        };
+      }
+    }
+    if (failure !== undefined && read === 0) throw failure;
+  }
+
+  private async searchChats(payload: Record<string, any>) {
+    const query = typeof payload.query === 'string' ? payload.query.trim().slice(0, 200) : '';
+    if (payload.titlesOnly === true || query.length < 2) return { matches: [] };
+    try {
+      const search = await loadThreadSearch();
+      if (!search.hasMessageSearchTerms(query)) return { matches: [] };
+      await this.start();
+      const limit = Number.isInteger(payload.limit) ? Math.min(50, Math.max(1, payload.limit)) : 50;
+      const projects = Array.isArray(payload.projectIds) ? new Set<string>(payload.projectIds) : undefined;
+      const matches = await search.searchThreadMessages(this.searchSources(projects), query, limit, this.now());
+      return { matches: matches.filter(hit => this.threads.get(hit.threadId)?.archivedAt === null && !this.deletingThreads.has(hit.threadId)) };
+    } catch (error) {
+      throw new RpcFailure({ _tag: 'OrchestrationSearchThreadsError', message: 'Could not search chats.', cause: { name: 'Error', message: errorText(error) } });
+    }
+  }
+
   private publishThread(thread: ThreadModel, change?: StreamChange) {
     const sinks = this.threadSinks.get(thread.id);
     if (!sinks?.size) return;
@@ -2187,6 +2289,7 @@ export class HohHost {
     return serverConfig({
       cwd: this.workspaceRoot,
       platform: this.platform,
+      availableEditors: this.availableEditors,
       claudeDiscovery: this.claudeDiscovery,
       codexDiscovery: this.codexDiscovery,
       piDiscovery: this.piDiscovery,
@@ -2197,6 +2300,8 @@ export class HohHost {
       defaultModel: this.model(),
       accessKnown: this.mode !== null,
       settingsOverrides: this.settingsOverrides,
+      windowPreferences: this.localSettings?.windowPreferences(),
+      keybindings: this.localSettings?.keybindings(),
       now: this.iso(),
     });
   }
@@ -2208,12 +2313,30 @@ export class HohHost {
       this.settingsOverrides,
       instanceOf(this.selectedExecutor),
       this.mode !== null,
+      this.localSettings?.windowPreferences(),
     );
   }
 
   private configChanged() {
     this.pluginCreatorChanged();
     for (const sink of this.configSinks) sink.emit({ version: 1, type: 'snapshot', config: this.config() });
+  }
+
+  private editKeybinding(payload: unknown, operation: 'upsertKeybinding' | 'removeKeybinding') {
+    try {
+      if (!this.localSettings) throw new Error('Local preferences storage is unavailable.');
+      const result = this.localSettings[operation](payload);
+      for (const sink of this.configSinks) {
+        sink.emit({ version: 1, type: 'keybindingsUpdated', payload: result });
+      }
+      return result;
+    } catch (error) {
+      throw new RpcFailure({
+        _tag: 'KeybindingsConfigParseError',
+        configPath: KEYBINDINGS_LOCATION,
+        detail: error instanceof Error ? error.message : 'Could not change this shortcut.',
+      });
+    }
   }
 
   private lifecycleWelcome(bootstrapStatus: 'pending' | 'complete') {
@@ -2635,8 +2758,7 @@ export class HohHost {
 
   /**
    * One message to the engine: its pictures first (the bytes kept from T3's upload or `assets.persistChatAttachments`; the engine's
-   * attachment store checks and copies them), then its text, with the skills Claude declared for the chat's folder
-   * written as Claude runs them (`$name` → `/name`, T3's `planClaudeSkillDispatch`).
+   * attachment store checks and copies them), then the text in the syntax supported by the selected harness.
    */
   private async send(thread: ThreadModel, messageId: string, text: string, attachments: unknown = [], interactionMode?: T3InteractionMode, context?: { records?: unknown }, edit?: { blocks: unknown[]; shown: ShownAttachment[]; authoringPrefix?: string }) {
     if (!thread.builtin) await this.requireAccess();
@@ -2652,12 +2774,31 @@ export class HohHost {
       this.previewUrl(image);
       this.sentPreviewIds.add(image.id);
     }
+    const commandFolder = folderPath(thread.cwd) || (thread.projectId === HOH_PROJECT_ID ? this.workspaceRoot : '');
     const prompt = (edit?.authoringPrefix ?? '') + skillsAsCommands(
       stripAttachedImageReferences(text, images.map(image => image.id), context),
-      this.skillsByFolder.get(`${thread.executor}\0${folderPath(thread.cwd)}`) ?? new Set(),
+      this.skillsByFolder.get(`${thread.executor}\0${commandFolder}`) ?? new Set(),
+      thread.executor,
     );
+    const sentAt = this.now();
+    const organization = thread.organization;
+    const wake: Partial<ThreadOrganization> = {};
+    if (organization.lastVisitedAt === null) wake.lastVisitedAt = sentAt - 1;
+    if (organization.settledOverride !== null) {
+      wake.settledOverride = null;
+      wake.settledAt = null;
+      if (organization.settledOverride === 'settled') wake.unsettledAt = sentAt;
+    }
+    if (organization.snoozedUntil !== null) {
+      wake.snoozedUntil = null;
+      wake.snoozedAt = null;
+    }
+    if (Object.keys(wake).length) {
+      try { this.threadMetadata.update(thread.id, wake); } catch { /* Sending still works without window storage. */ }
+      thread.applyOrganization(wake);
+    }
     this.homePrompts.add(thread.id);
-    thread.sendLocal(messageId, text, this.now(), edit?.shown ?? images.map(({ data: _data, ...shown }) => ({ type: 'image' as const, ...shown })), prompt);
+    thread.sendLocal(messageId, text, sentAt, edit?.shown ?? images.map(({ data: _data, ...shown }) => ({ type: 'image' as const, ...shown })), prompt);
     this.changed(thread.id);
     const contentBlocks = [
       ...(edit?.blocks ?? []),
@@ -2766,7 +2907,7 @@ export class HohHost {
   }
 
   /**
-   * T3's workspace snapshot of the composer's folder: the commands and skills Claude declares there, asked without a turn.
+   * T3's workspace snapshot of the composer's folder: the selected harness's commands and skills, read without a turn.
    * "No project" whose folder is not known here yet is asked without a folder: the engine answers for its default one,
    * unless that is its own data (the desktop) — then Claude is asked once a chat names the folder.
    */
@@ -2785,13 +2926,8 @@ export class HohHost {
     }
   }
 
-  private async generateTitle(thread: ThreadModel, message: string) {
-    // A title explicitly saved by the person takes precedence over automatic naming.
-    if (this.threadMetadata.get(thread.id).title) return;
-    const baseline = thread.title;
-    const requestId = globalThis.crypto?.randomUUID?.() ?? `${this.now()}-${Math.random()}`;
-    this.titleRequests.set(thread.id, requestId);
-    const prompt = `Generate a title that will help the user recognize this T3 Code thread weeks later.
+  private async requestTitle(message: string, currentTitle?: string) {
+    const prompt = `Generate a title that will help the user recognize this HoH chat weeks later.
 Return JSON with key title.
 
 Editorial rules:
@@ -2800,17 +2936,84 @@ Editorial rules:
 - Title the durable subject and desired outcome, not the plan, model, tools, tests, or workflow.
 - Do not claim the work is complete, copy and truncate the message, use quotes, filler, or trailing punctuation.
 
-USER MESSAGE:
+USER MESSAGES:
 ${message.slice(0, 8000)}`;
+    const result = await this.engine.request('hoh/executor/title/generate', {
+      executor: 'claude',
+      prompt: currentTitle ? `${prompt}\n\nCURRENT TITLE:\n${currentTitle}\nKeep it if it already fits.` : prompt,
+    });
+    const title = typeof result?.title === 'string' ? result.title.trim() : '';
+    if (!title || title.length > 120) throw new Error('Claude returned an invalid chat title.');
+    return title;
+  }
+
+  private isCurrentTitleRequest(thread: ThreadModel, requestId: string) {
+    return !this.stopped && this.threads.get(thread.id) === thread && this.titleRequests.get(thread.id) === requestId;
+  }
+
+  private async generateTitle(thread: ThreadModel, message: string) {
+    // A title explicitly saved by the person takes precedence over automatic naming.
+    if (thread.titleRegeneration || this.threadMetadata.get(thread.id).title) return;
+    const baseline = thread.title;
+    const requestId = globalThis.crypto?.randomUUID?.() ?? `${this.now()}-${Math.random()}`;
+    this.titleRequests.set(thread.id, requestId);
     try {
-      const result = await this.engine.request('hoh/executor/title/generate', { executor: 'claude', prompt });
-      const title = typeof result?.title === 'string' ? result.title.trim() : '';
-      if (!title || title.length > 120 || this.titleRequests.get(thread.id) !== requestId || thread.title !== baseline) return;
+      const title = await this.requestTitle(message);
+      if (!this.isCurrentTitleRequest(thread, requestId) || thread.title !== baseline || thread.archivedAt !== null) return;
       thread.title = title;
       this.titles.set(thread.id, title);
-      this.titleRequests.delete(thread.id);
       this.save(); this.changed(thread.id); this.flush();
     } catch { /* A title is optional: the first-message fallback stays. */ }
+    finally { if (this.isCurrentTitleRequest(thread, requestId)) this.titleRequests.delete(thread.id); }
+  }
+
+  private armTitleRegeneration(thread: ThreadModel, requestId: string) {
+    if (!requestId.trim()) throw new Error('Invalid chat title request.');
+    if (thread.archivedAt !== null) throw new Error('This chat is archived.');
+    if (thread.lastTitleRegeneration?.requestId === requestId || thread.titleRegeneration?.requestId === requestId) return;
+    if (thread.titleRegeneration) throw new Error('A title request is already running for this chat.');
+    this.titleRequests.set(thread.id, requestId);
+    thread.titleRegeneration = { requestId, startedAt: this.iso() };
+    this.changed(thread.id);
+    void this.regenerateTitle(thread, requestId);
+  }
+
+  private async regenerateTitle(thread: ThreadModel, requestId: string) {
+    let status: 'renamed' | 'unchanged' | 'failed' = 'unchanged';
+    let message: string | undefined;
+    try {
+      await this.loaded(thread.id);
+      if (!this.isCurrentTitleRequest(thread, requestId)) return;
+      if (!thread.bindingKnown || thread.builtin || thread.executor !== 'claude') {
+        throw new Error('Select a Claude chat to generate its title.');
+      }
+      const prompts: string[] = [];
+      for (const item of thread.searchableMessages()) {
+        if (item.role !== 'user' || !item.text.trim()) continue;
+        prompts.push(item.text.slice(0, 1200));
+        if (prompts.length === 6) break;
+      }
+      if (!prompts.length) throw new Error('Send a message before generating a title.');
+      let title: string;
+      try { title = await this.requestTitle(prompts.reverse().join('\n\n'), thread.titleText()); }
+      catch { throw new Error('Claude could not generate a title. Try again.'); }
+      if (!this.isCurrentTitleRequest(thread, requestId)) return;
+      if (title !== thread.titleText()) {
+        this.threadMetadata.update(thread.id, { title });
+        this.titles.set(thread.id, title);
+        thread.title = title;
+        status = 'renamed';
+      }
+    } catch (error) {
+      status = 'failed';
+      message = errorText(error);
+    }
+    if (!this.isCurrentTitleRequest(thread, requestId)) return;
+    this.titleRequests.delete(thread.id);
+    thread.titleRegeneration = null;
+    thread.lastTitleRegeneration = { requestId, status, completedAt: this.iso(), ...(message ? { message } : {}) };
+    this.changed(thread.id);
+    this.flush();
   }
 
   /** «Стоп»: the same cancel as the current window; the engine ends Claude and its commands. */
@@ -2853,10 +3056,70 @@ ${message.slice(0, 8000)}`;
     if (thread.interrupt(stopAt) || replacedCrashDisposition || stoppedOrdinal !== undefined) { this.changed(thread.id); this.flush(); }
   }
 
+  private async startSideChat(command: Record<string, any>) {
+    const sourceId = typeof command.sourceThreadId === 'string' ? command.sourceThreadId : '';
+    const targetId = typeof command.targetThreadId === 'string' ? command.targetThreadId : '';
+    if (command.sideChat !== true || command.sourcePoint?.type !== 'latest_stable') {
+      throw new Error('Only side chats can be opened from this command.');
+    }
+    if (!targetId || targetId === sourceId || this.threads.has(targetId) || this.creatingEditBranches.has(targetId)) {
+      throw new Error('This side chat id is already in use.');
+    }
+    this.creatingEditBranches.add(targetId);
+    let created = false;
+    try {
+      const source = await this.loaded(sourceId);
+      if (!source || !source.bindingKnown || source.builtin || source.sideChat || source.archivedAt !== null
+        || source.userMessageCount() === 0 || this.deletingThreads.has(sourceId)) {
+        throw new Error('Open a side chat from a started main conversation.');
+      }
+      await this.ensureSessionResumed(source.id);
+      // The engine snapshots its own stable boundary, even while the parent is streaming.
+      const result = await this.engine.request('session/fork-side-chat', { sessionId: source.id, targetSessionId: targetId });
+      created = result?.sessionId === targetId;
+      const sideChat = this.readSideChat({ parentSessionId: source.id, seedEndSeq: result?.seedEndSeq });
+      if (!created || !sideChat) throw new Error('The engine did not confirm the side chat.');
+
+      const child = new ThreadModel({
+        id: targetId, title: typeof command.title === 'string' ? command.title : 'Side chat',
+        createdAt: this.now(), model: source.model, executor: source.executor, mode: 'confirm', projectId: source.projectId,
+      });
+      child.sideChat = sideChat;
+      child.cwd = source.cwd;
+      child.loaded = true;
+      this.resumedSessions.add(targetId);
+      await this.withSelectionMutation(async () => {
+        await this.applyMode(child, runtimeModeOf(source.mode));
+        const own = (await this.engine.request('hoh/executor/access/get', {
+          executor: child.executor, sessionId: child.id,
+        }))?.session;
+        if (own?.executor !== source.executor || typeof own.model !== 'string' || own.runtimeMode !== child.mode) {
+          throw new Error('The side chat did not retain the main chat’s harness and permissions.');
+        }
+        child.model = own.model;
+      });
+      this.setLevel(child, source.options);
+      try { this.threadMetadata.update(child.id, { sideChat }); } catch { /* Engine inventory also carries the lineage. */ }
+      this.homes.set(child.id, child.projectId);
+      this.threads.set(child.id, child);
+      this.save();
+      this.changed(child.id);
+    } catch (error) {
+      if (created) {
+        this.resumedSessions.delete(targetId);
+        await this.engine.request('session/delete', { sessionId: targetId }).catch(() => {});
+      }
+      throw error;
+    } finally {
+      this.creatingEditBranches.delete(targetId);
+    }
+  }
+
   private async respond(thread: ThreadModel, command: Record<string, any>) {
     const requestId = String(command.requestId ?? '');
     const request = thread.pendingRequest(requestId);
     if (!request) throw dispatchError(command, 'This request is no longer waiting for an answer.');
+    if (request.kind === 'secret') throw dispatchError(command, 'Use the private credential form.');
     if (request.kind === 'user_input') {
       const answers = command.answers && typeof command.answers === 'object' ? command.answers as Record<string, unknown> : {};
       if (!this.engine.answerQuestion) throw dispatchError(command, 'Questions cannot be answered here.');
@@ -2874,16 +3137,150 @@ ${message.slice(0, 8000)}`;
     this.changed(thread.id);
   }
 
+  private async respondToSecret(input: Record<string, any>) {
+    const fail = (reason: string): never => { throw new RpcFailure({ _tag: 'SecretRequestError', reason }); };
+    const thread = this.threads.get(input.threadId);
+    const id = typeof input.turnItemId === 'string' && input.turnItemId.startsWith('item-question-')
+      ? input.turnItemId.slice('item-question-'.length) : '';
+    if (!thread || thread.pendingRequest(id)?.kind !== 'secret' || this.questions.get(id)?.sessionId !== thread.id) {
+      return fail('not_found');
+    }
+    const answer = input.answer;
+    const save = answer?.type === 'save' && typeof answer.secret === 'string';
+    if (!this.engine.answerSecret || (!save && answer?.type !== 'decline')) return fail('store_failed');
+    try {
+      await this.engine.answerSecret(thread.id, id, save ? answer.secret : null);
+    } catch { return fail('store_failed'); }
+    this.questions.delete(id);
+    if (thread.questionClosed(id, null, this.now(), save ? 'saved' : 'declined')) this.changed(thread.id);
+    this.flush();
+  }
+
   private async respondImmediately(threadId: string, command: Record<string, any>) {
     const thread = this.threads.get(threadId);
     const requestId = String(command.requestId ?? '');
     if (thread?.pendingRequest(requestId)) return this.respond(thread, command);
+    if (this.questions.get(requestId)?.questions.some(question => question.intent?.kind === 'secret-file'))
+      throw dispatchError(command, 'Use the private credential form.');
     if (command.answers && this.engine.answerQuestion) {
       await this.engine.answerQuestion(requestId, questionAnswer(this.questions.get(requestId), command.answers));
     } else if (this.engine.decideApproval) {
       const allowed = ['accept', 'acceptForSession', 'acceptAlways'].includes(command.decision);
       await this.engine.decideApproval(requestId, allowed ? 'allowed-once' : 'rejected');
     } else throw dispatchError(command, 'This request is no longer available.');
+  }
+
+  private updateThreadOrganization(thread: ThreadModel, patch: ThreadMetadata) {
+    this.threadMetadata.update(thread.id, patch);
+    thread.applyOrganization(patch);
+    if (patch.pinnedAt !== undefined) thread.pinnedAt = patch.pinnedAt;
+    if (patch.pinOrderKey !== undefined) thread.pinOrderKey = patch.pinOrderKey;
+    this.changed(thread.id);
+  }
+
+  private async organizeThread(thread: ThreadModel, command: Record<string, any>) {
+    const type = command.type;
+    const visits = type === 'thread.visit' && command.opened === true ? await loadThreadSearch() : null;
+    if (!thread.loaded && ['thread.mark-unread', 'thread.settle', 'thread.auto-settle', 'thread.snooze'].includes(type)) {
+      const journal = this.journalFor(thread);
+      if (!journal.ready) await this.replayJournal(thread, journal);
+    }
+    if (this.threads.get(thread.id) !== thread || this.deletingThreads.has(thread.id)) {
+      throw new Error('This chat is being deleted or was deleted.');
+    }
+    if (thread.archivedAt !== null && !['thread.visit', 'thread.mark-unread', 'thread.tag.set'].includes(type)) {
+      throw new Error('This chat is archived.');
+    }
+    const now = this.now();
+    const state = thread.organization;
+    let patch: ThreadMetadata;
+    switch (type) {
+      case 'thread.visit': {
+        const visitedAt = Date.parse(command.visitedAt);
+        if (!Number.isFinite(visitedAt)) throw new Error('Invalid chat visit time.');
+        if (state.lastVisitedAt !== null && visitedAt <= state.lastVisitedAt && !visits) return;
+        patch = {
+          lastVisitedAt: Math.max(state.lastVisitedAt ?? visitedAt, visitedAt),
+          ...(visits ? { opens: visits.recordThreadOpen(state.opens, now,
+            typeof command.searchQuery === 'string' ? command.searchQuery : undefined) } : {}),
+        };
+        // The visit tracker follows shell rows. A read receipt should not republish a large transcript
+        // or move its search sequence while a response is streaming.
+        this.threadMetadata.update(thread.id, patch);
+        thread.applyOrganization(patch);
+        const sequence = ++this.sequence;
+        for (const sink of this.shellSinks) sink.emit({
+          kind: 'thread.updated', sequence, location: thread.archivedAt === null ? 'active' : 'archive', thread: thread.shell(),
+        });
+        return;
+      }
+      case 'thread.mark-unread': {
+        const completedAt = thread.latestRunCompletion();
+        if (completedAt === null) throw new Error('This chat has no completed run to mark unread.');
+        patch = { lastVisitedAt: completedAt - 1 };
+        if (state.snoozedUntil !== null && state.snoozedUntil <= now) {
+          Object.assign(patch, { snoozedUntil: null, snoozedAt: null, lastSnoozeWakeAt: state.snoozedUntil });
+        }
+        break;
+      }
+      case 'thread.auto-settle': case 'thread.settle': {
+        if (type === 'thread.auto-settle' && (state.settledOverride !== null || state.autoSettleDisabledAt !== null
+          || !(Date.parse(command.snapshotAt) >= thread.updatedAt))) {
+          throw new Error('The chat changed before automatic settlement.');
+        }
+        if (thread.activeRunId() || thread.engineRunning || thread.hasPendingApproval()) {
+          throw new Error('Wait for this chat to finish before settling it.');
+        }
+        if (command.expectedLatestRunId !== undefined && command.expectedLatestRunId !== thread.shell().latestRunId) {
+          throw new Error('The chat received another run before settlement.');
+        }
+        const requested = typeof command.settledAt === 'string' ? Date.parse(command.settledAt) : NaN;
+        patch = {
+          settledOverride: 'settled', settledAt: state.settledAt ?? (Number.isFinite(requested) ? requested : now),
+          unsettledAt: null, pinnedAt: null, pinOrderKey: null, activeOrderKey: null, snoozedUntil: null, snoozedAt: null,
+        };
+        break;
+      }
+      case 'thread.unsettle': {
+        const restored = command.restoreUnsettledAt;
+        const at = restored === null ? null : typeof restored === 'string' ? Date.parse(restored) : now;
+        if (at !== null && !Number.isFinite(at)) throw new Error('Invalid chat unsettle time.');
+        if (state.settledOverride === 'active') return;
+        patch = { settledOverride: 'active', settledAt: null, unsettledAt: at };
+        break;
+      }
+      case 'thread.snooze': {
+        const until = Date.parse(command.snoozedUntil);
+        if (!(until > now)) throw new Error('Choose a snooze time in the future.');
+        if (thread.hasPendingApproval()) throw new Error('A chat waiting for an approval cannot be snoozed.');
+        patch = { snoozedUntil: until, snoozedAt: now };
+        break;
+      }
+      case 'thread.unsnooze':
+        if (state.snoozedUntil === null) return;
+        patch = { snoozedUntil: null, snoozedAt: null, lastSnoozeWakeAt: now };
+        break;
+      case 'thread.auto-settle.set':
+        patch = { autoSettleDisabledAt: command.enabled ? null : state.autoSettleDisabledAt ?? now };
+        break;
+      case 'thread.active.reorder': {
+        const key = typeof command.orderKey === 'string' ? command.orderKey.trim() : '';
+        if (!key || thread.pinnedAt !== null || state.settledOverride === 'settled') {
+          throw new Error('Only active chats can be reordered here.');
+        }
+        patch = { activeOrderKey: key };
+        break;
+      }
+      case 'thread.tag.set': {
+        const tag = threadTag(command.tag);
+        if (!tag || typeof command.tagged !== 'boolean') throw new Error('Invalid chat tag.');
+        if (command.tagged === state.tags.includes(tag)) return;
+        patch = { tags: command.tagged ? [...state.tags, tag] : state.tags.filter(value => value !== tag) };
+        break;
+      }
+      default: throw new Error('Invalid chat action.');
+    }
+    this.updateThreadOrganization(thread, patch);
   }
 
   private async dispatch(command: Record<string, any>) {
@@ -2901,13 +3298,15 @@ ${message.slice(0, 8000)}`;
     await this.start();
     // Window-owned list actions do not require opening the engine history. They remain usable
     // while a cold conversation's history or access lookup is slow or unavailable.
-    const listAction = ['thread.metadata.update', 'thread.pin', 'thread.unpin', 'thread.pin.reorder', 'thread.archive', 'thread.unarchive', 'thread.delete'].includes(type);
+    const listAction = THREAD_ORGANIZATION_COMMANDS.has(type)
+      || ['thread.metadata.update', 'thread.pin', 'thread.unpin', 'thread.pin.reorder', 'thread.archive', 'thread.unarchive', 'thread.delete'].includes(type);
     try {
       const thread = typeof command.threadId === 'string'
         ? listAction ? this.threads.get(command.threadId) : await this.loaded(command.threadId)
         : undefined;
       const needThread = () => { if (!thread) throw dispatchError(command, 'This chat does not exist.'); return thread; };
       switch (type) {
+        case 'thread.fork': await this.startSideChat(command); break;
         case 'thread.create':
           if (thread && typeof command.projectId === 'string' && command.projectId !== thread.projectId) throw new Error('A conversation cannot change its project folder. Start a new chat.');
           if (!thread) await this.createThread(command.threadId, command.title, command.modelSelection?.model, command.runtimeMode, command.projectId, command.modelSelection?.instanceId, command.interactionMode);
@@ -2958,21 +3357,50 @@ ${message.slice(0, 8000)}`;
         }
         case 'thread.metadata.update': {
           const target = needThread();
-          if (typeof command.title === 'string' && command.title.trim()) { const title = command.title.trim(); this.threadMetadata.update(target.id, { title }); this.titles.set(target.id, title); this.titleRequests.delete(target.id); this.save(); target.title = title; this.changed(target.id); }
+          if (typeof command.title === 'string' && command.title.trim()) {
+            const title = command.title.trim();
+            this.threadMetadata.update(target.id, { title });
+            this.titles.set(target.id, title);
+            this.titleRequests.delete(target.id);
+            target.titleRegeneration = null;
+            target.title = title;
+            this.changed(target.id);
+          } else if (command.regenerateTitle === true) {
+            this.armTitleRegeneration(target, String(command.commandId ?? ''));
+          } else if (command.regenerateTitle === false && target.titleRegeneration) {
+            this.titleRequests.delete(target.id);
+            target.titleRegeneration = null;
+            this.changed(target.id);
+          }
           break;
         }
         case 'thread.pin': case 'thread.unpin': case 'thread.pin.reorder': {
           const target = needThread();
-          const pinnedAt = type === 'thread.unpin' ? null : target.pinnedAt ?? this.now();
-          const pinOrderKey = type === 'thread.unpin' ? null : typeof command.orderKey === 'string' && command.orderKey.trim() ? command.orderKey : target.pinOrderKey;
-          this.threadMetadata.update(target.id, { pinnedAt, pinOrderKey });
-          target.pinnedAt = pinnedAt;
-          target.pinOrderKey = pinOrderKey;
-          this.changed(target.id);
+          if (target.archivedAt !== null) throw new Error('This chat is archived.');
+          const orderKey = typeof command.orderKey === 'string' ? command.orderKey.trim() : '';
+          if (type === 'thread.pin.reorder' && (target.pinnedAt === null || !orderKey)) {
+            throw new Error('Only pinned chats can be reordered here.');
+          }
+          const now = this.now();
+          const patch: ThreadMetadata = {
+            pinnedAt: type === 'thread.unpin' ? null : target.pinnedAt ?? now,
+            pinOrderKey: type === 'thread.unpin' ? null : orderKey || target.pinOrderKey,
+          };
+          if (type === 'thread.pin' && target.organization.settledOverride === 'settled') {
+            Object.assign(patch, { settledOverride: 'active', settledAt: null, unsettledAt: now });
+          }
+          if (type === 'thread.pin' && target.organization.snoozedUntil !== null) {
+            Object.assign(patch, { snoozedUntil: null, snoozedAt: null, lastSnoozeWakeAt: now });
+          }
+          this.updateThreadOrganization(target, patch);
           break;
         }
         case 'thread.delete': {
           const target = needThread();
+          if (command.onlyIfUnused === true) {
+            const loaded = target.loaded ? target : await this.loaded(target.id);
+            if (!loaded || loaded.userMessageCount() > 0 || loaded.running || loaded.activeRunId()) break;
+          }
           if (this.deletingThreads.has(target.id) || this.deletedThreads.has(target.id)) throw dispatchError(command, 'This chat is being deleted.');
           this.deletingThreads.add(target.id);
           try { await this.engine.request('session/delete', { sessionId: target.id }); }
@@ -2980,6 +3408,7 @@ ${message.slice(0, 8000)}`;
           this.deletedThreads.add(target.id);
           this.deletingThreads.delete(target.id);
           this.threads.delete(target.id);
+          this.titleRequests.delete(target.id);
           this.wakeLocalImageReaders();
           this.dirty.delete(target.id);
           this.streamChanges.delete(target.id);
@@ -2997,12 +3426,17 @@ ${message.slice(0, 8000)}`;
           const archivedAt = type === 'thread.archive' ? this.now() : null;
           this.threadMetadata.update(target.id, { archivedAt });
           target.archivedAt = archivedAt;
+          if (archivedAt !== null) {
+            this.titleRequests.delete(target.id);
+            target.titleRegeneration = null;
+          }
           if (archivedAt === null && !target.homeProjectStats) this.schedulePeekToday();
           this.changed(target.id);
           break;
         }
         default:
-          if (!NO_OP_COMMANDS.has(type)) throw dispatchError(command, 'Not available in HoH.');
+          if (!THREAD_ORGANIZATION_COMMANDS.has(type)) throw dispatchError(command, 'Not available in HoH.');
+          await this.organizeThread(needThread(), command);
       }
     } catch (error) {
       if (error instanceof RpcFailure) throw error;
@@ -3047,9 +3481,17 @@ ${message.slice(0, 8000)}`;
 
   // ---- the methods T3 calls ----
 
+  private projectFileRoots(): readonly string[] {
+    const roots = new Set([...this.folders.values()].map(project => project.workspaceRoot));
+    if (this.workspaceKnown) roots.add(this.workspaceRoot);
+    for (const thread of this.threads.values()) if (thread.cwd) roots.add(folderPath(thread.cwd));
+    return [...roots];
+  }
+
   handlers(): Handlers {
     return {
       unary: {
+        ...projectFileHandlers(this.engine, () => this.start(), () => this.projectFileRoots()),
         'server.probe': () => ({}),
         // Focus and typing reports of the window: nothing to schedule here, accepted and dropped.
         'server.reportClientActivity': () => undefined,
@@ -3061,9 +3503,21 @@ ${message.slice(0, 8000)}`;
           return usageSummary(input, [...this.threads.values()].filter(thread => this.accessVisible(thread.id)), this.peeked);
         },
         'server.getSettings': async () => { await this.start(); return this.settings(); },
+        'server.upsertKeybinding': payload => this.editKeybinding(payload, 'upsertKeybinding'),
+        'server.removeKeybinding': payload => this.editKeybinding(payload, 'removeKeybinding'),
         'server.updateSettings': async (payload: any) => {
           await this.start();
           const patch = payload?.patch && typeof payload.patch === 'object' ? { ...payload.patch } : {};
+          let windowPreferencesChanged = false;
+          try {
+            windowPreferencesChanged = this.localSettings?.updateWindowPreferences(patch, payload?.providerInstanceMutation) ?? false;
+          } catch {
+            throw new RpcFailure({
+              _tag: 'ServerSettingsError',
+              settingsPath: 'HoH window preferences',
+              operation: 'write-file',
+            });
+          }
           // The default mode is where new threads start; the model is the engine's choice for new chats.
           if (typeof patch.defaultRuntimeMode === 'string') { this.defaultMode = accessModeOf(patch.defaultRuntimeMode); this.save(); }
           if (patch.defaultModelSelection?.model) await this.applyModel(executorOf(patch.defaultModelSelection.instanceId), patch.defaultModelSelection.model);
@@ -3073,7 +3527,8 @@ ${message.slice(0, 8000)}`;
           for (const [key, value] of Object.entries(patch)) {
             if (primitive(value) || (Array.isArray(value) && value.every(primitive))) this.settingsOverrides = { ...this.settingsOverrides, [key]: value };
           }
-          for (const sink of this.configSinks) sink.emit({ version: 1, type: 'settingsUpdated', payload: { settings: this.settings() } });
+          if (windowPreferencesChanged) this.configChanged();
+          else for (const sink of this.configSinks) sink.emit({ version: 1, type: 'settingsUpdated', payload: { settings: this.settings() } });
           return this.settings();
         },
         // T3's "Start without a project": the chats' folder is that project.
@@ -3085,6 +3540,7 @@ ${message.slice(0, 8000)}`;
         'projects.mutate': (mutation: any) => this.mutateProject(mutation ?? {}),
         'projects.searchEntries': (payload: any) => this.searchEntries(payload ?? {}),
         'assets.persistChatAttachments': (payload: any) => this.persistAttachments(payload ?? {}),
+        'secrets.answerRequest': (payload: any) => this.respondToSecret(payload ?? {}),
         'attachments.createUploadUrl': (payload: any) => this.createUploadUrl(payload ?? {}),
         // T3 checks a picture it uploaded before it sends it: held here — an address; gone — T3 uploads it again.
         'assets.createUrl': async (payload: any) => {
@@ -3161,14 +3617,22 @@ ${message.slice(0, 8000)}`;
         'agentSessions.scan': () => ({ candidates: [], scannedAt: this.iso() }),
         'server.refreshProviders': async (payload: any) => {
           await this.start();
-          const claude = () => claudeProvider(this.claudeDiscovery, this.iso(), this.mode !== null, this.discoveryFailure);
-          const codex = () => codexProvider(this.codexDiscovery, this.iso(), this.codexDiscoveryFailure);
-          const pi = () => piProvider(this.piDiscovery, this.iso(), this.mode !== null);
+          const preferences = () => this.localSettings?.windowPreferences();
+          const claude = () => presentProvider(
+            claudeProvider(this.claudeDiscovery, this.iso(), this.mode !== null, this.discoveryFailure),
+            preferences(),
+          );
+          const codex = () => presentProvider(
+            codexProvider(this.codexDiscovery, this.iso(), this.codexDiscoveryFailure),
+            preferences(),
+          );
+          const pi = () => presentProvider(piProvider(this.piDiscovery, this.iso(), this.mode !== null), preferences());
           // The composer's folder (T3's workspace snapshot): `/` and `$` from its selected executor.
           const cwd = typeof payload?.cwd === 'string' ? payload.cwd.trim() : '';
           if (cwd && payload?.instanceId === CODEX_INSTANCE_ID) {
             if (this.codexDiscovery === null) await this.readDiscovery();
-            return { providers: [{ ...codexProvider(this.codexDiscovery, this.iso(), this.codexDiscoveryFailure), workspaceSnapshots: [await this.workspaceSnapshot(cwd, 'codex')] }] };
+            const workspaceSnapshot = await this.workspaceSnapshot(cwd, 'codex');
+            return { providers: [{ ...codex(), workspaceSnapshots: [workspaceSnapshot] }] };
           }
           if (cwd && payload?.instanceId === CLAUDE_INSTANCE_ID) {
             if (this.claudeDiscovery === null) await this.readDiscovery();
@@ -3219,6 +3683,19 @@ ${message.slice(0, 8000)}`;
         },
         'orchestration.dispatchCommand': (command: any) => this.dispatch(command ?? {}),
         'orchestration.launchThread': (input: any) => this.launch(input ?? {}),
+        'orchestration.searchThread': (input: FindInput & { threadId: string }) => this.findInChat(input),
+        'orchestration.searchThreads': (input: any) => this.searchChats(input ?? {}),
+        'orchestration.getThreadFamily': async ({ threadId }) => {
+          await this.start();
+          const target = this.threads.get(threadId);
+          const root = target?.sideChat?.parentSessionId ?? target?.id;
+          return {
+            snapshotSequence: this.sequence,
+            threads: root ? [...this.threads.values()]
+              .filter(thread => thread.archivedAt === null && (thread.id === root || thread.sideChat?.parentSessionId === root))
+              .map(thread => thread.shell()) : [],
+          };
+        },
         'orchestration.getArchivedShellSnapshot': async () => {
           await this.start();
           const { snapshot } = this.shellSnapshot();
@@ -3230,15 +3707,30 @@ ${message.slice(0, 8000)}`;
           if (!thread) throw new RpcFailure({ _tag: 'OrchestrationV2GetThreadProjectionError', threadId: String(payload?.threadId ?? 'unknown'), message: 'This chat does not exist.' });
           return thread.projection();
         },
+        'orchestration.getTurnItem': async (payload: { threadId: string; itemId: string }) => {
+          const threadId = String(payload?.threadId ?? '');
+          try {
+            await this.start();
+            const thread = await this.loaded(threadId);
+            const item = thread && this.threads.get(threadId) === thread && !this.deletingThreads.has(threadId)
+              ? thread.turnItemDetail(String(payload?.itemId ?? '')) : null;
+            return { item };
+          } catch (error) {
+            throw new RpcFailure({ _tag: 'OrchestrationV2GetThreadProjectionError', threadId, message: errorText(error) });
+          }
+        },
         'orchestration.forceStopThread': async (payload: any) => {
           const id = String(payload?.threadId ?? '');
           const thread = this.threads.get(id);
           if (thread) await this.cancel(thread); else await this.engine.request('session/cancel', { sessionId: id });
           return { outcome: 'killed', sharedWithThreadIds: [] };
         },
-        // Git is hidden; T3 still asks about the folder when a thread opens. It is not a repository.
-        'vcs.refreshStatus': () => ({ ...NOT_A_REPO_LOCAL, hasUpstream: false, aheadCount: 0, behindCount: 0, pr: null }),
-        'vcs.listRefs': () => ({ refs: [], isRepo: false, hasPrimaryRemote: false, nextCursor: null, totalCount: 0 }),
+        'vcs.refreshStatus': payload => this.git.refresh(payload),
+        'vcs.refreshBranch': async payload => { await this.git.refresh(payload); },
+        'vcs.listRefs': payload => this.git.listRefs(payload),
+        'review.getDiffPreview': payload => this.git.diffPreview(payload),
+        'review.getBranchCommits': payload => this.git.branchCommits(payload),
+        'review.getDiffFileContents': payload => this.git.fileContents(payload),
         'orchestration.getThreadTitles': async (payload: any) => {
           await this.start();
           const titles: Record<string, string> = {};
@@ -3250,6 +3742,15 @@ ${message.slice(0, 8000)}`;
         },
       },
       stream: {
+        'orchestration.searchThreadStream': (input: FindInput & { threadId: string }, sink) => {
+          const controller = new AbortController();
+          void this.findInChat(input, result => sink.emit(result), controller.signal).then(result => {
+            if (controller.signal.aborted) return;
+            sink.emit(result);
+            sink.end();
+          }, error => { if (!controller.signal.aborted) sink.fail(error); });
+          return () => controller.abort();
+        },
         subscribeServerConfig: (_payload, sink) => {
           this.configSinks.add(sink);
           void this.start().then(() => { if (this.configSinks.has(sink)) sink.emit({ version: 1, type: 'snapshot', config: this.config() }); });
@@ -3268,8 +3769,8 @@ ${message.slice(0, 8000)}`;
           });
           return () => { open = false; this.lifecycleSinks.delete(sink); };
         },
-        // Without an answer T3 assumes a repository and asks for a base branch before sending.
-        subscribeVcsStatus: (_payload, sink) => { sink.emit({ _tag: 'snapshot', local: NOT_A_REPO_LOCAL, remote: null }); },
+        subscribeVcsStatus: (payload, sink) => this.git.subscribe(payload, sink),
+        subscribeVcsBranch: (payload, sink) => this.git.subscribe(payload, sink, true),
         'orchestration.subscribeShell': (payload: any, sink) => {
           let open = true;
           void this.start().then(() => {

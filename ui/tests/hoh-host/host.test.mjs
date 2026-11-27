@@ -88,8 +88,11 @@ test('handshake: config snapshot, probe, settings, ping; Claude and Codex are of
   assert.deepEqual(first.config.providers[1].supportedRuntimeModes, ['approval-required', 'auto-accept-edits', 'auto', 'full-access']);
   assert.deepEqual(first.config.settings.defaultModelSelection, { instanceId: 'claudeAgent', model: 'claude-sonnet' });
   assert.equal(first.config.settings.defaultRuntimeMode, 'full-access');
-  // Nothing optional is advertised: T3 hides git, terminal, preview, PRs, issues… by their absence.
-  assert.deepEqual(Object.keys(first.config.environment.capabilities).sort(), ['connectionProbe', 'inlineMessageContext', 'providerWorkspaceSnapshotsOnDemand', 'repositoryIdentity', 'threadForceStop']);
+  assert.deepEqual(Object.keys(first.config.environment.capabilities).sort(), [
+    'connectionProbe', 'inlineMessageContext', 'projectOrganization', 'providerWorkspaceSnapshotsOnDemand',
+    'repositoryIdentity', 'sideChats', 'threadActiveReorder', 'threadForceStop', 'threadPinReorder', 'threadPinning',
+    'threadSettlement', 'threadSnooze', 'threadVisitedTracking',
+  ]);
   assert.deepEqual(await client.call('server.probe', {}), {});
   assert.deepEqual(await client.request('server.reportClientActivity', {}), { _tag: 'Success', value: null });
   assert.equal((await client.call('server.getConfig', {})).environment.label, 'HoH');

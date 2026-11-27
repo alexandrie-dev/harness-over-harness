@@ -1,0 +1,1 @@
+{"jsonrpc":"2.0","id":"session/fork-side-chat","method":"session/fork-side-chat","params":{"sessionId":"session-1","targetSessionId":"session-side-1"}}

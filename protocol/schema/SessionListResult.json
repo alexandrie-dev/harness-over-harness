@@ -30,6 +30,23 @@
           "type": "integer",
           "format": "uint64",
           "minimum": 0
+        },
+        "sideChat": {
+          "type": "object",
+          "properties": {
+            "parentSessionId": {
+              "type": "string"
+            },
+            "seedEndSeq": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "parentSessionId",
+            "seedEndSeq"
+          ]
         }
       },
       "required": [

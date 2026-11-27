@@ -21,7 +21,10 @@
     ]
   },
   "include": [
-    "src",
+    "src/main.tsx",
+    "src/lib",
+    "src/screens",
+    "src/t3",
     "vite.config.ts"
   ],
   "extends": "./src/t3/tsconfig.paths.json"

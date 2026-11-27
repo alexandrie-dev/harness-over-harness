@@ -30,9 +30,9 @@ after(async () => {
 });
 
 /** Runs `body(client, engine)` with a real T3 RPC client connected to a host over `engine`. */
-function withClient(engine, body) {
+function withClient(engine, body, onRequest) {
   const host = new mod.host.HohHost({ engine, throttleMs: 0 });
-  const server = new mod.wire.WireServer(host.handlers(), { onError: () => {} });
+  const server = new mod.wire.WireServer(host.handlers(), { onError: () => {}, onRequest });
   const layerProtocol = Layer.effect(RpcClient.Protocol, RpcClient.makeProtocolSocket({ pingTimeout: '15 seconds', retryTransientErrors: false })).pipe(
     Layer.provide(Layer.mergeAll(
       Socket.layerWebSocket('ws://hoh.local/ws?frameParts=1', { openTimeout: '5 seconds' }).pipe(
@@ -135,13 +135,130 @@ test('T3 decodes usage while an agent or subagent approval waits, and stop works
   await stream.stop();
 }));
 
+test('T3 credential cards bind a private answer to its chat and project only its status', () => {
+  const engine = new FakeEngine();
+  engine.seed('secret-chat', 'Credential', []);
+  engine.seed('other-chat', 'Other', []);
+  const delivered = [];
+  const reported = [];
+  const value = 'synthetic-credential-for-tests';
+  engine.answerSecret = async (...args) => {
+    delivered.push(args);
+    if (args[2] === value) engine.emitEvent(args[0], 'turn/end', { reason: { kind: 'completed' } });
+  };
+
+  return withClient(engine, async client => {
+    const stream = await collect(client['orchestration.subscribeThread']({ threadId: 'secret-chat' }));
+    try {
+      await stream.until(event => event.kind === 'snapshot');
+      engine.emitEvent('secret-chat', 'user/message', {
+        id: 'prompt', source: { kind: 'user' }, content: [{ type: 'text', text: 'Ask for a test credential' }],
+      });
+      engine.emitEvent('secret-chat', 'turn/start', { turn: 1 });
+      const ask = requestId => engine.askQuestion({
+        requestId, sessionId: 'secret-chat', questions: [
+          { id: 'credential', header: 'Test credential', question: 'To run the test', intent: { kind: 'secret-file' } },
+        ],
+      });
+      const pending = async requestId => {
+        ask(requestId);
+        const itemId = 'item-question-' + requestId;
+        const event = await stream.until(entry => entry.kind === 'snapshot'
+          && entry.projection.visibleTurnItems.some(({ item }) => item.id === itemId && item.secretStatus === 'pending'));
+        assert.equal(event.projection.runtimeRequests.length, 0);
+        return itemId;
+      };
+      const turnItemId = await pending('private-one');
+      const answer = { turnItemId, answer: { type: 'save', secret: value } };
+      const wrong = await runExit(client['secrets.answerRequest']({ ...answer, threadId: 'other-chat' }));
+      assert(Exit.isFailure(wrong));
+      assert.equal(Cause.squash(wrong.cause).reason, 'not_found');
+      const normalAnswer = await runExit(client['orchestration.dispatchCommand']({
+        type: 'runtime-request.respond', commandId: 'ordinary', threadId: 'secret-chat',
+        requestId: 'private-one', answers: { credential: 'ordinary answer' },
+      }));
+      assert(Exit.isFailure(normalAnswer));
+      assert.match(Cause.squash(normalAnswer.cause).message, /private credential form/);
+
+      await run(client['secrets.answerRequest']({ ...answer, threadId: 'secret-chat' }));
+      await stream.until(event => event.kind === 'snapshot'
+        && event.projection.visibleTurnItems.some(({ item }) => item.id === turnItemId && item.secretStatus === 'saved'));
+      const repeated = await runExit(client['secrets.answerRequest']({ ...answer, threadId: 'secret-chat' }));
+      assert(Exit.isFailure(repeated));
+      assert.equal(Cause.squash(repeated.cause).reason, 'not_found');
+      assert.deepEqual(delivered, [['secret-chat', 'private-one', value]]);
+
+      engine.emitEvent('secret-chat', 'user/message', {
+        id: 'second-prompt', source: { kind: 'user' }, content: [{ type: 'text', text: 'Ask again' }],
+      });
+      engine.emitEvent('secret-chat', 'turn/start', { turn: 2 });
+      const declinedId = await pending('private-two');
+      await run(client['secrets.answerRequest']({ threadId: 'secret-chat', turnItemId: declinedId, answer: { type: 'decline' } }));
+      await stream.until(event => event.kind === 'snapshot'
+        && event.projection.visibleTurnItems.some(({ item }) => item.id === declinedId && item.secretStatus === 'declined'));
+      assert.deepEqual(delivered.at(-1), ['secret-chat', 'private-two', null]);
+
+      const cancelledId = await pending('private-three');
+      engine.setStatus('restarting');
+      await stream.until(event => event.kind === 'snapshot'
+        && event.projection.visibleTurnItems.some(({ item }) => item.id === cancelledId && item.secretStatus === 'cancelled'));
+      assert.deepEqual(engine.answers, []);
+      assert(!JSON.stringify(stream.items).includes(value));
+      assert(!reported.some(({ method }) => method === 'secrets.answerRequest'));
+      assert(!JSON.stringify(reported).includes(value));
+    } finally {
+      await stream.stop();
+    }
+  }, (method, payload) => reported.push({ method, payload }));
+});
+
 test('T3 client: unsupported methods fail with the typed error; hidden streams stay quiet', () => withClient(new FakeEngine(), async client => {
-  const exit = await runExit(client['projects.readFile']({ cwd: '/x', relativePath: 'a' }));
+  const exit = await runExit(client['projects.writeFile']({ cwd: '/x', relativePath: 'a', contents: 'text' }));
   assert(Exit.isFailure(exit));
   const error = Cause.squash(exit.cause);
   assert.equal(error._tag, 'EnvironmentAuthorizationError');
   assert.equal(error.message, 'Not available in HoH.');
 }));
+
+test('T3 client: Files and Open in editor use the authorized project folder', () => {
+  const engine = new FakeEngine();
+  const cwd = '/home/person/Projects/site';
+  const calls = [];
+  engine.availableProjectEditors = async () => ['vscode'];
+  engine.listProjectEntries = async input => {
+    calls.push(input);
+    return { entries: [{ path: 'src/main.ts', kind: 'file' }], truncated: false };
+  };
+  engine.readProjectFile = async input => {
+    calls.push(input);
+    if (input.path === 'src') throw { failure: 'path_not_file', message: 'This is a folder.' };
+    return { relativePath: input.path, contents: 'export {};', byteLength: 10, truncated: false, exists: true };
+  };
+  engine.openProjectEditor = async input => { calls.push(input); };
+  return withClient(engine, async client => {
+    const refused = await runExit(client['projects.listEntries']({ cwd, directoryPath: '' }));
+    assert(Exit.isFailure(refused));
+    assert.equal(Cause.squash(refused.cause)._tag, 'ProjectListEntriesError');
+    assert.equal(calls.length, 0);
+
+    await run(client['projects.mutate']({
+      commandId: 'project-files', type: 'project.create', projectId: 'site', title: 'Site',
+      workspaceRoot: cwd, createWorkspaceRootIfMissing: false, defaultModelSelection: null,
+    }));
+    assert.deepEqual((await run(client['server.getConfig']({}))).availableEditors, ['vscode']);
+    assert.deepEqual(
+      (await run(client['projects.listEntries']({ cwd, directoryPath: 'src' }))).entries,
+      [{ path: 'src/main.ts', kind: 'file' }],
+    );
+    assert.equal((await run(client['projects.readFile']({ cwd, relativePath: 'src/main.ts' }))).contents, 'export {};');
+    const folder = await runExit(client['projects.readFile']({ cwd, relativePath: 'src' }));
+    assert(Exit.isFailure(folder));
+    assert.equal(Cause.squash(folder.cause).failure, 'path_not_file');
+    const target = cwd + '/src/main.ts';
+    await run(client['shell.openInEditor']({ cwd: target, editor: 'vscode', position: { line: 2 } }));
+    assert.deepEqual(calls.at(-1), { cwd, path: target, editor: 'vscode', position: { line: 2 } });
+  });
+});
 
 test('T3 client: @, / and $ before the first turn, and a picture — all decode', () => {
   const engine = new FakeEngine();
@@ -409,5 +526,51 @@ test('T3 client: Add project — folder list, its error, the project, the chat i
     assert.notEqual(removed.deletedAt, null);
     assert.equal((await shell.until(item => item.kind === 'project.removed')).projectId, 'p-tools');
     await shell.stop();
+  });
+});
+
+test('T3 decodes checkout status, a refresh, and deferred workspace diffs', () => {
+  const engine = new FakeEngine();
+  const cwd = '/work/parity';
+  engine.folders.add(cwd);
+  let refName = 'main';
+  const queried = [];
+  engine.projectGit = async ({ cwd: root, query }) => {
+    assert.equal(root, cwd);
+    queried.push(query.action);
+    if (query.action === 'status') return {
+      isRepo: true, refName, isDefaultRef: refName === 'main', hasPrimaryRemote: false,
+      hasWorkingTreeChanges: true, hasUpstream: false, aheadCount: 0, behindCount: 0, pr: null,
+      workingTree: { rootPath: cwd, files: [{ path: 'note.txt', insertions: 1, deletions: 0 }], insertions: 1, deletions: 0 },
+    };
+    if (query.action === 'diffPreview') return { cwd, sources: [{
+      id: 'working-tree', kind: 'working-tree', title: 'Uncommitted', baseRef: 'HEAD', headRef: null,
+      diff: '', diffHash: 'fixture', truncated: false, patchesDeferred: true,
+      files: [{ path: 'note.txt', previousPath: null, changeType: 'new', additions: 1, deletions: 0 }],
+    }] };
+    throw new Error('Unexpected Git request: ' + query.action);
+  };
+  return withClient(engine, async client => {
+    await run(client['projects.mutate']({ type: 'project.create', commandId: 'add-repo', projectId: 'repo', title: 'Fixture', workspaceRoot: cwd }));
+    assert.equal((await run(client['vcs.refreshStatus']({ cwd: '/unregistered' }))).isRepo, false);
+    assert.deepEqual(queried, []);
+    const status = await collect(client.subscribeVcsStatus({ cwd }));
+    const branch = await collect(client.subscribeVcsBranch({ cwd }));
+    try {
+      const initial = await status.until(event => event._tag === 'snapshot');
+      assert.equal(initial.local.workingTree.files[0].path, 'note.txt');
+      assert.equal((await branch.until(event => event.refName === 'main')).isRepo, true);
+
+      refName = 'topic';
+      await run(client['vcs.refreshBranch']({ cwd }));
+      await status.until(event => event.local.refName === 'topic');
+      await branch.until(event => event.refName === 'topic');
+      const preview = await run(client['review.getDiffPreview']({ cwd, sourceKind: 'working-tree', metadataOnly: true }));
+      assert.equal(preview.sources[0].files[0].changeType, 'new');
+      assert.equal(preview.sources[0].patchesDeferred, true);
+    } finally {
+      await branch.stop();
+      await status.stop();
+    }
   });
 });

@@ -1,0 +1,14 @@
+{
+  "//": "The active T3 host uses the current T3 contracts, separate from the legacy window aliases.",
+  "extends": "./src/t3/base/tsconfig.json",
+  "compilerOptions": {
+    "noUncheckedIndexedAccess": false,
+    "exactOptionalPropertyTypes": false
+  },
+  "files": [],
+  "include": [
+    "src/hoh-host",
+    "src/t3-entry/main.ts",
+    "src/t3-entry/virtual.d.ts"
+  ]
+}

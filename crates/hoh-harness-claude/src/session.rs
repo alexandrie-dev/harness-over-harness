@@ -218,6 +218,8 @@ struct State {
     message_ids: HashMap<Option<String>, String>,
     /// The native id of the session; the CLI may assign a new one when it resumes.
     native: String,
+    /// Skills declared by this running Claude session.
+    skills: HashSet<String>,
     /// Why the stream was cut off (a line that is not a contract message), for the window.
     violation: Option<String>,
     /// Content blocks of each assistant message already consumed (the CLI sends one `assistant`
@@ -450,6 +452,10 @@ impl ClaudeSession {
 }
 
 impl ClaudeSession {
+    pub(crate) fn set_skills(&self, skills: HashSet<String>) {
+        lock(&self.inner.state).skills = skills;
+    }
+
     /// One control request of HoH and the CLI's answer to it, within `timeout` (the probe's
     /// `reload_skills`, HOH-41).
     pub(crate) async fn control(
@@ -1710,6 +1716,7 @@ fn questions_from(input: &Value) -> (Vec<HarnessQuestion>, Vec<String>) {
         };
         texts.push(question.to_owned());
         questions.push(HarnessQuestion {
+            secret_file: false,
             id: format!("q{}", questions.len()),
             question: question.to_owned(),
             header: Some(header),
@@ -1739,13 +1746,75 @@ fn questions_from(input: &Value) -> (Vec<HarnessQuestion>, Vec<String>) {
     (questions, texts)
 }
 
-/// T3 `ClaudeAdapterV2.test.ts:14176`: an interrupt the CLI never follows with a result is
-/// bounded. The turn ends once as aborted, the open steps as interrupted, and the process is
-/// closed.
-/// The content of a user turn as Claude reads it (HOH-41): the pictures first, each a base64 block,
-/// then the text, as T3's Claude adapter sends them. A turn of pictures alone carries no empty
-/// text block (the model refuses one).
-fn prompt_content(params: &PromptParams) -> Value {
+/// Claude expands a single slash skill from the start of the last text block. Preserve the
+/// current request and inherited context in a preceding block when the mention was inline.
+fn skill_text_blocks(
+    prompt: &str,
+    history_prefix_len: usize,
+    skills: &HashSet<String>,
+) -> Option<Vec<Value>> {
+    use std::sync::LazyLock;
+
+    static WORD: LazyLock<regex::Regex> = LazyLock::new(|| regex::Regex::new(r"\S+").unwrap());
+    static SKILL: LazyLock<regex::Regex> =
+        LazyLock::new(|| regex::Regex::new(r"^\p{Sc}([a-zA-Z0-9][a-zA-Z0-9:_-]*)$").unwrap());
+    static AMOUNT: LazyLock<regex::Regex> =
+        LazyLock::new(|| regex::Regex::new(r"^[0-9][0-9_]*(?:[kKmMbBtT]|[eE][0-9]+)?$").unwrap());
+
+    let current = prompt.get(history_prefix_len..)?;
+    if skills.is_empty() {
+        return None;
+    }
+    if let Some(slash) = current.trim_start().strip_prefix('/') {
+        let name = slash.split_whitespace().next()?;
+        // A leading slash in the window remains native even when HoH prepends branch history.
+        return (history_prefix_len > 0 && skills.contains(name)).then(|| {
+            vec![
+                json!({ "type": "text", "text": prompt[..history_prefix_len].trim_end() }),
+                json!({ "type": "text", "text": current.trim() }),
+            ]
+        });
+    }
+    let mut previous = 0;
+    let mut rendered = String::new();
+    let mut last = None;
+    for word in WORD.find_iter(current) {
+        let Some(parts) = SKILL.captures(word.as_str()) else {
+            continue;
+        };
+        let name = parts.get(1)?.as_str();
+        if !skills.contains(name)
+            || AMOUNT.is_match(name)
+            || !name.bytes().any(|byte| byte.is_ascii_alphabetic())
+        {
+            continue;
+        }
+        let start = history_prefix_len + word.start();
+        let end = history_prefix_len + word.end();
+        rendered.push_str(&prompt[previous..start]);
+        rendered.push('/');
+        rendered.push_str(name);
+        previous = end;
+        last = Some((start, end, name));
+    }
+
+    let (start, end, name) = last?;
+    let mut blocks = Vec::new();
+    if !prompt[..start].trim().is_empty() {
+        rendered.push_str(&prompt[end..]);
+        blocks.push(json!({ "type": "text", "text": rendered.trim_end() }));
+    }
+    let command = format!("/{name}{}", prompt[end..].trim_end());
+    blocks.push(json!({ "type": "text", "text": command }));
+    Some(blocks)
+}
+
+/// Images precede any text. A turn of pictures alone carries no empty text block.
+fn prompt_content(
+    params: &PromptParams,
+    history_prefix_len: usize,
+    skills: &HashSet<String>,
+) -> Value {
     let mut content: Vec<Value> = params
         .images
         .iter()
@@ -1756,12 +1825,17 @@ fn prompt_content(params: &PromptParams) -> Value {
             })
         })
         .collect();
-    if content.is_empty() || !params.text.is_empty() {
+    if let Some(blocks) = skill_text_blocks(&params.text, history_prefix_len, skills) {
+        content.extend(blocks);
+    } else if content.is_empty() || !params.text.is_empty() {
         content.push(json!({ "type": "text", "text": params.text }));
     }
     Value::Array(content)
 }
 
+/// T3 `ClaudeAdapterV2.test.ts:14176`: an interrupt the CLI never follows with a result is
+/// bounded. The turn ends once as aborted, the open steps as interrupted, and the process is
+/// closed.
 fn spawn_interrupt_watch(inner: &Arc<Inner>, turn_id: String) {
     let handle = tokio::spawn(settle_unanswered_interrupt(inner.clone(), turn_id));
     let mut timers = lock(&inner.timers);
@@ -1826,6 +1900,14 @@ async fn settle_unanswered_interrupt(inner: Arc<Inner>, turn_id: String) {
 
 impl HarnessSession for ClaudeSession {
     fn prompt(&self, params: PromptParams) -> BoxFuture<'static, Result<(), HarnessFailure>> {
+        self.prompt_with_history_prefix(params, 0)
+    }
+
+    fn prompt_with_history_prefix(
+        &self,
+        params: PromptParams,
+        history_prefix_len: usize,
+    ) -> BoxFuture<'static, Result<(), HarnessFailure>> {
         let inner = self.inner.clone();
         Box::pin(async move {
             {
@@ -1848,7 +1930,13 @@ impl HarnessSession for ClaudeSession {
                 }
             };
             lock(&inner.state).prompt_uuid = Some(uuid.clone());
-            let native = lock(&inner.state).native.clone();
+            let (native, content) = {
+                let state = lock(&inner.state);
+                (
+                    state.native.clone(),
+                    prompt_content(&params, history_prefix_len, &state.skills),
+                )
+            };
             inner
                 .emit(HarnessEvent::TurnStarted {
                     turn_id: params.turn_id.clone(),
@@ -1857,7 +1945,7 @@ impl HarnessSession for ClaudeSession {
             let sent = inner
                 .send(json!({
                     "type": "user",
-                    "message": { "role": "user", "content": prompt_content(&params) },
+                    "message": { "role": "user", "content": content },
                     "parent_tool_use_id": null,
                     "session_id": native,
                     "uuid": uuid,
@@ -2103,6 +2191,43 @@ mod tests {
     }
 
     #[test]
+    fn inline_skills_keep_context_and_make_the_last_invocation_native() {
+        let skills = ["review".into(), "notes".into(), "5k".into()]
+            .into_iter()
+            .collect();
+        let history = "Earlier messages: $review, said earlier.\n\n";
+        let mut params = PromptParams {
+            text: format!("{history}Run $review then €notes with $5k and $unknown"),
+            ..Default::default()
+        };
+        assert_eq!(
+            prompt_content(&params, history.len(), &skills),
+            json!([
+                { "type": "text", "text": format!("{history}Run /review then /notes with $5k and $unknown") },
+                { "type": "text", "text": "/notes with $5k and $unknown" },
+            ])
+        );
+        params.text = format!("{history}Just an answer");
+        assert_eq!(
+            prompt_content(&params, history.len(), &skills),
+            json!([{ "type": "text", "text": params.text }])
+        );
+        params.text = format!("{history}/notes now");
+        assert_eq!(
+            prompt_content(&params, history.len(), &skills),
+            json!([
+                { "type": "text", "text": history.trim_end() },
+                { "type": "text", "text": "/notes now" },
+            ])
+        );
+        params.text = "/goal outline in $notes".into();
+        assert_eq!(
+            prompt_content(&params, 0, &skills),
+            json!([{ "type": "text", "text": params.text }])
+        );
+    }
+
+    #[test]
     fn pictures_go_first_as_base64_blocks_then_the_text() {
         let image = |media_type: &str, data: &str| hoh_external_harness::PromptImage {
             media_type: media_type.into(),
@@ -2115,7 +2240,7 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(
-            prompt_content(&params),
+            prompt_content(&params, 0, &HashSet::new()),
             json!([
                 { "type": "image", "source": { "type": "base64", "media_type": "image/png", "data": "iVBO" } },
                 { "type": "image", "source": { "type": "base64", "media_type": "image/webp", "data": "UklG" } },
@@ -2123,10 +2248,15 @@ mod tests {
             ])
         );
         params.text.clear();
-        assert_eq!(prompt_content(&params).as_array().map(Vec::len), Some(2));
+        assert_eq!(
+            prompt_content(&params, 0, &HashSet::new())
+                .as_array()
+                .map(Vec::len),
+            Some(2)
+        );
         params.images.clear();
         assert_eq!(
-            prompt_content(&params),
+            prompt_content(&params, 0, &HashSet::new()),
             json!([{ "type": "text", "text": "" }])
         );
     }

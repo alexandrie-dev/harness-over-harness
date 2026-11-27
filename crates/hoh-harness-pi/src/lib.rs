@@ -2,6 +2,7 @@
 
 mod session;
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::Arc;
@@ -11,9 +12,9 @@ use futures_util::future::BoxFuture;
 use hoh_error::BoxError;
 use hoh_external_harness::{
     AccessMode, ApprovalMode, AuthState, Discovery, ExternalHarness, ExternalHarnesses,
-    HarnessEffort, HarnessFailure, HarnessModel, HarnessPolicy, HarnessResult, InteractionMode,
-    NetworkAccess, ProcessSpec, SandboxMode, StartParams, StartResult, Started, VersionStatus,
-    code,
+    HarnessCommand, HarnessCommands, HarnessEffort, HarnessFailure, HarnessModel, HarnessPolicy,
+    HarnessResult, InteractionMode, NetworkAccess, ProcessSpec, SandboxMode, StartParams,
+    StartResult, Started, VersionStatus, code,
 };
 use hoh_kernel::{Cfg, Context, Inject, Plugin, Service};
 use hoh_loader::ProfileContextKey;
@@ -124,6 +125,32 @@ impl PiHarness {
             // Pi otherwise reads sessionDir from the project before checking folder trust.
             ..Default::default()
         }
+    }
+
+    async fn workspace_commands(&self, cwd: &Path) -> HarnessResult<HarnessCommands> {
+        let version = self.version().await?;
+        if version_status(&version) != VersionStatus::Supported {
+            return Err(HarnessFailure::new(
+                code::UNSUPPORTED_VERSION,
+                "HoH requires Pi CLI 1.6.1 or later in the 1.6 series.",
+            ));
+        }
+        let mut spec = self.spec(cwd);
+        // Keep the probe in the requested checkout so Pi discovers workspace templates.
+        // The base spec disables extensions and MCP. The probe uses no session or tools.
+        spec.args
+            .extend(["--no-session", "--no-tools"].map(str::to_owned));
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            let metadata = tokio::fs::symlink_metadata(cwd).await.map_err(|_| {
+                HarnessFailure::new(code::IO, "The workspace folder is unavailable.")
+            })?;
+            spec.cwd_identity = Some([metadata.dev(), metadata.ino()]);
+        }
+        let (session, _events) = PiSession::spawn(&spec)?;
+        let result = session.call(json!({ "type": "get_commands" })).await?;
+        pi_commands_from(result)
     }
 
     async fn models(&self) -> HarnessResult<Vec<HarnessModel>> {
@@ -294,7 +321,57 @@ impl PiHarness {
     }
 }
 
+fn pi_commands_from(result: Value) -> HarnessResult<HarnessCommands> {
+    let items = result["commands"].as_array().ok_or_else(|| {
+        HarnessFailure::new(code::PROTOCOL, "Pi did not return a command catalog.")
+    })?;
+    let mut found = HarnessCommands::default();
+    let mut names = HashSet::new();
+    for value in items {
+        let Some(name) = value["name"].as_str().map(str::trim) else {
+            continue;
+        };
+        let is_skill = match value["source"].as_str() {
+            Some("skill") => true,
+            Some("prompt") => false,
+            // The chat process also disables extensions.
+            _ => continue,
+        };
+        let name = if is_skill {
+            name.strip_prefix("skill:").unwrap_or(name)
+        } else {
+            name
+        };
+        if name.is_empty()
+            || name.chars().any(|ch| ch.is_control() || ch.is_whitespace())
+            || !names.insert((name, is_skill))
+        {
+            continue;
+        }
+        let command = HarnessCommand {
+            name: name.to_owned(),
+            description: value["description"]
+                .as_str()
+                .map(str::trim)
+                .filter(|description| !description.is_empty())
+                .map(str::to_owned),
+            argument_hint: None,
+        };
+        if is_skill {
+            found.skills.push(command);
+        } else {
+            found.commands.push(command);
+        }
+    }
+    Ok(found)
+}
+
 impl ExternalHarness for PiHarness {
+    fn commands(&self, cwd: PathBuf) -> BoxFuture<'static, HarnessResult<HarnessCommands>> {
+        let harness = self.clone();
+        Box::pin(async move { harness.workspace_commands(&cwd).await })
+    }
+
     fn discover(&self) -> BoxFuture<'static, HarnessResult<Discovery>> {
         let harness = self.clone();
         Box::pin(async move { Ok(harness.discovery().await.0) })

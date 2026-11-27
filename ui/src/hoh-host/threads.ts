@@ -5,11 +5,18 @@
 import { EXECUTOR_INSTANCES, runtimeModeOf, type HohAccessMode, type HohExecutor, type T3InteractionMode } from './config.ts';
 import type { EngineQuestion } from './engine.ts';
 import { providerFailure } from './errors.ts';
+import { readThreadOrganization, type ThreadOrganization } from './thread-metadata.ts';
+import type { SearchableMessage, SearchableTurnItem } from './thread-search.ts';
+import type { SessionListResult } from '../../../protocol/core.ts';
+type SessionSideChat = NonNullable<SessionListResult['sessions'][number]['sideChat']>;
 
 export const HOH_PROJECT_ID = 'hoh-project';
 const NODE_ID = 'hoh-node';
+const INLINE_TOOL_OUTPUT_LIMIT = 8_192;
+const TOOL_DETAIL_OUTPUT_LIMIT = 131_072;
 
 const iso = (ms: number) => new Date(ms).toISOString();
+const nullableIso = (ms: number | null) => ms === null ? null : iso(ms);
 const record = (value: unknown): Record<string, any> => value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, any> : {};
 const text = (value: unknown) => typeof value === 'string' ? value : '';
 const nonBlank = (value: string, fallback: string) => value.trim() ? value.trim() : fallback;
@@ -166,6 +173,7 @@ export class ThreadModel {
   mode: HohAccessMode;
   executor: HohExecutor;
   bindingKnown: boolean;
+  sideChat: SessionSideChat | undefined;
   /** The engine explicitly reported a built-in agent rather than an external executor. */
   builtin = false;
   /** Durable `approval/asked` can arrive before the native `approval.pending`; keep its exact id. */
@@ -194,6 +202,9 @@ export class ThreadModel {
   archivedAt: number | null = null;
   pinnedAt: number | null = null;
   pinOrderKey: string | null = null;
+  organization = readThreadOrganization({});
+  titleRegeneration: { requestId: string; startedAt: string } | null = null;
+  lastTitleRegeneration?: { requestId: string; completedAt: string; status: 'renamed' | 'unchanged' | 'failed'; message?: string };
   private readonly seen = new Set<number>();
   private readonly runs: Run[] = [];
   private readonly runsById = new Map<string, Run>();
@@ -589,8 +600,8 @@ export class ThreadModel {
     } else if (item.type === 'command_execution') {
       const match = Array.from(output.matchAll(/\[(?:Command finished with exit code|shell exited: code)\s+(-?\d+)\]/gi)).at(-1);
       const exitCode = match ? Number(match[1]) : undefined;
-      Object.assign(item, { output: output.slice(0, 20_000), ...(exitCode === undefined ? {} : { exitCode }), ...(failed || (exitCode ?? 0) !== 0 ? { outputIndicatesFailure: true } : {}) });
-    } else if (item.type === 'dynamic_tool') item.output = output.slice(0, 20_000);
+      Object.assign(item, { output: output.slice(0, TOOL_DETAIL_OUTPUT_LIMIT), ...(exitCode === undefined ? {} : { exitCode }), ...(failed || (exitCode ?? 0) !== 0 ? { outputIndicatesFailure: true } : {}) });
+    } else if (item.type === 'dynamic_tool') item.output = output.slice(0, TOOL_DETAIL_OUTPUT_LIMIT);
     if (item.parentItemId) item.subagentOutput = output.slice(0, 20_000);
     this.settleItem(item, failed ? 'failed' : 'completed', at);
     if (isSubagentCall(item)) this.refreshSubagent(item.id);
@@ -687,6 +698,7 @@ export class ThreadModel {
     if (answerMessage) answerMessage.updatedAt = at;
     const subagents = new Set<string>();
     for (const item of this.openItems) {
+      if (item.type === 'secret_request' && item.secretStatus === 'pending') item.secretStatus = 'cancelled';
       this.settleItem(item, item.type === 'assistant_message' || status === 'completed' ? 'completed' : 'interrupted', at);
       if (isSubagentCall(item)) subagents.add(item.id);
       if (item.parentItemId) subagents.add(item.parentItemId);
@@ -949,11 +961,21 @@ export class ThreadModel {
     return true;
   }
 
-  /** A question of the assistant (`user-question/ask`), shown as T3's question card. */
+  /** The engine asks either an ordinary question or for a credential in a T3 card. */
   questionAsked(question: EngineQuestion, at = Date.now()) {
     if (this.requests.some(request => request.id === question.requestId)) return false;
-    this.requests.push({ id: question.requestId, kind: 'user_input', status: 'pending', createdAt: at, resolvedAt: null });
-    this.addItem({
+    const [entry] = question.questions;
+    const secret = question.questions.length === 1 && entry?.intent?.kind === 'secret-file';
+    this.requests.push({ id: question.requestId, kind: secret ? 'secret' : 'user_input', status: 'pending', createdAt: at, resolvedAt: null });
+    if (secret) this.addItem({
+      ...this.base('item-question-' + question.requestId, 'secret_request', 'waiting', at),
+      requestId: question.requestId,
+      label: nonBlank(text(entry.header), 'Credential'),
+      reason: entry.question,
+      delivery: 'file',
+      secretStatus: 'pending',
+    });
+    else this.addItem({
       ...this.base('item-question-' + question.requestId, 'user_input_request', 'waiting', at),
       requestId: question.requestId,
       questions: question.questions.map((entry, index) => ({
@@ -973,13 +995,19 @@ export class ThreadModel {
     return true;
   }
 
-  questionClosed(requestId: string, answers: Record<string, unknown> | null, at = Date.now()) {
+  questionClosed(requestId: string, answers: Record<string, unknown> | null, at = Date.now(), secretStatus?: 'saved' | 'declined') {
     const request = this.requests.find(entry => entry.id === requestId);
-    if (!request || request.status !== 'pending') return false;
-    request.status = answers ? 'resolved' : 'cancelled'; request.resolvedAt = at;
-    if (answers) request.answers = answers;
+    // The engine can finish the turn before the private native invoke acknowledges its answer.
+    if (!request || (request.status !== 'pending'
+      && !(request.kind === 'secret' && request.status === 'cancelled' && secretStatus))) return false;
+    const resolved = request.kind === 'secret' ? !!secretStatus : !!answers;
+    request.status = resolved ? 'resolved' : 'cancelled'; request.resolvedAt = at;
+    if (request.kind !== 'secret' && answers) request.answers = answers;
     const item = this.item('item-question-' + requestId);
-    if (item) this.settleItem(item, answers ? 'completed' : 'cancelled', at);
+    if (item) {
+      if (item.type === 'secret_request') item.secretStatus = secretStatus ?? 'cancelled';
+      this.settleItem(item, resolved ? 'completed' : 'cancelled', at);
+    }
     const run = this.currentRun();
     if (run && run.status === 'waiting' && !this.requests.some(entry => entry.status === 'pending')) run.status = 'running';
     this.touch(at);
@@ -987,7 +1015,12 @@ export class ThreadModel {
   }
 
   pendingRequest(id: string) { return this.requests.find(request => request.id === id && request.status === 'pending'); }
+  hasPendingApproval() {
+    return this.requests.some(request => request.status === 'pending' && request.kind !== 'user_input' && request.kind !== 'secret');
+  }
   activeRunId() { const run = this.currentRun(); return run && (run.status === 'running' || run.status === 'waiting') ? run.id : null; }
+  latestRunCompletion() { return this.currentRun()?.completedAt ?? null; }
+  latestUserActivity() { return this.messages.findLast(message => message.role === 'user')?.createdAt ?? this.createdAt; }
   userMessageCount() { return this.userMessages; }
   editableUserMessage(id: string) {
     const source = this.editableMessages.get(id);
@@ -1013,12 +1046,91 @@ export class ThreadModel {
   private modelSelection() { return { instanceId: this.instanceId(), model: this.bindingKnown ? this.model : 'unknown', ...(this.options?.length ? { options: this.options } : {}) }; }
   titleText() { return nonBlank(this.title, 'New chat'); }
 
+  applyOrganization(patch: Partial<ThreadOrganization>) {
+    this.organization = readThreadOrganization({ ...this.organization, ...patch });
+  }
+
+  private organizationProjection() {
+    const state = this.organization;
+    return {
+      lastVisitedAt: nullableIso(state.lastVisitedAt),
+      opens: state.opens,
+      settledOverride: state.settledOverride,
+      settledAt: nullableIso(state.settledAt),
+      unsettledAt: nullableIso(state.unsettledAt),
+      snoozedUntil: nullableIso(state.snoozedUntil),
+      snoozedAt: nullableIso(state.snoozedAt),
+      autoSettleDisabledAt: nullableIso(state.autoSettleDisabledAt),
+      activeOrderKey: state.activeOrderKey,
+      tags: state.tags,
+    };
+  }
+
+  private titleRegenerationProjection() {
+    return {
+      titleRegeneration: this.titleRegeneration,
+      ...(this.lastTitleRegeneration ? { lastTitleRegeneration: this.lastTitleRegeneration } : {}),
+    };
+  }
+
+  /** A stable view of searchable timeline rows, including those outside the current page. */
+  searchableTimeline(): SearchableTurnItem[] {
+    const searchable: SearchableTurnItem[] = [];
+    for (const item of this.items) {
+      if (item.parentItemId !== null) continue;
+      if (item.type === 'proposed_plan') {
+        searchable.push({ entryId: item.id, runId: item.runId, role: 'plan', text: text(item.markdown) });
+      } else if (item.type === 'user_message' || item.type === 'assistant_message') {
+        searchable.push({
+          entryId: text(item.messageId) || item.id,
+          runId: item.runId,
+          role: item.type === 'user_message' ? 'user' : 'assistant',
+          text: text(item.text),
+          hasContext: item.context !== undefined,
+          streaming: item.streaming === true,
+        });
+      }
+    }
+    return searchable;
+  }
+
+  *searchableMessages(): IterableIterator<SearchableMessage> {
+    for (let index = this.messages.length - 1; index >= 0; index--) {
+      const { id, role, text, createdAt, streaming } = this.messages[index];
+      if (!streaming && (role === 'user' || role === 'assistant')) yield { id, role, text, createdAt };
+    }
+  }
+
+  turnItemDetail(itemId: string): Item | null {
+    const item = this.item(itemId);
+    return item ? { ...item } : null;
+  }
+
+  private wireTurnItem(item: Item): Item {
+    if ((item.type === 'command_execution' || item.type === 'dynamic_tool') && !isSubagentCall(item)
+      && typeof item.output === 'string' && item.output.length > INLINE_TOOL_OUTPUT_LIMIT) {
+      const { output: _output, ...rest } = item;
+      return { ...rest, outputOmitted: true };
+    }
+    return { ...item };
+  }
+
   /** `OrchestrationV2ThreadProjection`, encoded. */
   *usageTurns() {
     if (!this.bindingKnown) return;
     for (const run of this.runs) {
       if (run.tokenUsage) yield { model: run.model, usage: run.tokenUsage, cacheCreationTokens: run.cacheCreationTokens ?? 0 };
     }
+  }
+
+  private lineage() {
+    if (this.sideChat) {
+      return {
+        parentThreadId: this.sideChat.parentSessionId, relationshipToParent: 'fork',
+        rootThreadId: this.sideChat.parentSessionId, sideChat: true,
+      } as const;
+    }
+    return { parentThreadId: null, relationshipToParent: null, rootThreadId: this.id };
   }
 
   projection() {
@@ -1032,10 +1144,13 @@ export class ThreadModel {
         id: this.id, projectId: this.projectId, title: this.titleText(), providerInstanceId: this.instanceId(),
         modelSelection: this.modelSelection(), runtimeMode: this.projectedRuntimeMode(), interactionMode: this.projectedInteractionMode(),
         branch: null, worktreePath: null, activeProviderThreadId: null,
-        lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: this.id },
+        lineage: this.lineage(),
         forkedFrom: null, createdAt: iso(this.createdAt), updatedAt,
         pinnedAt: this.pinnedAt === null ? null : iso(this.pinnedAt), pinOrderKey: this.pinOrderKey,
-        archivedAt: this.archivedAt === null ? null : iso(this.archivedAt), settledOverride: null, settledAt: null, lastVisitedAt: null, deletedAt: null,
+        archivedAt: nullableIso(this.archivedAt), deletedAt: null,
+        ...this.organizationProjection(),
+        ...this.titleRegenerationProjection(),
+        lastSnoozeWakeAt: nullableIso(this.organization.lastSnoozeWakeAt),
       },
       runs: this.runs.map(run => ({
         id: run.id, threadId: this.id, ordinal: run.ordinal, providerInstanceId: this.instanceId(),
@@ -1050,7 +1165,7 @@ export class ThreadModel {
         nativeTurnRef: null, ordinal: run.ordinal, status: run.status === 'waiting' ? 'running' : run.status, startedAt: run.startedAt === null ? null : iso(run.startedAt),
         completedAt: run.completedAt === null ? null : iso(run.completedAt), tokenUsage: { ...run.tokenUsage! }, model: run.model,
       })),
-      runtimeRequests: this.requests.map(request => ({
+      runtimeRequests: this.requests.filter(request => request.kind !== 'secret').map(request => ({
         id: request.id, nodeId: NODE_ID, providerTurnId: null, nativeRequestRef: null, kind: request.kind, status: request.status,
         responseCapability: { type: 'live', providerSessionId: 'hoh-' + this.id },
         createdAt: iso(request.createdAt), resolvedAt: request.resolvedAt === null ? null : iso(request.resolvedAt),
@@ -1062,11 +1177,11 @@ export class ThreadModel {
         attachments: message.attachments ?? [], streaming: message.streaming, createdAt: iso(message.createdAt), updatedAt: iso(message.updatedAt),
       })),
       plans: this.plans.map(plan => ({ ...plan })),
-      turnItems: projectedItems.map(item => ({ ...item })),
+      turnItems: projectedItems.map(item => this.wireTurnItem(item)),
       checkpointScopes: [], checkpoints: [], contextHandoffs: [], contextTransfers: [],
       // Native subagent items stay in turnItems for state and attribution, while T3 displays their folded
       // transcript inside the expandable Agent/Task row instead of duplicating them in the root timeline.
-      visibleTurnItems: visibleItems.map((item, position) => ({ position, visibility: 'local', sourceThreadId: this.id, sourceItemId: item.id, item: { ...item } })),
+      visibleTurnItems: visibleItems.map((item, position) => ({ position, visibility: 'local', sourceThreadId: this.id, sourceItemId: item.id, item: this.wireTurnItem(item) })),
       updatedAt,
     };
   }
@@ -1109,7 +1224,7 @@ export class ThreadModel {
     const pending = this.requests.find(request => request.status === 'pending');
     const waitingItem = pending && this.items.find(item => item.requestId === pending.id);
     const open = run.status === 'running' || run.status === 'waiting';
-    const question = waitingItem?.type === 'user_input_request' ? text(waitingItem.questions?.[0]?.question) : '';
+    const question = pending?.kind === 'secret' ? text(waitingItem?.label) : text(waitingItem?.questions?.[0]?.question);
     const interrupted = run === this.currentRun() && run.status === 'interrupted' && this.settledByGuess;
     return {
       id: this.id, title: this.titleText(), projectId: this.projectId, providerInstanceId: this.instanceId(),
@@ -1119,7 +1234,7 @@ export class ThreadModel {
       startedAt: run.startedAt ?? run.requestedAt, doneAt: run.completedAt,
       steps: { done: steps.filter(item => item.status !== 'running' && item.status !== 'waiting').length, total: steps.length }, agents,
       ...(interrupted ? { interrupted: true } : {}),
-      ...(pending && waitingItem ? { request: { id: pending.id, kind: waitingItem.type === 'user_input_request' ? 'question' : 'approval', requestKind: waitingItem.requestKind ?? null, text: waitingItem.type === 'user_input_request' ? question : text(waitingItem.prompt) } } : {}),
+      ...(pending && waitingItem ? { request: { id: pending.id, kind: pending.kind === 'user_input' || pending.kind === 'secret' ? 'question' : 'approval', requestKind: waitingItem.requestKind ?? null, text: question || text(waitingItem.prompt) } } : {}),
     };
   }
 
@@ -1135,11 +1250,16 @@ export class ThreadModel {
       id: this.id, projectId: this.projectId, title: this.titleText(), providerInstanceId: this.instanceId(),
       modelSelection: this.modelSelection(), runtimeMode: this.projectedRuntimeMode(), interactionMode: this.projectedInteractionMode(),
       branch: null, worktreePath: null,
-      lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: this.id },
+      lineage: this.lineage(),
       forkedFrom: null, activeProviderThreadId: null,
       latestRunId: run?.id ?? null, activeRunId: active,
+      latestRunCompletedAt: nullableIso(run?.completedAt ?? null),
       status: run ? (active ? (run.status === 'waiting' ? 'waiting' : 'running') : run.status) : 'idle',
-      pendingRuntimeRequest: pending ? { id: pending.id, kind: pending.kind, createdAt: iso(pending.createdAt), blocking: true } : null,
+      pendingRuntimeRequest: pending ? {
+        id: pending.id, kind: pending.kind === 'secret' ? 'user_input' : pending.kind,
+        ...(pending.kind === 'secret' ? { userOnly: true } : {}),
+        createdAt: iso(pending.createdAt), blocking: true,
+      } : null,
       latestVisibleMessage: visible ? { id: visible.id, role: visible.role, text: visible.text.slice(0, 400), updatedAt: iso(visible.updatedAt) } : null,
       // Null only for a chat made here that has no message yet (an empty draft): the window keeps it out of «Recent chats»
       // until the first message. A chat of the engine's history not read yet (older than today) is stamped by its last activity.
@@ -1148,7 +1268,9 @@ export class ThreadModel {
       itemCount: this.items.length, visibleItemCount: this.visibleItems,
       createdAt: iso(this.createdAt), updatedAt: iso(this.updatedAt),
       pinnedAt: this.pinnedAt === null ? null : iso(this.pinnedAt), pinOrderKey: this.pinOrderKey,
-      archivedAt: this.archivedAt === null ? null : iso(this.archivedAt), settledOverride: null, settledAt: null, deletedAt: null,
+      archivedAt: nullableIso(this.archivedAt), deletedAt: null,
+      ...this.organizationProjection(),
+      ...this.titleRegenerationProjection(),
     };
   }
 }

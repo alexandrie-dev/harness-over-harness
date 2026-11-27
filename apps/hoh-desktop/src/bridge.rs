@@ -11,6 +11,7 @@ pub const WINDOW_METHODS: &[&str] = &[
     "session/list",
     "session/events",
     "session/fork-for-edit",
+    "session/fork-side-chat",
     "session/cancel",
     "session/delete",
     "session/working-directory/get",

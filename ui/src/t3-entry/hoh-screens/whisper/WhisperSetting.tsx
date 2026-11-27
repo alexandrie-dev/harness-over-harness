@@ -1,8 +1,28 @@
 import { useLocale } from 'gt-react';
+import { Link } from '@tanstack/react-router';
+import { AudioLinesIcon } from 'lucide-react';
 import { useState, type FormEvent } from 'react';
 import { Button } from '~/components/ui/button';
 import { Input } from '~/components/ui/input';
 import { saveWhisperServer, useWhisperServer, whisperFailureMessage } from '../../whisper/client';
+
+export function WhisperSettingsLink() {
+  const serverUrl = useWhisperServer();
+  const russian = useLocale() === 'ru';
+  if (serverUrl === undefined) return null;
+  return (
+    <Button
+      id="hoh-whisper-settings"
+      variant="outline"
+      size="sm"
+      className="self-start"
+      render={<Link to="/settings/voice" hash="hoh-whisper-settings" />}
+    >
+      <AudioLinesIcon />
+      {russian ? 'Настройки диктовки' : 'Dictation settings'}
+    </Button>
+  );
+}
 
 export function WhisperSetting() {
   const serverUrl = useWhisperServer();

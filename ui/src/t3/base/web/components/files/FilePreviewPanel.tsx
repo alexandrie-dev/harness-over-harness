@@ -1213,19 +1213,7 @@ function initialExplorerOpen(): boolean {
   }
 }
 
-// HoH: the host has no projects.readFile or projects.listEntries. Keep the panel
-// useful without issuing unsupported requests; uploaded attachments still use the asset path.
-export default function FilePreviewPanel(props: FilePreviewPanelProps) {
-  if (props.attachment !== undefined) return <T3FilePreviewPanel {...props} />;
-  return (
-    <div className="flex h-full flex-col items-center justify-center gap-2 p-4 text-sm text-muted-foreground" role="status">
-      <p>File preview and Open in editor</p>
-      <p>Coming Soon</p>
-    </div>
-  );
-}
-
-function T3FilePreviewPanel({
+export default function FilePreviewPanel({
   environmentId,
   cwd,
   projectName,
@@ -1269,17 +1257,19 @@ function T3FilePreviewPanel({
   const openPreview = useAtomCommand(previewEnvironment.open, {
     reportFailure: false,
   });
-  const isVideo = relativePath !== null && isWorkspaceVideoPreviewPath(relativePath);
-  const isAudio = relativePath !== null && !isVideo && isWorkspaceAudioPreviewPath(relativePath);
+  // The HoH host serves workspace text and raster assets without T3's range-download service.
+  const workspaceAssetStreams = environmentId !== "hoh-local";
+  const isVideo = workspaceAssetStreams && relativePath !== null && isWorkspaceVideoPreviewPath(relativePath);
+  const isAudio = workspaceAssetStreams && relativePath !== null && !isVideo && isWorkspaceAudioPreviewPath(relativePath);
   const isImage = relativePath !== null && !isVideo && isWorkspaceImagePreviewPath(relativePath);
   const isMedia = isImage || isVideo || isAudio;
-  const isPdf = relativePath !== null && isPdfPreviewFile(relativePath);
+  const isPdf = workspaceAssetStreams && relativePath !== null && isPdfPreviewFile(relativePath);
   const isDocument =
-    relativePath !== null &&
+    workspaceAssetStreams && relativePath !== null &&
     (binaryPreviewKind({ name: relativePath }) !== null ||
       officePreviewKind({ name: relativePath }) !== null ||
       isWorkspaceFontPreviewPath(relativePath));
-  const isHtml = relativePath !== null && !isPdf && isBrowserPreviewFile(relativePath);
+  const isHtml = workspaceAssetStreams && relativePath !== null && !isPdf && isBrowserPreviewFile(relativePath);
   const isHostFile =
     attachment !== undefined || (relativePath !== null && isHostPath(relativePath));
   const fileAccess = useFilesystemReadAccess(environmentId, m);
@@ -1568,7 +1558,16 @@ function T3FilePreviewPanel({
           (environmentId === primaryEnvironmentId ||
             environmentId === hostEnvironmentId ||
             remoteOpenState.mode !== "local-exec") ? (
-            <span className="text-sm text-muted-foreground">Open in editor · Coming Soon</span>
+            <OpenInPicker
+              environmentId={environmentId}
+              keybindings={keybindings}
+              availableEditors={availableEditors}
+              enableShortcut={openInShortcutEnabled}
+              openInCwd={absolutePath}
+              openInCwdIsFile={file.isFile}
+              compact
+              revealFileManager={revealsInFileManager}
+            />
           ) : null}
           {canToggleRendered && renderedMode ? (
             <FileSurfaceAction
@@ -1623,7 +1622,7 @@ function T3FilePreviewPanel({
       ) : null}
       {relativePath && !attachment && !isHostFile && !canWriteFiles && !fileAccess.isPending ? (
         <div className="shrink-0 border-b px-3 py-1.5 text-2xs text-muted-foreground">
-          <T>Read-only connection. Unsaved edits are kept until write access returns.</T>
+          <T>Read-only file preview.</T>
         </div>
       ) : null}
       {previewPath &&
@@ -1631,7 +1630,7 @@ function T3FilePreviewPanel({
       !isMedia &&
       !renderBrowserFile &&
       file.data?.truncated &&
-      (draft || isMarkdown || isMermaid || isHtml) ? (
+      (!workspaceAssetStreams || draft || isMarkdown || isMermaid || isHtml) ? (
         <div className="shrink-0 border-b border-warning/20 bg-warning-surface px-3 py-1.5 text-2xs text-warning-foreground">
           {gt(
             "{count, plural, one {Preview limited to the first 1 MB of a {formatted} byte file.} other {Preview limited to the first 1 MB of a {formatted} byte file.}}",
@@ -1713,6 +1712,7 @@ function T3FilePreviewPanel({
             />
           ) : relativePath &&
             absolutePath &&
+            workspaceAssetStreams &&
             file.data?.truncated &&
             !isDocument &&
             !draft &&
@@ -1733,6 +1733,7 @@ function T3FilePreviewPanel({
             />
           ) : relativePath &&
             absolutePath &&
+            workspaceAssetStreams &&
             (isDocument || file.readError?.failure === "binary_file") ? (
             <WorkspaceDocumentPreview
               key={`${environmentId}:${absolutePath}`}

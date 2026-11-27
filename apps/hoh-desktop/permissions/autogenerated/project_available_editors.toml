@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-project-available-editors"
+description = "Enables the project_available_editors command without any pre-configured scope."
+commands.allow = ["project_available_editors"]
+
+[[permission]]
+identifier = "deny-project-available-editors"
+description = "Denies the project_available_editors command without any pre-configured scope."
+commands.deny = ["project_available_editors"]

@@ -1,0 +1,5 @@
+--- a/web/components/settings/ProjectsSettings.tsx
++++ b/web/components/settings/ProjectsSettings.tsx
+@@ -52 +52 @@
+-          {gt("Choose a project to manage its name, icon, checkouts and actions.")}
++          {gt("Choose a project to manage its name, checkouts and archive status.")}

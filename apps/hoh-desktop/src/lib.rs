@@ -6,10 +6,12 @@ pub mod errors;
 #[cfg(feature = "desktop")]
 pub mod external_ui;
 pub mod folders;
+pub mod git_workspace;
 pub mod image_asset;
 #[cfg(feature = "desktop")]
 pub mod native;
 pub mod opener;
+pub mod project_files;
 #[cfg(feature = "desktop")]
 mod platform;
 #[cfg(all(feature = "probe", target_os = "linux"))]

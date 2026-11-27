@@ -7,9 +7,12 @@ import {
 } from '@t3tools/client-runtime/voice-input';
 import { useNavigate } from '@tanstack/react-router';
 import { useLayoutEffect, useState } from 'react';
+import { getClientSettings } from '~/hooks/useSettings';
 import { useStableCallback } from '~/hooks/useStableCallback';
 import { m } from '~/i18n/messages';
 import { createBrowserPcmCapture } from '~/speech/browserPcmCapture';
+import { listAudioInputs } from '~/speech/browserMicrophones';
+import { microphoneOrder, preferredMicrophoneId } from '~/speech/microphoneOrder';
 import { useEnvironmentSpeechInput } from '~/speech/useEnvironmentSpeechInput';
 import { encodeWhisperWav } from '../../whisper/Wav';
 import { transcribeWhisperRecording, useWhisperServer, whisperFailureMessage } from '../../whisper/client';
@@ -41,7 +44,10 @@ export function useWhisperDictation(input: WhisperDraft) {
 
   const [controller] = useState(() => {
     const platform = createBrowserPcmCapture({
-      getMicrophoneId: () => '',
+      getMicrophoneId: async () => {
+        const devices = await listAudioInputs().catch(() => []);
+        return preferredMicrophoneId(microphoneOrder(getClientSettings()), devices);
+      },
       onLevel: setLevel,
       onDurationLimit: () => void voice.stop(),
       onError: (message, code) => void voice.interruptRecording(message, null, code),
@@ -106,7 +112,7 @@ export function useWhisperDictation(input: WhisperDraft) {
     const options = settings();
     if (!options.active) return;
     if (options.serverUrl === null) {
-      await navigate({ to: '/settings/chat', hash: 'hoh-whisper-settings' });
+      await navigate({ to: '/settings/voice', hash: 'hoh-whisper-settings' });
     } else if (options.serverUrl) {
       await controller.start();
     }

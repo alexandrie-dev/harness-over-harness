@@ -4,8 +4,8 @@ use std::time::{Duration, Instant};
 
 use hoh_external_harness::{
     AccessMode, ApprovalDecision, AuthState, ExternalHarness, HarnessEvent, HarnessPolicy,
-    HarnessResponse, InteractionMode, PromptImage, PromptParams, RespondParams, StartParams,
-    VersionStatus,
+    HarnessResponse, InteractionMode, PromptImage, PromptParams, QuestionAnswer, RespondParams,
+    StartParams, VersionStatus,
 };
 use hoh_harness_codex::{CodexConfig, CodexHarness};
 use serde_json::Value;
@@ -59,6 +59,39 @@ async fn account_limits_read_real_windows_without_starting_a_thread() {
         methods,
         ["initialize", "initialized", "account/rateLimits/read"]
     );
+}
+
+#[tokio::test]
+async fn workspace_skills_are_listed_without_starting_a_thread() {
+    let temp = TempDir::new().unwrap();
+    let cwd = temp.path().canonicalize().unwrap();
+    let (harness, log) = harness(&temp, "workspace-skills");
+
+    let catalog = harness.commands(cwd.clone()).await.unwrap();
+    assert!(catalog.commands.is_empty());
+    assert_eq!(catalog.skills.len(), 1);
+    assert_eq!(catalog.skills[0].name, "review");
+    assert_eq!(
+        catalog.skills[0].description.as_deref(),
+        Some("Review changes")
+    );
+    let requests = lines(&log);
+    let methods: Vec<_> = requests
+        .iter()
+        .filter_map(|entry| entry["method"].as_str())
+        .collect();
+    assert_eq!(methods, ["initialize", "initialized", "skills/list"]);
+    assert_eq!(
+        requests.last().unwrap()["params"]["cwds"][0],
+        cwd.to_str().unwrap()
+    );
+    assert!(requests[0]["args"].as_array().unwrap().iter().any(|arg| {
+        arg.as_str().is_some_and(|arg| {
+            arg.starts_with("projects={")
+                && arg.contains(cwd.to_str().unwrap())
+                && arg.contains("trust_level=\"untrusted\"")
+        })
+    }));
 }
 
 fn start_params(temp: &TempDir, resume: Option<String>) -> StartParams {
@@ -292,6 +325,86 @@ async fn codex_turns_deliver_attached_images_with_or_without_text() {
     }
 }
 
+#[tokio::test]
+async fn credential_tool_routes_into_a_dedicated_request_and_refuses_native_secret_questions() {
+    let temp = TempDir::new().unwrap();
+    let (harness, log) = harness(&temp, "credential-card");
+    let mut started = harness
+        .start_with_access(start_params(&temp, None), AccessMode::Confirm)
+        .await
+        .unwrap();
+    started
+        .session
+        .prompt(PromptParams {
+            session_id: "hoh-session".into(),
+            turn_id: "turn-secret".into(),
+            text: "Request test credential".into(),
+            images: vec![],
+        })
+        .await
+        .unwrap();
+    let request = loop {
+        if let HarnessEvent::QuestionAsked {
+            request_id,
+            questions,
+            ..
+        } = event(&mut started.events).await
+        {
+            assert_eq!(questions.len(), 1);
+            assert!(questions[0].secret_file);
+            assert_eq!(questions[0].header.as_deref(), Some("Test key"));
+            break request_id;
+        }
+    };
+    let path = temp.path().join(format!("turn-{}", "0".repeat(64)));
+    let path = path.to_str().unwrap().to_owned();
+    started
+        .session
+        .respond(RespondParams {
+            session_id: "hoh-session".into(),
+            request_id: request,
+            response: HarnessResponse::Answer {
+                answers: vec![QuestionAnswer {
+                    id: "credential".into(),
+                    selected: vec![],
+                    custom: Some(path.clone()),
+                }],
+            },
+        })
+        .await
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            if lines(&log).iter().any(|line| line["id"] == "file-secret") {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    started.session.terminate(Duration::from_millis(100)).await;
+    let wire = lines(&log);
+    assert!(wire.iter().any(|line| line["method"] == "thread/start"
+        && line["params"]["dynamicTools"][0]["name"] == "request_secret"));
+    assert!(
+        wire.iter()
+            .any(|line| line["id"] == "native-secret" && line["error"]["code"] == -32602)
+    );
+    let result = wire
+        .iter()
+        .find(|line| line["id"] == "file-secret")
+        .unwrap();
+    assert_eq!(result["result"]["success"], true);
+    let content: Value = serde_json::from_str(
+        result["result"]["contentItems"][0]["text"]
+            .as_str()
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(content["status"], "saved");
+    assert_eq!(content["file"], path);
+}
 #[tokio::test]
 async fn every_mode_is_present_on_thread_and_first_turn() {
     let expected = [

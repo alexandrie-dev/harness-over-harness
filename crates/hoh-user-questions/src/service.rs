@@ -666,7 +666,23 @@ fn validate_intent(
         return Ok(());
     };
     let options = question.options.as_deref().unwrap_or_default();
+    if matches!(intent, AskUserQuestionIntent::SecretFile) {
+        return if question_count == 1
+            && options.is_empty()
+            && question.multi_select != Some(true)
+            && !has_wait
+        {
+            Ok(())
+        } else {
+            Err(UserQuestionError::new(
+                "A secret file needs a single blocking question without options",
+                "BAD_INTENT",
+            )
+            .into())
+        };
+    }
     let labels: Vec<&str> = match intent {
+        AskUserQuestionIntent::SecretFile => unreachable!(),
         AskUserQuestionIntent::PlanReview { approve, .. } => vec![approve],
         AskUserQuestionIntent::Approval {
             approve,
@@ -684,6 +700,7 @@ fn validate_intent(
         .find(|label| !options.iter().any(|option| option.label == **label))
     {
         let message = match intent {
+            AskUserQuestionIntent::SecretFile => unreachable!(),
             AskUserQuestionIntent::PlanReview { approve, .. } => format!(
                 "question {} declares intent plan-review whose approve label {} names none of its options",
                 question.id,
@@ -699,6 +716,7 @@ fn validate_intent(
     }
     if question.detail.is_none() {
         let detail = match intent {
+            AskUserQuestionIntent::SecretFile => unreachable!(),
             AskUserQuestionIntent::Approval { .. } => "scope detail it requires",
             AskUserQuestionIntent::PlanReview { .. } => "detail it reviews",
         };

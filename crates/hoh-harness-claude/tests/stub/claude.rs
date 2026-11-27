@@ -214,6 +214,15 @@ impl Stub {
                 }
             }
             Some("user") => {
+                if env("STUB_MODE").as_deref() == Some("skill-prompt") {
+                    assert_eq!(
+                        message["message"]["content"],
+                        json!([
+                            { "type": "text", "text": "Check /release-notes for v2 with $unknown" },
+                            { "type": "text", "text": "/release-notes for v2 with $unknown" },
+                        ])
+                    );
+                }
                 if let Some(dir) = env("STUB_STATE") {
                     let mut log = std::fs::OpenOptions::new()
                         .create(true)
@@ -231,7 +240,12 @@ impl Stub {
                     .unwrap_or_default()
                     .to_owned();
                 self.prompt_uuid = message["uuid"].clone();
-                self.turn(&text);
+                let text = if env("STUB_MODE").as_deref() == Some("skill-prompt") {
+                    "hello"
+                } else {
+                    &text
+                };
+                self.turn(text);
             }
             _ => {}
         }

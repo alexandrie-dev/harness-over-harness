@@ -1,19 +1,68 @@
 --- a/web/components/settings/ProjectSettingsPanel.tsx
 +++ b/web/components/settings/ProjectSettingsPanel.tsx
-@@ -559 +559 @@
+@@ -279 +279,3 @@
+-  const canEditGroup = group.memberProjects.every((member) =>
++  const isHohProject = group.memberProjects.every((member) => member.environmentId === "hoh-local");
++  const isHohScratch = isHohProject && group.memberProjects.some((member) => member.isScratch);
++  const canEditGroup = !isHohScratch && group.memberProjects.every((member) =>
+@@ -286,0 +289,5 @@
++  const canRemoveGroup = !isHohProject || (!threads.some((thread) =>
++    group.memberProjects.some((member) =>
++      member.environmentId === thread.environmentId && member.id === thread.projectId,
++    ),
++  ) && readUnloadedThreadCount(group.memberProjects, threads) === 0);
+@@ -309,0 +317 @@
++    !isHohScratch &&
+@@ -356,0 +365 @@
++    if (isHohScratch || !canRemoveGroup) return;
+@@ -373 +382 @@
+-      api.dialogs.confirm(confirmationMessage, { variant: "destructive" }),
++      api.dialogs.confirm(isHohProject ? gt("Remove this project from HoH?") : confirmationMessage, { variant: "destructive" }),
+@@ -396 +405 @@
+-            force: true,
++            force: !isHohProject,
+@@ -551 +560 @@
+-              {group.memberProjects.length > 1
++              {isHohScratch ? gt("Chats without a project use the default folder.") : group.memberProjects.length > 1
+@@ -559 +568 @@
 -              "The shared name for this project group in the sidebar and thread lists.",
 +              "The shared name for this project group in the sidebar and chat lists.",
-@@ -667,2 +667,2 @@
+@@ -598 +607 @@
+-          <SettingsRow
++          {!isHohProject ? <SettingsRow
+@@ -643 +652 @@
+-          />
++          /> : null}
+@@ -667,2 +676,2 @@
 -                    ? gt("Hidden from project pickers. Threads and files are kept.")
 -                    : gt("Hides the project from project pickers. Threads and files are kept.")
 +                    ? gt("Hidden from project pickers. Chats and files are kept.")
 +                    : gt("Hides the project from project pickers. Chats and files are kept.")
-@@ -708 +708 @@
+@@ -693,2 +702,2 @@
+-        <ProjectDefaultsSettings category="project" />
+-        <ProjectActionsSettings />
++        {!isHohProject ? <ProjectDefaultsSettings category="project" /> : null}
++        {!isHohProject ? <ProjectActionsSettings /> : null}
+@@ -696 +705 @@
+-        <SettingsSection title={gt("Danger")}>
++        {!isHohScratch ? <SettingsSection title={gt("Danger")}>
+@@ -706 +715,3 @@
+-              hasOtherMembers
++              isHohProject
++                ? gt("Available for projects with no chats.")
++                : hasOtherMembers
+@@ -708 +719 @@
 -                    "Deletes the selected machine's checkout entries and their threads. Other machines and files on disk are not touched.",
 +                    "Deletes the selected machine's checkout entries and their chats. Other machines and files on disk are not touched.",
-@@ -712 +712 @@
+@@ -712 +723 @@
 -                      "{count, plural, other {Deletes all {count} checkout entries and their threads on every machine. Files on disk are not touched.}}",
 +                      "{count, plural, other {Deletes all {count} checkout entries and their chats on every machine. Files on disk are not touched.}}",
-@@ -715 +715 @@
+@@ -715 +726 @@
 -                  : gt("Deletes the project entry and its threads. Files on disk are not touched.")
 +                  : gt("Deletes the project entry and its chats. Files on disk are not touched.")
+@@ -721 +732 @@
+-                disabled={!canEditGroup}
++                disabled={!canEditGroup || !canRemoveGroup}
+@@ -733 +744 @@
+-        </SettingsSection>
++        </SettingsSection> : null}

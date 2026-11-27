@@ -265,6 +265,8 @@ pub struct LocalizedText {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind")]
 pub enum AskUserQuestionIntent {
+    #[serde(rename = "secret-file")]
+    SecretFile,
     #[serde(rename = "plan-review")]
     PlanReview {
         approve: String,

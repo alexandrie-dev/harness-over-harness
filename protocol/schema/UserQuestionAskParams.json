@@ -53,6 +53,18 @@
               "properties": {
                 "kind": {
                   "type": "string",
+                  "const": "secret-file"
+                }
+              },
+              "required": [
+                "kind"
+              ]
+            },
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
                   "const": "plan-review"
                 },
                 "approve": {

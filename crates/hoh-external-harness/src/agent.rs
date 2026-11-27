@@ -729,17 +729,22 @@ impl ExternalAgent {
         // The answer to the prompt is awaited together with the events: a harness may stream
         // the turn before it answers, and a stop before the answer must not be lost.
         let text = prompt_text(messages);
+        let current_text_len = text.len();
         let text = if session.needs_branch_context {
             branch_prompt(&self.session.snapshot_events(None, None), log.turn, text)
         } else {
             text
         };
-        let mut prompt = session.control.prompt(PromptParams {
-            session_id: self.id.to_string(),
-            turn_id: turn_id.clone(),
-            text,
-            images,
-        });
+        let history_prefix_len = text.len() - current_text_len;
+        let mut prompt = session.control.prompt_with_history_prefix(
+            PromptParams {
+                session_id: self.id.to_string(),
+                turn_id: turn_id.clone(),
+                text,
+                images,
+            },
+            history_prefix_len,
+        );
         let mut prompted = false;
         let mut deadline: Option<tokio::time::Instant> = None;
         loop {
@@ -2723,7 +2728,9 @@ async fn answer_question(
                     .collect()
             }),
             multi_select: question.multi_select.then_some(true),
-            intent: None,
+            intent: question
+                .secret_file
+                .then_some(hoh_user_questions::AskUserQuestionIntent::SecretFile),
         })
         .collect();
     let asked = agent
@@ -2738,9 +2745,13 @@ async fn answer_question(
         .await;
     let (text, error, response) = match asked {
         Ok(answer) => {
-            let text = serde_json::to_value(&answer)
-                .map(|value| js_json_stringify(&redact_value(&value)))
-                .unwrap_or_default();
+            let text = if questions.iter().any(|question| question.secret_file) {
+                "The credential was provided through a temporary file.".to_owned()
+            } else {
+                serde_json::to_value(&answer)
+                    .map(|value| js_json_stringify(&redact_value(&value)))
+                    .unwrap_or_default()
+            };
             let response = HarnessResponse::Answer {
                 answers: answer
                     .answers

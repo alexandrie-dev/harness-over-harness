@@ -133,6 +133,19 @@ fn main() {
                     },
                 }}));
             }
+            Some("skills/list") => {
+                let cwd = message["params"]["cwds"][0].as_str().unwrap();
+                assert_ne!(std::env::current_dir().unwrap().to_str(), Some(cwd));
+                send(json!({"id":id,"result":{"data":[
+                    {"cwd":"/other-workspace","skills":[{"name":"other","enabled":true}]},
+                    {"cwd":cwd,"skills":[
+                        {"name":"review","enabled":true,"description":"Review changes"},
+                        {"name":"review","enabled":true,"description":"Duplicate entry"},
+                        {"name":"disabled","enabled":false},
+                        {"name":"not a token","enabled":true}
+                    ]}
+                ]}}));
+            }
             Some("thread/start") => send(json!({"id":id,"result":{"thread":{"id":"thread-stub"}}})),
             Some("thread/resume") => {
                 let thread = message
@@ -310,6 +323,21 @@ fn main() {
                 send(
                     json!({"method":"turn/started","params":{"threadId":"thread-stub","turn":{"id":"turn-stub","status":"inProgress","startedAt":1}}}),
                 );
+                if scenario == "credential-card" {
+                    send(
+                        json!({"id":"native-secret","method":"item/tool/requestUserInput","params":{
+                            "threadId":"thread-stub", "turnId":"turn-stub","itemId":"question-1",
+                            "questions":[{"id":"raw","header":"Secret","question":"Enter a key","isSecret":true}]
+                        }}),
+                    );
+                    send(
+                        json!({"id":"file-secret","method":"item/tool/call","params":{
+                            "threadId":"thread-stub","turnId":"turn-stub","callId":"call-secret","tool":"request_secret",
+                            "arguments":{"label":"Test key","reason":"Run the test"}
+                        }}),
+                    );
+                    continue;
+                }
                 if scenario == "subagent-notifications" {
                     for (thread, turn, input, cached) in [
                         ("child-thread", "child-turn", 900, 200),
@@ -451,6 +479,9 @@ fn main() {
                 }
                 send(json!({"id":id,"result":{}}));
                 finish_turn("interrupted");
+            }
+            None if scenario == "credential-card" && id == Some(json!("file-secret")) => {
+                finish_turn("completed");
             }
             None if duplicate_after_answer
                 .as_ref()

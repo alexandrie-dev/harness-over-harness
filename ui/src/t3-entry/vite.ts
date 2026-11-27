@@ -9,8 +9,7 @@ import type { Plugin, UserConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
 import { HOH_THEME_COLORS } from './hoh-theme';
-import { HIDDEN_COMPONENTS, HIDDEN_PALETTE_ITEMS, HIDDEN_ROUTES, VISIBLE_PROVIDER_DRIVERS, VISIBLE_SETTINGS } from './features';
-import { HOH_HTTP_URL } from './host';
+import { HIDDEN_COMPONENTS, HIDDEN_PALETTE_ITEMS, HIDDEN_ROUTES, VISIBLE_PROVIDER_DRIVERS, VISIBLE_SETTINGS, VISIBLE_SETTINGS_ITEMS } from './features';
 import { deferRouterScrollStorage } from './router-scroll';
 
 const UI = resolve(import.meta.dirname, '../..');
@@ -20,12 +19,16 @@ const HOST = resolve(UI, 'src/hoh-host');
 const HOST_STUB = resolve(import.meta.dirname, 'host-stub.ts');
 const PROJECT_GROUPING_SETTING = resolve(UI, 'src/t3-entry/hoh-screens/ProjectGroupingSetting.tsx');
 const HOST_MODULE = '\0hoh-host';
+// This address is answered by the in-page HoH adapter. No socket is opened.
+const HOH_HTTP_URL = 'http://hoh.local';
 export const T3_PAGE = 't3.html';
 export const T3_ASSETS = 't3-assets';
 
 /** Псевдонимы основы T3: их пишет scripts/t3-sync.py (u2) в src/t3/base/aliases.json, пути — от ui/. */
 function t3Aliases() {
   const table: Record<string, string> = JSON.parse(readFileSync(resolve(T3_BASE, 'aliases.json'), 'utf8'));
+  // The local theme importer uses the window's pinned JSONC parser.
+  delete table['jsonc-parser'];
   return Object.entries(table).map(([name, target]) => name === '~'
     ? { find: /^~\//, replacement: resolve(UI, target) + '/' }
     : { find: new RegExp('^' + name.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&') + '$'), replacement: resolve(UI, target) });
@@ -43,34 +46,65 @@ export function hiddenRouteModule(file: string, to: string): string {
     + `  beforeLoad: () => { throw redirect({ to: ${JSON.stringify(to)}, replace: true }); },\n});\n`;
 }
 
-const NAV_ANCHOR = 'export const SETTINGS_NAV_GROUPS';
-/** Оставляет в списке разделов настроек только VISIBLE_SETTINGS (пустые группы убираются). */
+/** Settings navigation and search both read the same allowlist. */
 export function settingsNavFilter(code: string): string {
-  if (!code.includes(NAV_ANCHOR)) throw new Error('settingsSearch.ts: нет SETTINGS_NAV_GROUPS — T3 изменился, проверьте features.ts');
-  return code + `\n;{ // HoH (src/t3-entry/vite.ts): видимые разделы настроек — features.ts\n`
-    + `  const visible = new Set(${JSON.stringify(VISIBLE_SETTINGS)});\n`
-    + `  const groups = SETTINGS_NAV_GROUPS;\n`
-    + `  for (let i = groups.length - 1; i >= 0; i--) {\n`
-    + `    groups[i].paths = groups[i].paths.filter((path) => visible.has(path));\n`
-    + `    if (groups[i].paths.length === 0) groups.splice(i, 1);\n`
-    + `  }\n}\n`;
+  const declaration = 'export const HOH_SETTINGS_PATHS: ReadonlySet<SettingsPath> = new Set<SettingsPath>(';
+  const from = code.indexOf(declaration);
+  const end = '\n]);';
+  const to = code.indexOf(end, from);
+  if (from < 0 || to < 0) throw new Error('settingsSearch.ts: missing HoH settings paths');
+  const items = `const HOH_SETTINGS_ITEMS: Readonly<Record<string, readonly string[]>> = ${JSON.stringify(VISIBLE_SETTINGS_ITEMS)};\n`;
+  return anchorPatch('settingsSearch.ts', code, [
+    [code.slice(from, to + end.length), declaration + JSON.stringify(VISIBLE_SETTINGS) + ');'],
+    ['      HOH_SETTINGS_PATHS.has(item.to) &&', '      HOH_SETTINGS_PATHS.has(item.to) &&\n      (HOH_SETTINGS_ITEMS[item.to]?.includes(item.id) ?? true) &&'],
+    ['msg("name icon emoji image checkout remove delete")', 'msg("name pin archive folder checkout remove delete")'],
+  ], items);
+}
+
+function settingsRouteTree(code: string): string {
+  const declaration = 'const ChatSettingsRouteChildren = {\n';
+  const end = '} as ChatSettingsRouteChildren';
+  const from = code.indexOf(declaration);
+  const to = code.indexOf(end, from);
+  if (from < 0 || to < 0) throw new Error('routeTree.gen.ts: missing settings routes');
+  const current = code.slice(from, to);
+  const settings = [...VISIBLE_SETTINGS];
+  if (settings.includes('/settings/about')) settings.push('/settings/open-source-licenses');
+  const missing = settings.map(path => {
+    const words = path.slice('/settings/'.length).split('-');
+    return 'ChatSettings' + words.map(word => word.charAt(0).toUpperCase() + word.slice(1)).join('') + 'Route';
+  }).filter(route => !current.includes(`  ${route}:`));
+  for (const route of missing) {
+    if (!code.includes(`const ${route} =`)) throw new Error(`routeTree.gen.ts: missing ${route}`);
+  }
+  return anchorPatch('routeTree.gen.ts', code, [[
+    current + end,
+    current + missing.map(route => `  ${route}: ${route},\n`).join('') + end,
+  ]]);
 }
 
 const PROVIDER_ANCHORS = [
   ['    <SettingsPageContainer className="@container/providers gap-8">\n      <ProviderSettingsPanelContent', '    <SettingsPageContainer className="@container/providers gap-8">\n      <p className="text-muted-foreground px-1 text-sm">Channel plugins are disabled in the window</p>\n      <ProviderSettingsPanelContent'],
   ['const visibleProviderSettings = PROVIDER_SETTINGS.filter(', 'const visibleProviderSettings = PROVIDER_SETTINGS.filter((entry) => HOH_PROVIDER_DRIVERS.includes(entry.provider)).filter('],
   ['const canAddProvider =\n', 'const canAddProvider = false &&\n'],
+  ['    const driver = instance.driver;\n    const list = instancesByDriver.get(driver)', '    const driver = instance.driver;\n    if (!HOH_PROVIDER_DRIVERS.includes(driver)) continue;\n    const list = instancesByDriver.get(driver)'],
+  ['    const isDirty = explicitInstance !== undefined;', '    const isDirty = Boolean(explicitInstance?.displayName || explicitInstance?.accentColor);'],
   // Настройки, которых движок не исполняет (путь к claude, свои аргументы, «Usage providers», проверка состояния, сжатие): не рисуются.
   ['<UsageProviderSettings\n', '<HohNone\n'],
   ['      <SettingsSection title={gt("Advanced")}>', '      {false ? <SettingsSection title={gt("Advanced")}>'],
   ['        <CompactIdleThreadsRow />\n      </SettingsSection>\n', '        <CompactIdleThreadsRow />\n      </SettingsSection> : null}\n'],
 ] as const;
 const CARD_ANCHORS = [
-  // Карточка поставщика: остаются название и состояние; «Runtime», «Environment» и «Models» движок не исполняет.
+  ['    instance.displayName?.trim() || driverOption?.label || String(instance.driver);', '    instance.displayName?.trim() || liveProvider?.displayName || driverOption?.label || String(instance.driver);'],
+  ['          <ManagedControl reason={enabled ? undefined : managedDriverReason}>', '          {projectOverride !== undefined ? <ManagedControl reason={enabled ? undefined : managedDriverReason}>'],
+  ['          </ManagedControl>\n        </span>', '          </ManagedControl> : null}\n        </span>'],
+  // Runtime and environment settings require control of the provider's underlying process.
   ['!driverOption || deriveProviderSettingsFields(driverOption, undefined, m).length > 0 ? (', 'false ? ('],
   ['      <SettingsSection\n        title={gt("Environment")}', '      {false ? <SettingsSection\n        title={gt("Environment")}'],
   ['      </SettingsSection>\n      {environmentId !== undefined && liveProvider?.driver === "acpRegistry" ? (', '      </SettingsSection> : null}\n      {environmentId !== undefined && liveProvider?.driver === "acpRegistry" ? ('],
-  ['{driverOption !== undefined ? (\n        <SettingsSection title={gt("Models")}>', '{false ? (\n        <SettingsSection title={gt("Models")}>'],
+  ['      {driverOption !== undefined ? (\n        <SettingsSection title={gt("Models")}>', '      <HohProviderSetup provider={liveProvider} />\n      {liveProvider?.status === "ready" ? (\n        <SettingsSection title={gt("Models")}>'],
+  ['                Model preferences and custom models are saved on the selected environment and shared\n                across connected devices.', '                Choose which models appear in the model picker and which to mark as favorites.'],
+  ['              canManageCustomModels={!readOnly}', '              canManageCustomModels={false}'],
 ] as const;
 function anchorPatch(file: string, code: string, edits: ReadonlyArray<readonly [string, string]>, header = ''): string {
   let out = code;
@@ -115,7 +149,34 @@ export function providerSettingsPanel(code: string): string {
     `const HOH_PROVIDER_DRIVERS: readonly string[] = ${JSON.stringify(VISIBLE_PROVIDER_DRIVERS)}; // HoH (vite.ts, features.ts)\nconst HohNone = (_props: Record<string, unknown>) => null;\n`);
 }
 export function providerInstanceCard(code: string): string {
-  return anchorPatch('ProviderInstanceCard.tsx', code, CARD_ANCHORS);
+  const setup = resolve(UI, 'src/t3-entry/hoh-screens/ProviderSetup.tsx');
+  return anchorPatch('ProviderInstanceCard.tsx', code, CARD_ANCHORS,
+    `import { ProviderSetup as HohProviderSetup } from ${JSON.stringify(setup)};\n`);
+}
+
+function welcomeProviderActions(code: string): string {
+  const from = code.indexOf('    // Settings updates a broken CLI');
+  const to = code.indexOf('\n  };', from);
+  if (from < 0 || to < 0) throw new Error('WelcomePage.tsx: missing provider setup actions');
+  return anchorPatch('WelcomePage.tsx', code, [
+    [code.slice(from, to), `    return settingsAction(
+      state === "install" ? gt("Install") : state === "signIn" ? gt("Sign in") : gt("Details"),
+    );`],
+    ['      <Collapsible open={showMore} onOpenChange={setMoreOpen}>', '      {available.length > 0 || acpAllowed ? <Collapsible open={showMore} onOpenChange={setMoreOpen}>'],
+    ['      </Collapsible>\n      {codexSetupProvider', '      </Collapsible> : null}\n      {codexSetupProvider'],
+  ]);
+}
+
+function keybindingSettings(code: string): string {
+  const fileButton = code.indexOf('aria-label={gt("Open keybindings.json")}');
+  const from = code.lastIndexOf('          <Tooltip>\n', fileButton);
+  const end = '          </Tooltip>\n';
+  const to = code.indexOf(end, fileButton);
+  if (fileButton < 0 || from < 0 || to < 0) throw new Error('KeybindingsSettings.tsx: missing keybindings file control');
+  return anchorPatch('KeybindingsSettings.tsx', code, [
+    [code.slice(from, to + end.length), ''],
+    ['headerAction={!isElectron ? <BrowserKeybindingNotice /> : null}', 'headerAction={!isElectron && !isTauri() ? <BrowserKeybindingNotice /> : null}'],
+  ], 'import { isTauri } from "@tauri-apps/api/core";\n');
 }
 
 /** Имена тем в Appearance → Themes: без названий продуктов T3 («T3 Code» → «Default», «T3 Chat» → «Chat»). */
@@ -127,7 +188,24 @@ export function themeSettings(code: string): string {
   return anchorPatch('ThemeSettings.tsx', code, [
     ['const MAINTAINER_THEMES: ReadonlyArray<ThemeDefinition> = [\n', 'const MAINTAINER_THEMES: ReadonlyArray<ThemeDefinition> = [\n  HOH_THEME,\n'],
     ['    <div className="space-y-3">\n', '    <div className="space-y-3">\n      <HohProjectGroupingSetting />\n'],
+    ['          {/* HoH (ui/T3-MAP.md): импорт тем VS Code / Open VSX выключен — кнопки «Add theme» нет. */}', `          <Button size="xs" variant="outline" onClick={() => onImportOpenChange(true)}>
+            <PlusIcon />
+            <T>Import theme</T>
+          </Button>`],
   ], 'import { HOH_THEME } from "@t3tools/shared/themePalettes";\nimport { ProjectGroupingSetting as HohProjectGroupingSetting } from ' + JSON.stringify(PROJECT_GROUPING_SETTING) + ';\n');
+}
+function themeImportDialog(code: string): string {
+  const searchAnchor = '      <ThemeSearchSection\n';
+  const localImportAnchor = '      {(() => {\n        const dropHandlers';
+  const from = code.indexOf(searchAnchor);
+  const to = code.indexOf(localImportAnchor, from);
+  if (from < 0 || to < 0) throw new Error('ThemeImportDialog.tsx: missing theme import sections');
+  return anchorPatch('ThemeImportDialog.tsx', code, [
+    ['import { ThemeSearchSection } from "./ThemeSearchSection";\n', ''],
+    [code.slice(from, to), ''],
+    ['<T>Add a theme</T>', '<T>Import a theme</T>'],
+    ['gt("Drop T3 Code or VS Code .json files")', 'gt("Drop a theme JSON file")'],
+  ]);
 }
 export function themePalettes(code: string): string {
   const theme = `export const HOH_THEME: ThemeDefinition = { id: "hoh", label: "HoH", appearance: "dark", colors: ${JSON.stringify(HOH_THEME_COLORS)} };\n`;
@@ -168,6 +246,9 @@ function chatIndexHome(code: string): string {
 export function chatViewHome(code: string): string {
   return anchorPatch('ChatView.tsx', code, [
     ['            data-chat-header\n', '            data-chat-header\n            data-tauri-drag-region="deep"\n'],
+    ['const isGitRepo = liveIsGitRepo ?? recallCheckoutIsRepo(environmentId, gitStatusCwd) ?? true;',
+      'const isGitRepo = liveIsGitRepo ?? recallCheckoutIsRepo(environmentId, gitStatusCwd) ?? false;'],
+    ['                                  showGitControls={isGitRepo}', '                                  showGitControls={false}'],
     ['"pointer-events-none absolute inset-0 z-20 flex items-center [@media(max-height:34rem)]:items-end"', '"hoh-draft-hero pointer-events-none absolute inset-0 z-20 flex flex-col justify-end"'],
     ['              <div ref={draftHeroTransitionGroupRef} className="chat-composer-lane w-full">', '              {isDraftHeroState ? <HohHomeBody /> : null}\n              <div ref={draftHeroTransitionGroupRef} className="chat-composer-lane w-full">'],
   ], `import { HomeBody as HohHomeBody } from ${JSON.stringify(HOME_BODY)};\n`);
@@ -192,13 +273,10 @@ function timelineMessageEdit(code: string): string {
     '  const activity = use(TimelineRowActivityCtx);\n  const busy = activity.isWorking || activity.isRevertingCheckpoint;\n  const attachmentReferences',
   ]], `import { EditUserMessageAction as HohEditUserMessageAction } from ${JSON.stringify(editAction)};\n`);
 }
-/** Боковая панель (HOH-41, состав раунда 12): верх — SidebarTop (New chat, Team с «+», Recent chats) вместо шапки T3 с поиском и значками;
- *  все разговоры — строки в один ряд без строки проекта («slim»), без полки Working. Полки Snoozed/Settled и кнопки Settle/Snooze скрыты (features.ts). */
+/** SidebarTop combines the HoH navigation with T3 search, project controls, and chat organization. */
 export function sidebarList(code: string): string {
   return anchorPatch('Sidebar.tsx', code, [
     ['import { SidebarHeaderIconButton, SidebarThreadHeader } from "./sidebar/SidebarThreadHeader";', 'import { SidebarHeaderIconButton } from "./sidebar/SidebarThreadHeader";\nimport { SidebarTop as SidebarThreadHeader } from ' + JSON.stringify(SIDEBAR_TOP) + ';'],
-    ['useClientSettings((s) => s.sidebarWorkingShelfEnabled) && folderGroups === null', '(useClientSettings((s) => s.sidebarWorkingShelfEnabled), false)'],
-    ['const boringSidebarEnabled = useClientSettings((settings) => settings.boringSidebarEnabled);', 'const boringSidebarEnabled = true;'],
     ['scopedProjectGroups.length > 0 || (group.pinned && !group.archived)', '!group.archived'],
     ['section === "active" || section === "pinned" || section === "working";', 'false;'],
     // Пустой черновик (разговор без первого сообщения: хост даёт ему latestUserMessageAt = null) в «Recent chats» не показывается.
@@ -324,7 +402,14 @@ function chatSettingsWhisper(code: string): string {
   return anchorPatch('SettingsPanels.tsx', code, [[
     '    <SettingsPageContainer>\n      <SettingsSection id="composer"',
     '    <SettingsPageContainer>\n      <HohWhisperSetting />\n      <SettingsSection id="composer"',
-  ]], `import { WhisperSetting as HohWhisperSetting } from ${JSON.stringify(setting)};\n`);
+  ]], `import { WhisperSettingsLink as HohWhisperSetting } from ${JSON.stringify(setting)};\n`);
+}
+
+function localSettingsRoute(code: string, panel: string, original: string, replacement: string): string {
+  return anchorPatch(panel + ' route', code, [[
+    `import { ${panel} } from "../components/settings/${original}";`,
+    `import { ${panel} } from ${JSON.stringify(resolve(UI, 'src/t3-entry/hoh-screens', replacement))};`,
+  ]]);
 }
 
 /** HoH accepts pasted text as text. The native engine only accepts raster attachments. */
@@ -540,7 +625,7 @@ function hohT3(): Plugin {
       if (id === resolve(T3_WEB, 'components/settings/settingsSearch.ts')) return { code: settingsNavFilter(code), map: null };
       if (id === resolve(T3_WEB, 'routeTree.gen.ts')) {
         return {
-          code: anchorPatch('routeTree.gen.ts', code, [
+          code: anchorPatch('routeTree.gen.ts', settingsRouteTree(code), [
             ['  ChatSettingsRoute: ChatSettingsRouteWithChildren,', '  ChatSettingsRoute: ChatSettingsRouteWithChildren,\n  ChatUsageRoute: ChatUsageRoute,'],
           ]),
           map: null,
@@ -561,9 +646,47 @@ function hohT3(): Plugin {
       }
       if (id === resolve(T3_WEB, 'components/CommandPalette.tsx')) return { code: commandPalettePicker(code), map: null };
       if (id === resolve(T3_WEB, 'components/settings/ProviderSettingsPanel.tsx')) return { code: providerSettingsPanel(code), map: null };
+      if (id === resolve(T3_WEB, 'components/settings/KeybindingsSettings.tsx')) return { code: keybindingSettings(code), map: null };
+      if (id === resolve(T3_WEB, 'routes/_chat.settings.threads.tsx')) return {
+        code: localSettingsRoute(code, 'ThreadsSettingsPanel', 'SettingsPanels', 'ThreadSettings.tsx'),
+        map: null,
+      };
+      if (id === resolve(T3_WEB, 'routes/_chat.settings.voice.tsx')) return {
+        code: localSettingsRoute(code, 'VoiceSettingsPanel', 'VoiceSettingsPanel', 'VoiceSettings.tsx'),
+        map: null,
+      };
+      if (id === resolve(T3_WEB, 'components/settings/SettingsScopeSentence.tsx')) return {
+        code: anchorPatch('SettingsScopeSentence.tsx', code, [[
+          '  "/settings/about",',
+          '  "/settings/about",\n  "/settings/threads",\n  "/settings/voice",',
+        ]]),
+        map: null,
+      };
+      if (id === resolve(T3_WEB, 'keybindings.ts')) return {
+        code: anchorPatch('keybindings.ts', code, [[
+          '    isWeb: !isElectron,\n    isDesktop: isElectron,',
+          '    isWeb: !isElectron && !isTauri(),\n    isDesktop: isElectron || isTauri(),',
+        ]], 'import { isTauri } from "@tauri-apps/api/core";\n'),
+        map: null,
+      };
+      if (id === resolve(T3_WEB, 'components/settings/ProviderModelsSection.tsx')) return {
+        code: anchorPatch('ProviderModelsSection.tsx', code, [[
+          '{driverKind !== "antigravity" && !isAdding ? (',
+          '{canManageCustomModels && driverKind !== "antigravity" && !isAdding ? (',
+        ]]),
+        map: null,
+      };
       if (id === resolve(T3_WEB, 'components/settings/ThemePreviewCircles.tsx')) return { code: themeCards(code), map: null };
       if (id === resolve(T3_WEB, 'components/settings/ThemeSettings.tsx')) return { code: themeSettings(code), map: null };
+      if (id === resolve(T3_WEB, 'components/settings/ThemeImportDialog.tsx')) return { code: themeImportDialog(code), map: null };
       if (id === resolve(T3_BASE, 'shared/themePalettes.ts')) return { code: themePalettes(code), map: null };
+      if (id === resolve(T3_BASE, 'client-runtime/secretRequest.ts')) return {
+        code: anchorPatch('secretRequest.ts', code, [[
+          "Kept out of chat, in a private file this agent's commands can read for 24 hours",
+          'The agent’s commands can read the private file during this turn, for up to 5 minutes.',
+        ]]),
+        map: null,
+      };
       if (id === resolve(T3_WEB, 'components/chat/ChatComposer.tsx')) return { code: composerSecret(composerWhisper(composerPaste(code))), map: null };
       if (id === resolve(T3_WEB, 'components/settings/SettingsPanels.tsx')) return { code: chatSettingsWhisper(code), map: null };
       if (id === resolve(T3_WEB, 'components/ComposerPromptEditorTiptap.tsx')) return { code: editorPaste(code), map: null };
@@ -573,7 +696,7 @@ function hohT3(): Plugin {
       if (id === resolve(T3_WEB, 'routes/_chat.index.tsx')) return { code: chatIndexHome(code), map: null };
       if (id === resolve(T3_WEB, 'components/ChatView.tsx')) return { code: chatViewHome(code), map: null };
       if (id === resolve(T3_WEB, 'components/onboarding/WelcomePage.tsx')) return {
-        code: anchorPatch('WelcomePage.tsx', code, [NATIVE_TITLEBAR], TAURI_IMPORT), map: null,
+        code: anchorPatch('WelcomePage.tsx', welcomeProviderActions(code), [NATIVE_TITLEBAR], TAURI_IMPORT), map: null,
       };
       if (id === resolve(T3_WEB, 'components/WorkspacePageHeader.tsx')) return {
         code: anchorPatch('WorkspacePageHeader.tsx', code, [
@@ -591,6 +714,45 @@ function hohT3(): Plugin {
           ['          data-right-panel-tab-list\n', '          data-right-panel-tab-list\n          data-tauri-drag-region={tabScrollState.hasOverflow ? "false" : undefined}\n'],
         ]), map: null,
       };
+      if (id === resolve(T3_WEB, 'components/chat/ThreadDetailsPanel.tsx')) return {
+        code: anchorPatch('ThreadDetailsPanel.tsx', code, [[
+          '      {() => <div className="group/details-items">',
+          `      {() => <div className="group/details-items">
+        {props.isServerThread ? (
+          <ThreadRelationshipsPanel
+            environmentId={props.environmentId} threadId={props.threadId}
+            showLineage={false} showSideChats
+          />
+        ) : null}
+        {props.gitCwd && props.isGitRepo && props.onOpenChanges ? (
+          <GitActionsControl
+            activeThreadRef={{ environmentId: props.environmentId, threadId: props.threadId }}
+            gitCwd={props.gitCwd}
+            workspaceMutationId={props.workspaceMutationId}
+            showActions={false}
+            onOpenChanges={props.onOpenChanges}
+          />
+        ) : null}
+        {props.showOpenInPicker && props.gitCwd && props.availableEditors.length > 0 ? (
+          <OpenInPicker
+            environmentId={props.environmentId}
+            keybindings={props.keybindings}
+            availableEditors={props.availableEditors}
+            openInCwd={props.gitCwd}
+            enableShortcut={props.openInShortcutEnabled}
+            displayMode="panel"
+          />
+        ) : null}`,
+        ]]), map: null,
+      };
+      if (id === resolve(T3_WEB, 'components/chat/SideChatPane.tsx')) {
+        const button = code.indexOf('                <T>Bring back</T>');
+        const from = code.lastIndexOf('        <Tooltip>\n', button);
+        const end = '        </Tooltip>\n';
+        const to = code.indexOf(end, button);
+        if (button < 0 || from < 0 || to < 0) throw new Error('SideChatPane.tsx: missing merge action');
+        return { code: code.slice(0, from) + code.slice(to + end.length), map: null };
+      }
       if (id === resolve(T3_WEB, 'components/chat/TimelineUserMessageRow.tsx')) return { code: timelineMessageEdit(code), map: null };
       if (id === resolve(T3_WEB, 'components/Sidebar.tsx')) return { code: sidebarList(code), map: null };
       if (id === resolve(T3_WEB, 'components/AppSidebarLayout.tsx')) return { code: sidebarLayout(code), map: null };

@@ -42,6 +42,12 @@ pub struct Host {
     notifications: EngineNotifications,
 }
 
+impl Host {
+    pub(crate) fn chat_secret_directory(&self) -> &std::path::Path {
+        self.chat_secrets.directory()
+    }
+}
+
 /// How the native host starts the engine. The real `hoh` needs a window profile and its own
 /// data folder; the replay stub (tests only) takes no arguments.
 #[derive(Debug, PartialEq, Eq)]
@@ -356,6 +362,15 @@ fn handle_event(
             {
                 questions.cancel(id);
             }
+            if frame["method"] == "session.status"
+                && frame["params"]["status"] == "idle"
+                && let Some(id) = frame["params"]["sessionId"].as_str()
+            {
+                questions.close_session_secrets(id);
+                if let Some(host) = handle.try_state::<Host>() {
+                    host.chat_secrets.close_session(id);
+                }
+            }
             let frame = window_frame(frame);
             let channel = notifications
                 .lock()
@@ -378,6 +393,9 @@ fn handle_event(
             ready.store(is_ready, Ordering::Release);
             if !is_ready {
                 questions.clear();
+                if let Some(host) = handle.try_state::<Host>() {
+                    host.chat_secrets.close_turns();
+                }
             }
             for (label, resolution) in cancel_for_status(approvals, is_ready) {
                 dispatch_resolution(handle, resolution);
@@ -404,6 +422,17 @@ fn handle_event(
             params,
         } if method == "user-question/ask" => {
             match questions.begin(generation, id.clone(), params) {
+                Ok(question)
+                    if !in_chat && question.questions.iter().any(crate::questions::is_secret) =>
+                {
+                    questions.cancel(&question.request_id);
+                    respond_error(
+                        handle,
+                        generation,
+                        id,
+                        "Private credential requests require the main chat interface.",
+                    );
+                }
                 Ok(question) => {
                     let _ = handle.emit_to("main", "engine-question", question);
                 }
@@ -1060,6 +1089,35 @@ pub fn question_answer(
         .map_err(|_| "Помощник недоступен".to_owned())
 }
 
+/// Handle the trusted window's protected answer. The engine receives only the path or a decline.
+#[tauri::command]
+pub async fn question_secret_answer(
+    window: tauri::WebviewWindow,
+    state: tauri::State<'_, Host>,
+    session_id: String,
+    request_id: String,
+    secret: Option<SecretString>,
+) -> Result<(), String> {
+    if window.label() != "main" {
+        return Err("Only the main window may answer a credential request.".into());
+    }
+    let questions = state.questions.clone();
+    let store = state.chat_secrets.clone();
+    let engine = state.engine.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let (generation, frame, path) =
+            questions.answer_secret(&store, &session_id, &request_id, secret.as_ref())?;
+        engine.respond(generation, frame).map_err(|_| {
+            if let Some(path) = path {
+                store.discard(std::path::Path::new(&path));
+            }
+            "The harness is unavailable.".to_owned()
+        })
+    })
+    .await
+    .map_err(|_| "Could not answer the credential request.".to_owned())?
+}
+
 /// Save a value entered in the composer's private dialog. Only the path is returned to the page.
 #[tauri::command]
 pub async fn store_chat_secret(
@@ -1127,6 +1185,7 @@ pub fn approval_decide(
 }
 
 pub fn shutdown(handle: &tauri::AppHandle, host: &Host) {
+    host.questions.clear();
     for (label, resolution) in host.approvals.cancel_all() {
         dispatch_resolution(handle, resolution);
         destroy_window(handle, &label);
@@ -1208,6 +1267,129 @@ pub async fn browse_folders_for(
     })
     .await
     .map_err(|_| "Request interrupted.".to_owned())?
+}
+
+#[tauri::command]
+pub async fn project_list_entries(
+    window: tauri::WebviewWindow,
+    state: tauri::State<'_, Host>,
+    cwd: String,
+    directory_path: String,
+) -> Result<crate::project_files::ProjectEntries, crate::project_files::FileError> {
+    use crate::project_files::FileError;
+
+    if window.label() != "main" {
+        return Err(FileError::operation(
+            "Project files are available to the main window only.",
+        ));
+    }
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    {
+        let engine = state.engine.clone();
+        let private = state.chat_secret_directory().to_owned();
+        tauri::async_runtime::spawn_blocking(move || {
+            let private = crate::project_files::PrivateDirectory::new(&private);
+            let (root, identity) =
+                crate::project_files::project_root(&engine, &cwd).map_err(FileError::operation)?;
+            crate::project_files::list(&root, identity, &directory_path, &private)
+        })
+        .await
+        .map_err(|_| FileError::operation("Project folder listing was interrupted."))?
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    {
+        let _ = (state, cwd, directory_path);
+        Err(FileError::operation(
+            "Project files are unavailable on this platform.",
+        ))
+    }
+}
+
+#[tauri::command]
+pub async fn project_read_file(
+    window: tauri::WebviewWindow,
+    state: tauri::State<'_, Host>,
+    cwd: String,
+    path: String,
+    allow_missing: bool,
+) -> Result<crate::project_files::ProjectText, crate::project_files::FileError> {
+    use crate::project_files::FileError;
+
+    if window.label() != "main" {
+        return Err(FileError::operation(
+            "Project files are available to the main window only.",
+        ));
+    }
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    {
+        let engine = state.engine.clone();
+        let private = state.chat_secret_directory().to_owned();
+        tauri::async_runtime::spawn_blocking(move || {
+            let private = crate::project_files::PrivateDirectory::new(&private);
+            let (root, identity) =
+                crate::project_files::project_root(&engine, &cwd).map_err(FileError::operation)?;
+            crate::project_files::read_text(&root, identity, &path, allow_missing, &private)
+        })
+        .await
+        .map_err(|_| FileError::operation("Project file preview was interrupted."))?
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    {
+        let _ = (state, cwd, path, allow_missing);
+        Err(FileError::operation(
+            "Project files are unavailable on this platform.",
+        ))
+    }
+}
+
+#[tauri::command]
+pub async fn project_available_editors(
+    window: tauri::WebviewWindow,
+) -> Result<Vec<&'static str>, String> {
+    if window.label() != "main" {
+        return Err("Editor actions are available to the main window only.".into());
+    }
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    {
+        tauri::async_runtime::spawn_blocking(crate::project_files::available_editors)
+            .await
+            .map_err(|_| "Editor discovery was interrupted.".to_owned())
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    {
+        Ok(Vec::new())
+    }
+}
+
+#[tauri::command]
+pub async fn project_open_in_editor(
+    window: tauri::WebviewWindow,
+    state: tauri::State<'_, Host>,
+    cwd: String,
+    path: String,
+    editor: String,
+    position: Option<crate::project_files::EditorPosition>,
+) -> Result<(), String> {
+    if window.label() != "main" {
+        return Err("Editor actions are available to the main window only.".into());
+    }
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    {
+        let engine = state.engine.clone();
+        let private = state.chat_secret_directory().to_owned();
+        tauri::async_runtime::spawn_blocking(move || {
+            let private = crate::project_files::PrivateDirectory::new(&private);
+            let (root, identity) = crate::project_files::project_root(&engine, &cwd)?;
+            crate::project_files::open_editor(&root, identity, &path, &editor, position, &private)
+        })
+        .await
+        .map_err(|_| "Editor launch was interrupted.".to_owned())?
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    {
+        let _ = (state, cwd, path, editor, position);
+        Err("Editor actions are unavailable on this platform.".into())
+    }
 }
 
 /// Resolve `~` for the folder browser. Isolated window launches can give Claude the person's real
@@ -1409,9 +1591,11 @@ pub async fn preview_html(
     #[cfg(target_os = "linux")]
     {
         let engine = state.engine.clone();
+        let private = state.chat_secret_directory().to_owned();
         let document = tauri::async_runtime::spawn_blocking(move || {
             let (root, identity, home) = preview_root(&engine, session_id)?;
-            crate::image_asset::read_project_html(&root, identity, &path, &home)
+            let private = crate::project_files::PrivateDirectory::new(&private);
+            crate::image_asset::read_project_html(&root, identity, &path, &home, &private)
         })
         .await
         .map_err(|_| "The HTML read was interrupted.".to_owned())?

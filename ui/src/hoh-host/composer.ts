@@ -1,7 +1,9 @@
-// What T3's composer offers beyond text (HOH-41 package 1): `/` and `$` (the commands and skills Claude
-// itself declares for the folder, `hoh/executor/commands`), `@` (the folder's files, `hoh/workspace/entries`)
+// What T3's composer offers beyond text (HOH-41 package 1): `/` and `$` (the commands and skills the selected
+// harness declares for the folder, `hoh/executor/commands`), `@` (the folder's files, `hoh/workspace/entries`)
 // and pictures (T3 uploads them: `attachments.createUploadUrl`, then the bytes to that address; the older
 // `assets.persistChatAttachments` with data URLs too; then the bytes go to the engine with `session/prompt`).
+
+import type { HohExecutor } from './config.ts';
 
 /** T3's send-turn limits (packages/contracts/src/chatAttachment.ts). */
 export const MAX_ATTACHMENTS = 100;
@@ -98,7 +100,7 @@ export function workspaceSnapshot(cwd: string, checkedAt: string, found: any) {
       ...(typeof command.description === 'string' && command.description.trim() ? { description: command.description.trim() } : {}),
       ...(typeof command.argumentHint === 'string' && command.argumentHint.trim() ? { input: { hint: command.argumentHint.trim() } } : {}),
     })),
-    // Claude names a skill, not its file: the sentinel satisfies T3's contract while its two openers hide unsafe file access.
+    // The engine exposes skill names, so there is no instruction file to open here.
     skills: list(found?.skills).map((skill: any) => ({
       name: skill.name.trim(), path: `hoh-skill:${skill.name.trim()}`, enabled: true,
       ...(typeof skill.description === 'string' && skill.description.trim() ? { description: skill.description.trim() } : {}),
@@ -109,10 +111,20 @@ export function workspaceSnapshot(cwd: string, checkedAt: string, found: any) {
 /** T3's skill mention (packages/shared composerInlineTokens.ts, ClaudeSkillDispatch.ts): `$name`, not an amount like `$5k`. */
 const SKILL_MENTION = /(^|\s)\p{Sc}(?![0-9][0-9_]*(?:[kKmMbBtT]|[eE][0-9]+)?(?:\s|$))(?=[a-zA-Z0-9:_-]*[a-zA-Z])([a-zA-Z0-9][a-zA-Z0-9:_-]*)(?=\s|$)/gu;
 
-/** The text as Claude runs skills: every mention of a skill it declared (`$name`) becomes `/name` (T3 `planClaudeSkillDispatch`). */
-export function skillsAsCommands(text: string, skills: ReadonlySet<string>): string {
+/** Keep the user's words in the chat and use the selected harness's native skill syntax for sending. */
+export function skillsAsCommands(text: string, skills: ReadonlySet<string>, executor: HohExecutor): string {
   if (!skills.size) return text;
-  return text.replace(SKILL_MENTION, (whole, before: string, name: string) => skills.has(name) ? `${before}/${name}` : whole);
+  const input = executor === 'codex' ? text : text.trimStart();
+  if (executor === 'claude' && [...input.matchAll(SKILL_MENTION)].filter(match => skills.has(match[2])).length > 1) {
+    return text;
+  }
+  const prefix = executor === 'codex' ? '$' : executor === 'pi' ? '/skill:' : '/';
+  const sent = input.replace(SKILL_MENTION, (whole, before: string, name: string, offset: number) => {
+    // Pi expands only a leading skill. Claude splits inline mentions in its native adapter.
+    if (!skills.has(name) || (executor !== 'codex' && (offset !== 0 || before !== ''))) return whole;
+    return `${before}${prefix}${name}`;
+  });
+  return sent === input ? text : sent;
 }
 
 function fnv1a64(value: string): string {

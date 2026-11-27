@@ -30,15 +30,10 @@ export const HIDDEN_ROUTES: Readonly<Record<string, string>> = {
   'pair': '/',
   'guest': '/',
   '_chat.settings.access': '/settings/general',
-  '_chat.settings.diffs': '/settings/general',
-  '_chat.settings.keybindings': '/settings/general',
-  '_chat.settings.voice': '/settings/general',
   '_chat.settings.snap-shot': '/settings/general',
-  '_chat.settings.threads': '/settings/general',
   '_chat.settings.browser': '/settings/general',
   '_chat.settings.devices': '/settings/general',
   '_chat.settings.scheduled-tasks': '/settings/general',
-  '_chat.settings.projects': '/settings/general',
   '_chat.settings.source-control': '/settings/general',
   '_chat.settings.worktrees': '/settings/general',
   '_chat.settings.connections': '/settings/general',
@@ -51,58 +46,51 @@ export const HIDDEN_ROUTES: Readonly<Record<string, string>> = {
   '_chat.settings.storage': '/settings/general',
 };
 
-/** Разделы настроек, которые остаются (план: общие, вид, чат, провайдеры, архив). */
+/** Разделы настроек, которые доступны в HoH. */
 export const VISIBLE_SETTINGS: readonly string[] = [
   '/settings/general',
   '/settings/appearance',
   '/settings/chat',
+  '/settings/diffs',
+  '/settings/keybindings',
+  '/settings/voice',
   '/settings/providers',
+  '/settings/threads',
+  '/settings/projects',
   '/settings/archived',
   // Сведения о программе и лицензии T3 (MIT; страница лицензий открывается из неё).
   '/settings/about',
 ];
 
+/** Settings pages with a subset of T3 rows. Search only links to rows rendered in HoH. */
+export const VISIBLE_SETTINGS_ITEMS: Readonly<Record<string, readonly string[]>> = {
+  '/settings/voice': ['voice-microphone', 'dictation-shortcut-mode'],
+  '/settings/threads': ['default-permissions', 'snooze-options'],
+  '/settings/projects': ['project-overview'],
+};
+
 /** Компоненты T3, которые не рисуются: файл в apps/web/src → имена экспортов (`default` — экспорт по умолчанию). */
 export const HIDDEN_COMPONENTS: Readonly<Record<string, readonly string[]>> = {
   // Выбор значка среды не поддерживается движком.
   'components/settings/EnvironmentIconPicker.tsx': ['EnvironmentIconMenu'],
-  // «Open in VS Code / Cursor» в карточке разговора и в просмотре файла.
-  'components/chat/OpenInPicker.tsx': ['OpenInPicker'],
   // «Add project script» и кнопки скриптов проекта.
   'components/ProjectScriptsControl.tsx': ['default'],
-  // «Initialize Git» и все действия git (commit, push, pull request).
-  'components/GitActionsControl.tsx': ['default'],
   // Микрофон в поле ввода (голосовой ввод) и полоска записи.
   'components/chat/ComposerSpeechButton.tsx': ['ComposerSpeechButton', 'ComposerSpeechRecordingPill'],
   // T3 рисует несохранённый composer draft отдельной карточкой; Recent chats начинается только с первого сообщения.
   'components/sidebar/SidebarDraftBlock.tsx': ['SidebarDraftBlock'],
 };
 
-/** Поставщики моделей, которые показывает Providers (HoH исполняет только Claude). T3 рисует строку Codex и «Add provider»
- * по своим умолчаниям на клиенте (ProviderSettingsPanel.tsx: PROVIDER_SETTINGS, canAddProvider), хост их не отдаёт;
- * при сборке (vite.ts, providerSettingsPanel) список сужается до этих драйверов, «Add provider» и «+» не рисуются. */
-export const VISIBLE_PROVIDER_DRIVERS: readonly string[] = ['claudeAgent'];
+/** Providers показывает встроенные харнессы HoH. */
+export const VISIBLE_PROVIDER_DRIVERS: readonly string[] = ['claudeAgent', 'codex', 'pi'];
 
-/** Элементы, которые T3 рисует без условия: значки внизу боковой панели (components/sidebar/SidebarChrome.tsx,
- * SidebarUtilityMenu) и строка на Welcome. «Issues» T3 показывает по данным среды — его выключает хост; правило здесь — запас. */
+/** Элементы, которые T3 рисует без условия. */
 export const HIDDEN_SELECTORS: readonly string[] = [
   '[data-sidebar="menu-item"]:has(> [aria-label="Usage"])',
   '[data-sidebar="menu-item"]:has(> [aria-label="Pull requests"])',
   '[data-sidebar="menu-item"]:has(> [aria-label="Issues"])',
-  // «Add more agents» на Welcome (components/onboarding/WelcomePage.tsx, раздел Agents): когда агент найден, подпись строки
-  // приглушена (text-muted-foreground); добавить некого — в выборе только Claude. Строка «Set up an agent» (агент не найден,
-  // кнопка Install) — с text-foreground и остаётся.
-  'section > div.min-w-0 > [data-slot="collapsible"]:has(> [data-slot="collapsible-trigger"] > span.text-sm.text-muted-foreground)',
-  // Боковая панель раунда 12 (HOH-41): один список «Recent chats» без полок Working / Snoozed / Settled и без «Settle» / «Snooze» в строке.
-  '[data-testid="sidebar-working-header"]',
-  '[data-testid="sidebar-snoozed-header"]',
-  '[data-testid="sidebar-settled-header"]',
-  '[data-thread-item] button[aria-label="Settle chat"]',
-  '[data-thread-item] button[aria-label="Snooze chat"]',
   // Полоски TimelineMinimap у левого края ленты выглядят как случайный знак «=» и дублируют прокрутку разговора.
   '[data-testid="timeline-minimap"]',
-  // Правая общая панель остаётся скрытой. Thread details теперь нужна: в ней штатный компонент T3 показывает контекст Claude.
-  '[aria-label="Toggle right panel"]',
 ];
 
 /** Пункты палитры команд T3 (components/CommandPalette.tsx), которые не показываются: образец значения пункта. Все
@@ -130,14 +118,12 @@ export const HIDDEN_AREAS: readonly HiddenArea[] = [
   { id: 'office', title: 'офисные форматы', how: ['host'] },
   { id: 'diagnostics', title: 'телеметрия, диагностика процессов и ресурсы', how: ['host', 'route', 'nav', 'css'] },
   { id: 'updates', title: 'обновления приложения', how: ['host'] },
-  { id: 'providers-install', title: 'ACP-реестр, установка и вход поставщиков моделей T3; в выборе модели только Claude', how: ['host'] },
-  { id: 'secrets', title: 'секреты/1Password', how: ['host', 'route', 'nav'] },
+  { id: 'providers-install', title: 'ACP-реестр и управляемая установка поставщиков моделей T3', how: ['host'] },
+  { id: 'secrets', title: 'настройки внешних хранилищ секретов, включая 1Password', how: ['host', 'route', 'nav'] },
   { id: 'github-star', title: 'GitHub-звезда/конфетти', how: ['host'] },
   { id: 'voice', title: 'голосовой ввод', how: ['host', 'route', 'nav', 'component'] },
-  { id: 'editor', title: 'открыть в редакторе («Open in VS Code»)', how: ['host', 'component'] },
   { id: 'project-scripts', title: 'скрипты проекта («Add project script»)', how: ['component'] },
-  { id: 'other-providers', title: 'Codex и другие поставщики в Providers, «Add provider» и «+»; в карточке Claude остаются название и состояние (без Runtime, Environment, Models, Usage providers, Advanced)', how: ['component'] },
+  { id: 'other-providers', title: 'Сторонние поставщики, «Add provider», Runtime, Environment, Usage providers и Advanced', how: ['component'] },
   { id: 'theme-names', title: 'имена тем «T3 Code» и «T3 Chat» в Appearance → Themes → «Default» и «Chat»', how: ['component'] },
-  { id: 'more-agents', title: '«Add more agents» на Welcome', how: ['css'] },
-  { id: 'settings', title: 'разделы настроек кроме General, Appearance, Chat, Providers, Archived', how: ['route', 'nav'] },
+  { id: 'settings', title: 'разделы настроек вне VISIBLE_SETTINGS', how: ['route', 'nav'] },
 ];

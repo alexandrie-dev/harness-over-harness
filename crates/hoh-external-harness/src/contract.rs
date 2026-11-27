@@ -890,6 +890,8 @@ pub struct HarnessQuestion {
     pub options: Vec<QuestionOption>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub multi_select: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub secret_file: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

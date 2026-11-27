@@ -13,6 +13,7 @@ import { pluginInventory } from './plugin-inventory.ts';
 import { installHohFetch, installHohXhr } from './http.ts';
 import { installHohWebSocket, socketMatcher } from './socket.ts';
 import { WireServer, type WireServerOptions } from './wire.ts';
+import type { CreateHohLocalSettings } from '../t3-entry/local-settings.ts';
 
 export { HohHost } from './host.ts';
 export { WireServer, RpcFailure } from './wire.ts';
@@ -26,6 +27,7 @@ export const HOH_HOSTNAME = 'hoh.local';
 export interface InstallOptions extends WireServerOptions {
   readonly engine: HohEngine;
   readonly platform?: EnvironmentPlatform;
+  readonly createLocalSettings?: CreateHohLocalSettings;
   readonly hostname?: string;
   readonly pluginAuthoringSkill?: string;
   readonly pluginAuthoringGuide?: string;
@@ -34,7 +36,7 @@ export interface InstallOptions extends WireServerOptions {
 
 /** Start the host and put its socket and fetch in place. Returns the host and a function that undoes it. */
 export function installHohHost(options: InstallOptions) {
-  const host = new HohHost({ engine: options.engine, platform: options.platform });
+  const host = new HohHost({ engine: options.engine, platform: options.platform, createLocalSettings: options.createLocalSettings });
   const server = new WireServer(host.handlers(), options);
   const matches = socketMatcher(options.hostname ?? HOH_HOSTNAME);
   const restoreSocket = installHohWebSocket(server, matches, options.target);

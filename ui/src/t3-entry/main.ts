@@ -6,6 +6,7 @@ import pluginAuthoringGuide from '../../../docs/plugin-authoring-kit.md?raw';
 import pluginAuthoringSkill from './skills/hoh-plugin-authoring/SKILL.md?raw';
 import type { HohEngineLike } from './host';
 import { HIDDEN_SELECTORS } from './features';
+import { createHohLocalSettings } from './local-settings';
 import './brand.css';
 import './hoh-screens/sidebar.css';
 import './grid/tokens.css';
@@ -32,6 +33,7 @@ installWhisperClient(engine);
 installHohHost({
   engine,
   platform,
+  createLocalSettings: createHohLocalSettings,
   pluginAuthoringSkill,
   pluginAuthoringGuide,
   ...(testEngine ? { onRequest: (method: string, payload: unknown) => window.__HOH_T3_TEST_REQUESTS__?.push({ method, payload }) } : {}),

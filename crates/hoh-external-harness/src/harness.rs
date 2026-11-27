@@ -166,6 +166,14 @@ pub struct Started {
 /// Control of one running native session.
 pub trait HarnessSession: Send + Sync + 'static {
     fn prompt(&self, params: PromptParams) -> BoxFuture<'static, HarnessResult<()>>;
+    /// `history_prefix_len` marks the inherited context before the current turn's input.
+    fn prompt_with_history_prefix(
+        &self,
+        params: PromptParams,
+        _history_prefix_len: usize,
+    ) -> BoxFuture<'static, HarnessResult<()>> {
+        self.prompt(params)
+    }
     /// The native interrupt of the running turn; the turn then ends with
     /// [`HarnessEvent::TurnAborted`].
     fn interrupt(&self) -> BoxFuture<'static, HarnessResult<()>>;

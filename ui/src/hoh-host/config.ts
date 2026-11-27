@@ -5,9 +5,12 @@
 // limited by the server's managed policy, which T3 reads the same way (`managedPolicy`).
 
 import { englishError } from './errors.ts';
+import type { EditorId, ProviderInstanceId, ResolvedKeybindingsConfig } from '@t3tools/contracts';
+import type { HohWindowPreferences } from '../t3-entry/local-settings.ts';
 
 export const HOH_ENVIRONMENT_ID = 'hoh-local';
 export const HOH_LABEL = 'HoH';
+export const KEYBINDINGS_LOCATION = 'HoH window preferences';
 export const CLAUDE_INSTANCE_ID = 'claudeAgent';
 export const CODEX_INSTANCE_ID = 'codex';
 export const PI_INSTANCE_ID = 'pi';
@@ -28,7 +31,12 @@ export function environmentDescriptor(platform: EnvironmentPlatform = { os: 'unk
     platform,
     serverVersion: '0.0.0-hoh',
     orchestrationProtocolVersion: ORCHESTRATION_PROTOCOL_VERSION,
-    capabilities: { repositoryIdentity: false, connectionProbe: true, threadForceStop: true, inlineMessageContext: true, providerWorkspaceSnapshotsOnDemand: true },
+    capabilities: {
+      repositoryIdentity: false, connectionProbe: true, threadForceStop: true, inlineMessageContext: true,
+      providerWorkspaceSnapshotsOnDemand: true, projectOrganization: true, sideChats: true,
+      threadVisitedTracking: true, threadSettlement: true, threadSnooze: true,
+      threadPinning: true, threadPinReorder: true, threadActiveReorder: true,
+    },
   };
 }
 
@@ -345,15 +353,29 @@ export function claudeProvider(discovery: ClaudeDiscovery | null, now: string, a
 }
 
 /** Every `ServerSettings` field has a decoding default; only what HoH decides is sent. */
-export function serverSettings(model: string, defaultMode: HohAccessMode, overrides: Record<string, unknown> = {}, instanceId = CLAUDE_INSTANCE_ID, accessKnown = true) {
+export function serverSettings(
+  model: string,
+  defaultMode: HohAccessMode,
+  overrides: Record<string, unknown> = {},
+  instanceId = CLAUDE_INSTANCE_ID,
+  accessKnown = true,
+  windowPreferences?: HohWindowPreferences,
+) {
   const settings = {
     ...overrides,
+    ...windowPreferences,
     // "Add project" offers no repository host to clone from (T3 turns its default host off by this setting:
     // client-runtime/src/operations/projects.ts `isSourceControlProviderOffered`). HoH adds local folders.
     offeredSourceControlProviders: { github: false },
     defaultModelSelection: { instanceId, model },
     // HoH manages the built-in Pi instance. T3 leaves unconfigured Pi instances disabled.
-    providerInstances: { [PI_INSTANCE_ID]: { driver: PI_INSTANCE_ID, enabled: true, config: { enabled: true } } },
+    providerInstances: {
+      ...windowPreferences?.providerInstances,
+      [PI_INSTANCE_ID]: {
+        ...windowPreferences?.providerInstances[PI_INSTANCE_ID as ProviderInstanceId],
+        driver: PI_INSTANCE_ID, enabled: true, config: { enabled: true },
+      },
+    },
     // The native T3 context-window component lives in Thread details and is opt-in by default.
     // HoH reports Claude usage, so keep that row visible without requiring a hidden Labs setting.
     threadDetailsItems: { context: true },
@@ -369,6 +391,7 @@ export function serverSettings(model: string, defaultMode: HohAccessMode, overri
 export interface ConfigInput {
   readonly cwd: string;
   readonly platform?: EnvironmentPlatform;
+  readonly availableEditors?: readonly EditorId[];
   readonly claudeDiscovery: ClaudeDiscovery | null;
   readonly codexDiscovery: CodexDiscovery | null;
   readonly piDiscovery?: HarnessDiscovery | null;
@@ -379,6 +402,8 @@ export interface ConfigInput {
   readonly defaultModel?: string;
   readonly accessKnown?: boolean;
   readonly settingsOverrides?: Record<string, unknown>;
+  readonly windowPreferences?: HohWindowPreferences;
+  readonly keybindings?: ResolvedKeybindingsConfig;
   readonly now: string;
 }
 
@@ -396,6 +421,15 @@ export const HOH_MANAGED_POLICY = {
     providers: { allowedDrivers: Object.values(EXECUTOR_INSTANCES) },
   },
 };
+
+export function presentProvider<T extends { readonly instanceId: string }>(provider: T, preferences?: HohWindowPreferences): T {
+  const appearance = preferences?.providerInstances[provider.instanceId as ProviderInstanceId];
+  return {
+    ...provider,
+    ...(appearance?.displayName ? { displayName: appearance.displayName } : {}),
+    ...(appearance?.accentColor ? { accentColor: appearance.accentColor } : {}),
+  };
+}
 
 export function serverConfig(input: ConfigInput) {
   const instanceId = Object.values(EXECUTOR_INSTANCES).find(id => id === input.defaultInstanceId) ?? CLAUDE_INSTANCE_ID;
@@ -416,16 +450,18 @@ export function serverConfig(input: ConfigInput) {
     // The folder HoH runs chats in is T3's "No project" (apps/server ManagedProjectFolders): no git there.
     scratchWorkspaceRoot: input.cwd,
     threadSnapshotPagination: true,
+    threadFind: true,
+    threadFindProgressive: true,
     managedPolicy: HOH_MANAGED_POLICY,
-    keybindingsConfigPath: input.cwd.replace(/\/$/, '') + '/.hoh-keybindings.json',
-    keybindings: [],
+    keybindingsConfigPath: KEYBINDINGS_LOCATION,
+    keybindings: input.keybindings ?? [],
     issues: [],
     providers: [
       claudeProvider(input.claudeDiscovery, input.now, input.accessKnown !== false, input.discoveryFailure),
       codexProvider(input.codexDiscovery, input.now, input.codexDiscoveryFailure),
       piProvider(input.piDiscovery ?? null, input.now, input.accessKnown !== false),
-    ],
-    availableEditors: [],
+    ].map(provider => presentProvider(provider, input.windowPreferences)),
+    availableEditors: input.availableEditors ?? [],
     observability: {
       logsDirectoryPath: '/hoh/logs',
       localTracingEnabled: false,
@@ -433,7 +469,7 @@ export function serverConfig(input: ConfigInput) {
       otlpMetricsEnabled: false,
       otlpLogsEnabled: false,
     },
-    settings: serverSettings(model, input.defaultMode, input.settingsOverrides, instanceId, input.accessKnown !== false),
+    settings: serverSettings(model, input.defaultMode, input.settingsOverrides, instanceId, input.accessKnown !== false, input.windowPreferences),
     serverTime: input.now,
   };
 }

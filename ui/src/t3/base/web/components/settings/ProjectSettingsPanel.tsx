@@ -276,7 +276,9 @@ function ProjectDetail({
     environments.map((environment) => [environment.environmentId, environment]),
   );
   const editableIds = useEnvironmentsWithScope(allMembers, AuthOrchestrationOperateScope);
-  const canEditGroup = group.memberProjects.every((member) =>
+  const isHohProject = group.memberProjects.every((member) => member.environmentId === "hoh-local");
+  const isHohScratch = isHohProject && group.memberProjects.some((member) => member.isScratch);
+  const canEditGroup = !isHohScratch && group.memberProjects.every((member) =>
     editableIds.has(member.environmentId),
   );
   const filePickerProject =
@@ -284,6 +286,11 @@ function ProjectDetail({
       (member) => environmentById.get(member.environmentId)?.serverConfig != null,
     ) ?? group.memberProjects[0]!;
   const threads = useThreadShells();
+  const canRemoveGroup = !isHohProject || (!threads.some((thread) =>
+    group.memberProjects.some((member) =>
+      member.environmentId === thread.environmentId && member.id === thread.projectId,
+    ),
+  ) && readUnloadedThreadCount(group.memberProjects, threads) === 0);
   const deleteProject = useOrchestrationCommand(projectEnvironment.delete, {
     reportFailure: false,
   });
@@ -307,6 +314,7 @@ function ProjectDetail({
     failureTitle: string,
   ) => updateProjectGroup(group.memberProjects, input, failureTitle);
   const canOrganize =
+    !isHohScratch &&
     allMembers.every((member) => editableIds.has(member.environmentId)) &&
     canOrganizeProjectGroup(allMembers);
   const [isOrganizing, setIsOrganizing] = useState(false);
@@ -354,6 +362,7 @@ function ProjectDetail({
     group.memberProjects.some((member) => member.title !== SCRATCH_PROJECT_TITLE);
 
   const removeMembers = async (members: ReadonlyArray<SidebarProjectGroupMember>) => {
+    if (isHohScratch || !canRemoveGroup) return;
     if (checkProjectAccess(members, gt("Failed to remove project"))) return;
     const api = readLocalApi();
     if (!api) return;
@@ -370,7 +379,7 @@ function ProjectDetail({
       resolveMessage,
     );
     const confirmed = await settlePromise(() =>
-      api.dialogs.confirm(confirmationMessage, { variant: "destructive" }),
+      api.dialogs.confirm(isHohProject ? gt("Remove this project from HoH?") : confirmationMessage, { variant: "destructive" }),
     );
     if (confirmed._tag === "Failure" || !confirmed.value) return;
     if (checkProjectAccess(members, gt("Failed to remove project"))) return;
@@ -393,7 +402,7 @@ function ProjectDetail({
           environmentId: member.environmentId,
           input: {
             projectId: member.id,
-            force: true,
+            force: !isHohProject,
           },
         }),
         () => undefined,
@@ -548,7 +557,7 @@ function ProjectDetail({
         <SettingsSection id="project-overview" title={gt("Project")} hideTitle>
           {!canEditGroup ? (
             <p className="px-3 py-2 text-sm text-muted-foreground sm:px-4">
-              {group.memberProjects.length > 1
+              {isHohScratch ? gt("Chats without a project use the default folder.") : group.memberProjects.length > 1
                 ? gt("Shared settings require permission to change every checkout in this group.")
                 : gt("This connection cannot change this project.")}
             </p>
@@ -595,7 +604,7 @@ function ProjectDetail({
               />
             }
           />
-          <SettingsRow
+          {!isHohProject ? <SettingsRow
             title={gt("Project icon")}
             description={
               projectIcon?.kind === "lucide"
@@ -640,7 +649,7 @@ function ProjectDetail({
                 </Button>
               </div>
             }
-          />
+          /> : null}
           {canOrganize ? (
             <>
               <SettingsRow
@@ -690,10 +699,10 @@ function ProjectDetail({
             </>
           ) : null}
         </SettingsSection>
-        <ProjectDefaultsSettings category="project" />
-        <ProjectActionsSettings />
+        {!isHohProject ? <ProjectDefaultsSettings category="project" /> : null}
+        {!isHohProject ? <ProjectActionsSettings /> : null}
         {checkoutChoices}
-        <SettingsSection title={gt("Danger")}>
+        {!isHohScratch ? <SettingsSection title={gt("Danger")}>
           <SettingsRow
             title={
               hasOtherMembers
@@ -703,7 +712,9 @@ function ProjectDetail({
                   : gt("Remove project")
             }
             description={
-              hasOtherMembers
+              isHohProject
+                ? gt("Available for projects with no chats.")
+                : hasOtherMembers
                 ? gt(
                     "Deletes the selected machine's checkout entries and their chats. Other machines and files on disk are not touched.",
                   )
@@ -718,7 +729,7 @@ function ProjectDetail({
               <Button
                 size="sm"
                 variant="destructive-outline"
-                disabled={!canEditGroup}
+                disabled={!canEditGroup || !canRemoveGroup}
                 onClick={() => void removeMembers(group.memberProjects)}
               >
                 <Trash2Icon />
@@ -730,7 +741,7 @@ function ProjectDetail({
               </Button>
             }
           />
-        </SettingsSection>
+        </SettingsSection> : null}
       </SettingsPageContainer>
 
       <ProjectFaviconPickerDialog

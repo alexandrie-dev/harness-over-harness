@@ -852,7 +852,15 @@ fn open_root_directory(
 }
 
 #[cfg(target_os = "linux")]
-fn descriptor_path(file: &File, kind: &str) -> Result<PathBuf, String> {
+pub(crate) fn open_project_directory(
+    root: &Path,
+    identity: ProjectRootIdentity,
+) -> Result<File, String> {
+    Ok(open_root_directory(root, identity)?.file)
+}
+
+#[cfg(target_os = "linux")]
+pub(crate) fn descriptor_path(file: &File, kind: &str) -> Result<PathBuf, String> {
     let path = std::fs::read_link(format!("/proc/self/fd/{}", file.as_raw_fd()))
         .map_err(|_| unavailable(format!("the {kind} descriptor cannot be resolved")))?;
     if !path.is_absolute() {
@@ -865,13 +873,50 @@ fn descriptor_path(file: &File, kind: &str) -> Result<PathBuf, String> {
 
 #[cfg(target_os = "linux")]
 fn open_beneath(root: &File, relative: &Path) -> Result<File, String> {
+    open_relative(
+        root,
+        relative,
+        libc::O_RDONLY | libc::O_CLOEXEC | libc::O_NONBLOCK | libc::O_NOFOLLOW,
+        0,
+    )
+    .map_err(|error| match error.raw_os_error() {
+        Some(libc::ENOSYS | libc::EINVAL | libc::EPERM) => {
+            unavailable("safe descriptor-relative image resolution is unavailable on this system")
+        }
+        _ if error.kind() == std::io::ErrorKind::InvalidInput => {
+            unavailable("the image path is invalid")
+        }
+        _ => unavailable("the file cannot be resolved beneath the conversation project"),
+    })
+}
+
+/// Open a name relative to the checked project directory. Metadata-only handles let the caller
+/// distinguish regular files from devices and FIFOs before opening a stream for reading.
+#[cfg(target_os = "linux")]
+pub(crate) fn open_project_entry(root: &File, relative: &Path) -> std::io::Result<File> {
+    open_relative(
+        root,
+        relative,
+        libc::O_PATH | libc::O_CLOEXEC,
+        libc::RESOLVE_NO_SYMLINKS,
+    )
+}
+
+#[cfg(target_os = "linux")]
+fn open_relative(
+    root: &File,
+    relative: &Path,
+    flags: libc::c_int,
+    extra_resolve: u64,
+) -> std::io::Result<File> {
     let encoded = CString::new(relative.as_os_str().as_bytes())
-        .map_err(|_| unavailable("the image path is invalid"))?;
+        .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidInput, error))?;
     // libc marks open_how non-exhaustive, so initialize its known v0 fields through zeroed memory.
     // SAFETY: all-zero is a valid open_how v0 value; fields are then set before the syscall.
     let mut how = unsafe { std::mem::zeroed::<libc::open_how>() };
-    how.flags = (libc::O_RDONLY | libc::O_CLOEXEC | libc::O_NONBLOCK | libc::O_NOFOLLOW) as u64;
-    how.resolve = libc::RESOLVE_BENEATH | libc::RESOLVE_NO_MAGICLINKS | libc::RESOLVE_NO_XDEV;
+    how.flags = flags as u64;
+    how.resolve =
+        libc::RESOLVE_BENEATH | libc::RESOLVE_NO_MAGICLINKS | libc::RESOLVE_NO_XDEV | extra_resolve;
     // SAFETY: root is a live directory FD, encoded/how point to initialized memory, and size is exact.
     let descriptor = unsafe {
         libc::syscall(
@@ -886,14 +931,7 @@ fn open_beneath(root: &File, relative: &Path) -> Result<File, String> {
         // SAFETY: descriptor is fresh, valid, and has no other Rust owner.
         return Ok(unsafe { File::from_raw_fd(descriptor) });
     }
-    match std::io::Error::last_os_error().raw_os_error() {
-        Some(code) if matches!(code, libc::ENOSYS | libc::EINVAL | libc::EPERM) => Err(
-            unavailable("safe descriptor-relative image resolution is unavailable on this system"),
-        ),
-        _ => Err(unavailable(
-            "the file cannot be resolved beneath the conversation project",
-        )),
-    }
+    Err(std::io::Error::last_os_error())
 }
 
 #[cfg(unix)]
@@ -919,6 +957,7 @@ fn read_project_file<T>(
     root_directory: &RootDirectory,
     requested: &str,
     home: &Path,
+    private: &crate::project_files::PrivateDirectory,
     max_bytes: u64,
     check_type: impl FnOnce(&Path) -> Result<T, String>,
 ) -> Result<(Vec<u8>, PathBuf, std::fs::Metadata, T), String> {
@@ -941,7 +980,7 @@ fn read_project_file<T>(
     };
     // Check the lexical spelling as well as the resolved target. Otherwise a protected settings
     // directory that is itself a symlink could lose its `.claude` / `.codex` identity on realpath.
-    if protected_home_path(&candidate, home) {
+    if protected_home_path(&candidate, home) || private.contains(&candidate) {
         return Err(unavailable("protected assistant settings cannot be shown"));
     }
     if system_pseudo_path(&candidate) {
@@ -967,7 +1006,7 @@ fn read_project_file<T>(
             "the file is outside this conversation's project",
         ));
     }
-    if protected_home_path(&canonical, home) {
+    if protected_home_path(&canonical, home) || private.contains(&canonical) {
         return Err(unavailable("protected assistant settings cannot be shown"));
     }
     if system_pseudo_path(&canonical) {
@@ -1044,6 +1083,7 @@ fn read_project_image_from_root(
         root_directory,
         requested,
         home,
+        &crate::project_files::PrivateDirectory::default(),
         MAX_IMAGE_BYTES,
         expected_kind,
     )?;
@@ -1138,14 +1178,15 @@ pub use read_project_image as read_chat_image;
 
 /// Read an explicit HTML artifact through the same root and file checks as a project image.
 #[cfg(target_os = "linux")]
-pub fn read_project_html(
+pub(crate) fn read_project_html(
     project_root: &Path,
     expected_root: ProjectRootIdentity,
     requested: &str,
     home: &Path,
+    private: &crate::project_files::PrivateDirectory,
 ) -> Result<String, String> {
     let root = open_root_directory(project_root, expected_root)?;
-    let (bytes, _, _, ()) = read_project_file(&root, requested, home, 2 * 1024 * 1024, |path| {
+    let html = |path: &Path| {
         if path
             .extension()
             .and_then(|extension| extension.to_str())
@@ -1157,7 +1198,9 @@ pub fn read_project_html(
         } else {
             Err(unavailable("the file must have an .html or .htm extension"))
         }
-    })?;
+    };
+    let (bytes, _, _, ()) =
+        read_project_file(&root, requested, home, private, 2 * 1024 * 1024, html)?;
     String::from_utf8(bytes).map_err(|_| unavailable("the document must be UTF-8"))
 }
 
@@ -1307,14 +1350,19 @@ mod tests {
         std::fs::write(root.join("invalid.html"), [0xff]).unwrap();
         std::fs::write(root.join("notes.txt"), "<p>plain text file</p>").unwrap();
         std::fs::write(scratch.0.join("other.html"), "<p>outside</p>").unwrap();
+        let secret_dir = root.join("private");
+        std::fs::create_dir(&secret_dir).unwrap();
+        std::fs::write(secret_dir.join("secret"), "<p>synthetic credential</p>").unwrap();
+        std::os::unix::fs::symlink(secret_dir.join("secret"), root.join("alias.html")).unwrap();
+        let private = crate::project_files::PrivateDirectory::new(&secret_dir);
         assert!(
-            read_project_html(&root, identity, "report.html", &scratch.0)
+            read_project_html(&root, identity, "report.html", &scratch.0, &private)
                 .unwrap()
                 .contains("Overview")
         );
-        for file in ["../other.html", "invalid.html", "notes.txt"] {
+        for file in ["../other.html", "invalid.html", "notes.txt", "alias.html"] {
             assert!(
-                read_project_html(&root, identity, file, &scratch.0).is_err(),
+                read_project_html(&root, identity, file, &scratch.0, &private).is_err(),
                 "{file}"
             );
         }

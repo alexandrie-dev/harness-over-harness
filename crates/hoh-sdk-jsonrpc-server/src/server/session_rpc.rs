@@ -12,7 +12,8 @@ use hoh_agent::{
 use hoh_error::BoxError;
 use hoh_protocol::{
     SessionEventsParams, SessionEventsResult, SessionForkForEditParams, SessionForkForEditResult,
-    SessionListParams, SessionListResult, SessionSummary, SessionWaitParams,
+    SessionForkSideChatParams, SessionForkSideChatResult, SessionListParams, SessionListResult,
+    SessionSideChat, SessionSummary, SessionWaitParams,
 };
 use hoh_session::{
     AgentCancelCause, MAX_SAFE_INTEGER, SessionEvent, SessionId, SessionLogOffset, build_fork_seed,
@@ -25,6 +26,7 @@ use std::{collections::HashSet, sync::Arc};
 const MAX_EVENTS_PER_PAGE: u32 = 1000;
 const DEFAULT_EMPLOYEE_ID: &str = "default";
 const TITLE_CHARS: usize = 80;
+const SIDE_CHAT_RECORD: &str = "plugin:hoh-window/side-chat";
 
 fn params_of<T: serde::de::DeserializeOwned>(method: &str, params: Value) -> Result<T, BoxError> {
     serde_json::from_value(params).map_err(|e| type_error(format!("{method}: {e}")))
@@ -66,20 +68,50 @@ fn title_of(header: &Value, events: &[Arc<SessionEvent>]) -> String {
         .unwrap_or_default()
 }
 
+fn side_chat_seed_end(events: &[Arc<SessionEvent>]) -> Option<usize> {
+    let cut = events.iter().rposition(|event| {
+        event.event_type() == "session/end-seed" && event.data()["inherited"] == true
+    })?;
+    events[cut + 1..]
+        .iter()
+        .any(|event| event.event_type() == SIDE_CHAT_RECORD && event.ignorable())
+        .then_some(cut)
+}
+
 fn summary_of(id: &SessionId, header: &Value, events: &[Arc<SessionEvent>]) -> SessionSummary {
     let updated_at = events
         .last()
         .map(|event| event.time())
         .or_else(|| header["createdAt"].as_i64())
         .unwrap_or_default();
+    let side_parent = header["parentSession"].as_str();
+    let (title, side_chat) =
+        if let Some((parent, cut)) = side_parent.zip(side_chat_seed_end(events)) {
+            let title = title_of(&Value::Null, &events[cut + 1..]);
+            let title = if title.is_empty() {
+                "Side chat".to_owned()
+            } else {
+                title
+            };
+            (
+                title,
+                Some(SessionSideChat {
+                    parent_session_id: parent.to_owned(),
+                    seed_end_seq: u64::from(events[cut].seq()),
+                }),
+            )
+        } else {
+            (title_of(header, events), None)
+        };
     SessionSummary {
         id: id.to_string(),
-        title: title_of(header, events),
+        title,
         employee_id: header["employeeId"]
             .as_str()
             .unwrap_or(DEFAULT_EMPLOYEE_ID)
             .to_owned(),
         updated_at: u64::try_from(updated_at).unwrap_or_default(),
+        side_chat,
     }
 }
 
@@ -116,6 +148,24 @@ fn edit_boundary<'a>(
     Ok((prefix, attachments))
 }
 
+enum ForkBoundary {
+    Edit(String),
+    SideChat,
+}
+
+fn latest_stable_boundary(events: &[Arc<SessionEvent>]) -> Option<&SessionEvent> {
+    let end = events
+        .iter()
+        .rposition(|event| event.event_type() == "turn/end");
+    let before_first_turn = events
+        .iter()
+        .position(|event| event.event_type() == "turn/start")
+        .and_then(|index| index.checked_sub(1));
+    end.or(before_first_turn)
+        .and_then(|index| events.get(index))
+        .map(Arc::as_ref)
+}
+
 impl HarnessSdkJsonRpcServer {
     fn live_agent(&self, id: &SessionId) -> Option<Arc<dyn Agent>> {
         let record = lock(&self.inner.state).sessions.get(id).cloned()?;
@@ -125,21 +175,74 @@ impl HarnessSdkJsonRpcServer {
     pub(super) async fn session_fork_for_edit(&self, params: Value) -> Result<Value, BoxError> {
         self.assert_initialized()?;
         let params: SessionForkForEditParams = params_of("session/fork-for-edit", params)?;
-        let source_id = SessionId::from(params.session_id);
+        let (session_id, _, attachments) = self
+            .fork_session(
+                params.session_id,
+                params.target_session_id,
+                ForkBoundary::Edit(params.message_id),
+            )
+            .await?;
+        Ok(serde_json::to_value(SessionForkForEditResult {
+            session_id,
+            attachments,
+        })?)
+    }
+
+    pub(super) async fn session_fork_side_chat(&self, params: Value) -> Result<Value, BoxError> {
+        self.assert_initialized()?;
+        let params: SessionForkSideChatParams = params_of("session/fork-side-chat", params)?;
+        let (session_id, seed_end_seq, _) = self
+            .fork_session(
+                params.session_id,
+                params.target_session_id,
+                ForkBoundary::SideChat,
+            )
+            .await?;
+        Ok(serde_json::to_value(SessionForkSideChatResult {
+            session_id,
+            seed_end_seq,
+        })?)
+    }
+
+    async fn fork_session(
+        &self,
+        source_id: String,
+        target_id: String,
+        boundary: ForkBoundary,
+    ) -> Result<(String, u64, Vec<Value>), BoxError> {
+        let source_id = SessionId::from(source_id);
+        let id = SessionId::from(target_id);
+        if id.as_ref().is_empty() || id == source_id {
+            return Err(type_error("A fork requires a distinct target session id."));
+        }
         let source = self
             .live_agent(&source_id)
-            .ok_or_else(|| error("Open the source chat before editing a message."))?;
-        if source.status() != AgentStatus::Idle {
+            .ok_or_else(|| error("Open the source chat before branching."))?;
+        let side_chat = matches!(boundary, ForkBoundary::SideChat);
+        if !side_chat && source.status() != AgentStatus::Idle {
             return Err(error("Stop the current turn before editing a message."));
+        }
+        let session = source.session();
+        let source_header = session.header();
+        let events = session.snapshot_events(None, None);
+        if side_chat && (is_subagent(&source_header) || side_chat_seed_end(&events).is_some()) {
+            return Err(error(
+                "Side chats must start from a top-level conversation.",
+            ));
         }
         let selection = source
             .model()
             .current()
             .filter(|selection| matches!(selection.provider.as_str(), "claude" | "codex" | "pi"))
-            .ok_or_else(|| error("Message editing requires a Claude or Codex chat."))?;
-        let session = source.session();
-        let events = session.snapshot_events(None, None);
-        let (prefix, attachments) = edit_boundary(&events, &params.message_id)?;
+            .ok_or_else(|| error("Branching requires a Claude, Codex or Pi conversation."))?;
+        let (prefix, attachments) = match boundary {
+            ForkBoundary::Edit(message_id) => edit_boundary(&events, &message_id)?,
+            ForkBoundary::SideChat => (
+                latest_stable_boundary(&events)
+                    .ok_or_else(|| error("Start the first message before opening a side chat."))?,
+                Vec::new(),
+            ),
+        };
         let inherited_event_count = SessionLogOffset::new(u64::from(prefix.seq()) + 1)?;
         let mut seed = build_fork_seed(&events, prefix.seq())?;
         // Even if creation is interrupted before the new binding is written, this log
@@ -154,6 +257,16 @@ impl HarnessSdkJsonRpcServer {
                 *event = Arc::new(SessionEvent::from_value(value));
             }
         }
+        if side_chat {
+            // Keep the Window relationship with the persisted seed and its existing header.
+            seed.push(Arc::new(SessionEvent::from_value(json!({
+                "type": SIDE_CHAT_RECORD,
+                "seq": SessionLogOffset::new(seed.len() as u64)?,
+                "time": prefix.time(),
+                "data": {},
+                "ignorable": true,
+            }))));
+        }
         let directory = self
             .inner
             .ctx
@@ -165,12 +278,6 @@ impl HarnessSdkJsonRpcServer {
             .ctx
             .get::<Agents>()
             .ok_or_else(|| error("agents service is unavailable"))?;
-        let id = SessionId::from(params.target_session_id);
-        if id.as_ref().is_empty() || id == source_id {
-            return Err(type_error(
-                "The edit requires a distinct target session id.",
-            ));
-        }
         let options = CreateAgentOptions {
             session_id: Some(id.clone()),
             meta: Some(AgentSessionMeta {
@@ -224,10 +331,7 @@ impl HarnessSdkJsonRpcServer {
             })
         };
         creation.await?;
-        Ok(serde_json::to_value(SessionForkForEditResult {
-            session_id: id.to_string(),
-            attachments,
-        })?)
+        Ok((id.to_string(), u64::from(prefix.seq()) + 1, attachments))
     }
 
     pub(super) async fn session_events(&self, params: Value) -> Result<Value, BoxError> {

@@ -211,6 +211,22 @@
       "properties": {
         "method": {
           "type": "string",
+          "const": "session/fork-side-chat"
+        },
+        "params": {
+          "$ref": "#/$defs/SessionForkSideChatParams"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "type": "string",
           "const": "session/cancel"
         },
         "params": {
@@ -1059,6 +1075,22 @@
       "properties": {
         "method": {
           "type": "string",
+          "const": "hoh/workspace/resolve"
+        },
+        "params": {
+          "$ref": "#/$defs/WorkspaceResolveParams"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "type": "string",
           "const": "hoh/executor/title/generate"
         },
         "params": {
@@ -1572,6 +1604,21 @@
       "required": [
         "sessionId",
         "messageId",
+        "targetSessionId"
+      ]
+    },
+    "SessionForkSideChatParams": {
+      "type": "object",
+      "properties": {
+        "sessionId": {
+          "type": "string"
+        },
+        "targetSessionId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "sessionId",
         "targetSessionId"
       ]
     },
@@ -2819,6 +2866,17 @@
         "cwd"
       ]
     },
+    "WorkspaceResolveParams": {
+      "type": "object",
+      "properties": {
+        "cwd": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "cwd"
+      ]
+    },
     "ExecutorTitleGenerateParams": {
       "type": "object",
       "properties": {
@@ -2929,6 +2987,18 @@
         },
         "intent": {
           "oneOf": [
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "const": "secret-file"
+                }
+              },
+              "required": [
+                "kind"
+              ]
+            },
             {
               "type": "object",
               "properties": {

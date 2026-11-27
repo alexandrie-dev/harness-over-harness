@@ -1,10 +1,10 @@
 //! Questions the engine asks the person (`user-question/ask`, from the ask-user tool).
-//! They are not approvals: the answer is text for the model and grants nothing. The main window
-//! shows them; Rust keeps the original question and validates the answer against it, so the page
-//! cannot answer an id it was not asked or pick an option that does not exist.
+//! The main window shows them. Rust validates each answer against the original request.
+//! A credential request has a separate answer path that sends the engine only a private file path.
+use crate::chat_secrets::ChatSecrets;
 use hoh_protocol::{
-    AskUserQuestionAnswerItem, AskUserQuestionItem, SdkUserQuestionAnswer, SdkUserQuestionRequest,
-    SdkUserQuestionResult,
+    AskUserQuestionAnswerItem, AskUserQuestionIntent, AskUserQuestionItem, SdkUserQuestionAnswer,
+    SdkUserQuestionRequest, SdkUserQuestionResult, SecretString,
 };
 use serde_json::{Value, json};
 use std::{collections::HashMap, sync::Mutex};
@@ -16,6 +16,7 @@ const MAX_CUSTOM_CHARS: usize = 8_000;
 struct Pending {
     generation: u64,
     rpc_id: Value,
+    session_id: String,
     questions: Vec<AskUserQuestionItem>,
 }
 
@@ -47,6 +48,12 @@ impl QuestionBroker {
         {
             return Err("Получен некорректный вопрос".into());
         }
+        if request.questions.iter().any(is_secret)
+            && !matches!(request.questions.as_slice(), [question] if is_secret(question)
+               && question.options.as_ref().is_none_or(Vec::is_empty) && question.multi_select != Some(true))
+        {
+            return Err("Invalid credential request.".into());
+        }
         let mut pending = self.lock();
         if pending.len() >= MAX_PENDING || pending.contains_key(&request.request_id) {
             return Err("Слишком много неотвеченных вопросов".into());
@@ -56,6 +63,7 @@ impl QuestionBroker {
             Pending {
                 generation,
                 rpc_id,
+                session_id: request.session_id.clone(),
                 questions: request.questions.clone(),
             },
         );
@@ -69,6 +77,9 @@ impl QuestionBroker {
         let entry = pending
             .get(request_id)
             .ok_or_else(|| "Вопрос уже закрыт".to_owned())?;
+        if entry.questions.iter().any(is_secret) {
+            return Err("Use the private credential form for this request.".into());
+        }
         let result = if answer.get("cancelled") == Some(&Value::Bool(true))
             && answer.as_object().is_some_and(|o| o.len() == 1)
         {
@@ -87,6 +98,44 @@ impl QuestionBroker {
         ))
     }
 
+    pub fn answer_secret(
+        &self,
+        store: &ChatSecrets,
+        session_id: &str,
+        request_id: &str,
+        secret: Option<&SecretString>,
+    ) -> Result<(u64, Value, Option<String>), String> {
+        let mut pending = self.lock();
+        let entry = pending
+            .get(request_id)
+            .ok_or("The request is already closed.")?;
+        let [question] = entry.questions.as_slice() else {
+            return Err("The request is not for a credential.".into());
+        };
+        if entry.session_id != session_id || !is_secret(question) {
+            return Err("The request is not for a credential in this chat.".into());
+        }
+        let path = secret
+            .map(|value| store.store_for_turn(session_id, value))
+            .transpose()?;
+        let result = match &path {
+            Some(path) => json!({"answers":[{"id":question.id,"selected":[],"custom":path}]}),
+            None => json!({"cancelled":true}),
+        };
+        let entry = pending.remove(request_id).expect("checked above");
+        Ok((
+            entry.generation,
+            hoh_protocol::framing::success(entry.rpc_id, result),
+            path,
+        ))
+    }
+
+    pub fn close_session_secrets(&self, session_id: &str) {
+        self.lock().retain(|_, entry| {
+            entry.session_id != session_id || !entry.questions.iter().any(is_secret)
+        });
+    }
+
     /// The engine withdrew the question (`user-question.cancelled`).
     pub fn cancel(&self, request_id: &str) -> bool {
         self.lock().remove(request_id).is_some()
@@ -96,6 +145,10 @@ impl QuestionBroker {
     pub fn clear(&self) {
         self.lock().clear();
     }
+}
+
+pub fn is_secret(question: &AskUserQuestionItem) -> bool {
+    matches!(question.intent, Some(AskUserQuestionIntent::SecretFile))
 }
 
 fn validate(
@@ -146,6 +199,9 @@ fn validate(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt;
 
     fn ask(broker: &QuestionBroker, request_id: &str) -> QuestionView {
         broker
@@ -200,6 +256,80 @@ mod tests {
         ask(&broker, "r1");
         let (_, frame) = broker.answer("r1", &json!({"cancelled":true})).unwrap();
         assert_eq!(frame["result"], json!({"cancelled":true}));
+    }
+
+    #[test]
+    fn protected_answers_validate_the_chat_and_only_deliver_a_private_file_path() {
+        let broker = QuestionBroker::default();
+        let directory =
+            std::env::temp_dir().join(format!("hoh-credential-card-test-{}", std::process::id()));
+        let store = ChatSecrets::new(directory.clone());
+        let request = |id: &str| {
+            json!({"requestId":id,"sessionId":"s","questions":[
+                {"id":"credential","question":"Try the test","intent":{"kind":"secret-file"}}
+            ]})
+        };
+        broker.begin(3, json!(7), request("r1")).unwrap();
+        let dummy = "synthetic-card-token";
+        let secret = SecretString::from(dummy);
+        assert!(
+            broker
+                .answer(
+                    "r1",
+                    &json!({"answers":[{"id":"credential","selected":[],"custom":dummy}]})
+                )
+                .is_err()
+        );
+        assert!(
+            broker
+                .answer_secret(&store, "other", "r1", Some(&secret))
+                .is_err()
+        );
+        assert!(
+            broker
+                .answer_secret(&store, "s", "r1", Some(&"  ".into()))
+                .is_err()
+        );
+        assert!(!directory.exists());
+
+        let manual = store.store(&secret).unwrap();
+        let (generation, frame, path) = broker
+            .answer_secret(&store, "s", "r1", Some(&secret))
+            .unwrap();
+        let path = path.unwrap();
+        assert_eq!(generation, 3);
+        assert_eq!(frame["id"], 7);
+        assert_eq!(frame["result"]["answers"][0]["custom"], path);
+        assert!(!frame.to_string().contains(dummy));
+        assert_eq!(fs::read_to_string(&path).unwrap(), dummy);
+        #[cfg(unix)]
+        assert_eq!(
+            fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        assert!(
+            broker
+                .answer_secret(&store, "s", "r1", Some(&secret))
+                .is_err()
+        );
+
+        broker.begin(3, json!(8), request("r2")).unwrap();
+        let (_, frame, path_on_decline) = broker.answer_secret(&store, "s", "r2", None).unwrap();
+        assert_eq!(frame["result"], json!({"cancelled":true}));
+        assert!(path_on_decline.is_none());
+
+        broker.begin(3, json!(9), request("r3")).unwrap();
+        broker.close_session_secrets("s");
+        store.close_session("s");
+        assert!(
+            broker
+                .answer_secret(&store, "s", "r3", Some(&secret))
+                .is_err()
+        );
+        assert!(!std::path::Path::new(&path).exists());
+        assert!(std::path::Path::new(&manual).is_file());
+        store.close();
+        fs::remove_dir(directory).unwrap();
     }
 
     #[test]

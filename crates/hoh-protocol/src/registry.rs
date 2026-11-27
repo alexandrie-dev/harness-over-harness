@@ -95,6 +95,8 @@ pub enum Request {
     SessionEvents(SessionEventsParams),
     #[serde(rename = "session/fork-for-edit")]
     SessionForkForEdit(SessionForkForEditParams),
+    #[serde(rename = "session/fork-side-chat")]
+    SessionForkSideChat(SessionForkSideChatParams),
     #[serde(rename = "session/cancel")]
     SessionCancel(SessionResumeParams),
     #[serde(rename = "session/delete")]
@@ -201,6 +203,8 @@ pub enum Request {
     WorkspaceEntries(WorkspaceEntriesParams),
     #[serde(rename = "hoh/workspace/add")]
     WorkspaceAdd(WorkspaceAddParams),
+    #[serde(rename = "hoh/workspace/resolve")]
+    WorkspaceResolve(WorkspaceResolveParams),
     #[serde(rename = "hoh/executor/title/generate")]
     ExecutorTitleGenerate(ExecutorTitleGenerateParams),
     #[serde(rename = "approval/request")]
@@ -224,6 +228,7 @@ impl Request {
             Self::SessionList(_) => "session/list",
             Self::SessionEvents(_) => "session/events",
             Self::SessionForkForEdit(_) => "session/fork-for-edit",
+            Self::SessionForkSideChat(_) => "session/fork-side-chat",
             Self::SessionCancel(_) => "session/cancel",
             Self::SessionDelete(_) => "session/delete",
             Self::EmployeeList(_) => "hoh/employee/list",
@@ -277,6 +282,7 @@ impl Request {
             Self::ExecutorCommands(_) => "hoh/executor/commands",
             Self::WorkspaceEntries(_) => "hoh/workspace/entries",
             Self::WorkspaceAdd(_) => "hoh/workspace/add",
+            Self::WorkspaceResolve(_) => "hoh/workspace/resolve",
             Self::ExecutorTitleGenerate(_) => "hoh/executor/title/generate",
             Self::ApprovalRequest(_) => "approval/request",
             Self::UserQuestionAsk(_) => "user-question/ask",
@@ -335,6 +341,7 @@ pub const REQUEST_METHODS: &[&str] = &[
     "session/list",
     "session/events",
     "session/fork-for-edit",
+    "session/fork-side-chat",
     "session/cancel",
     "session/delete",
     "hoh/employee/list",
@@ -388,6 +395,7 @@ pub const REQUEST_METHODS: &[&str] = &[
     "hoh/executor/commands",
     "hoh/workspace/entries",
     "hoh/workspace/add",
+    "hoh/workspace/resolve",
     "hoh/executor/title/generate",
     "approval/request",
     "user-question/ask",
@@ -431,6 +439,7 @@ pub fn validate_params(method: &str, value: &Value) -> Result<(), String> {
         "session/list" => admit::<SessionListParams>(value),
         "session/events" => admit::<SessionEventsParams>(value),
         "session/fork-for-edit" => admit::<SessionForkForEditParams>(value),
+        "session/fork-side-chat" => admit::<SessionForkSideChatParams>(value),
         "session/cancel" | "session/delete" => admit::<SessionResumeParams>(value),
         "hoh/employee/list" => admit::<Empty>(value),
         "hoh/employee/get" => admit::<IdParams>(value),
@@ -482,6 +491,7 @@ pub fn validate_params(method: &str, value: &Value) -> Result<(), String> {
         "hoh/executor/commands" => admit::<ExecutorCommandsParams>(value),
         "hoh/workspace/entries" => admit::<WorkspaceEntriesParams>(value),
         "hoh/workspace/add" => admit::<WorkspaceAddParams>(value),
+        "hoh/workspace/resolve" => admit::<WorkspaceResolveParams>(value),
         "hoh/executor/title/generate" => admit::<ExecutorTitleGenerateParams>(value),
         "approval/request" => admit::<ApprovalRequestParams>(value),
         "user-question/ask" => admit::<SdkUserQuestionRequest>(value),
@@ -510,6 +520,7 @@ pub fn validate_result(method: &str, value: &Value) -> Result<(), String> {
         "session/list" => admit::<SessionListResult>(value),
         "session/events" => admit::<SessionEventsResult>(value),
         "session/fork-for-edit" => admit::<SessionForkForEditResult>(value),
+        "session/fork-side-chat" => admit::<SessionForkSideChatResult>(value),
         "session/cancel" | "session/delete" => admit::<Empty>(value),
         "hoh/employee/list" => admit::<Vec<Employee>>(value),
         "hoh/employee/get" => admit::<Employee>(value),
@@ -560,6 +571,7 @@ pub fn validate_result(method: &str, value: &Value) -> Result<(), String> {
         "hoh/executor/commands" => admit::<ExecutorCommandsResult>(value),
         "hoh/workspace/entries" => admit::<WorkspaceEntriesResult>(value),
         "hoh/workspace/add" => admit::<WorkspaceAddResult>(value),
+        "hoh/workspace/resolve" => admit::<WorkspaceResolveResult>(value),
         "hoh/executor/title/generate" => admit::<ExecutorTitleGenerateResult>(value),
         "approval/request" => admit::<ApprovalRequestResult>(value),
         "user-question/ask" => admit::<SdkUserQuestionResult>(value),
@@ -773,6 +785,18 @@ pub fn schemas() -> Vec<(String, Value)> {
             Value::String("session/fork-for-edit".into()),
         );
         schemas.push(("SessionForkForEditResult".into(), schema));
+    }
+    schemas.push((
+        "SessionForkSideChatParams".into(),
+        serde_json::to_value(schema_for!(SessionForkSideChatParams)).unwrap(),
+    ));
+    {
+        let mut schema = serde_json::to_value(schema_for!(SessionForkSideChatResult)).unwrap();
+        schema.as_object_mut().unwrap().insert(
+            "x-method".into(),
+            Value::String("session/fork-side-chat".into()),
+        );
+        schemas.push(("SessionForkSideChatResult".into(), schema));
     }
     schemas.push((
         "SessionCancelParams".into(),
@@ -1359,6 +1383,12 @@ pub fn schemas() -> Vec<(String, Value)> {
             schema_for!(WorkspaceAddResult),
         ),
         (
+            "WorkspaceResolve",
+            "hoh/workspace/resolve",
+            schema_for!(WorkspaceResolveParams),
+            schema_for!(WorkspaceResolveResult),
+        ),
+        (
             "ExecutorTitleGenerate",
             "hoh/executor/title/generate",
             schema_for!(ExecutorTitleGenerateParams),
@@ -1409,6 +1439,8 @@ enum RequestDecode {
     SessionEvents(SessionEventsParams),
     #[serde(rename = "session/fork-for-edit")]
     SessionForkForEdit(SessionForkForEditParams),
+    #[serde(rename = "session/fork-side-chat")]
+    SessionForkSideChat(SessionForkSideChatParams),
     #[serde(rename = "session/cancel")]
     SessionCancel(SessionResumeParams),
     #[serde(rename = "session/delete")]
@@ -1515,6 +1547,8 @@ enum RequestDecode {
     WorkspaceEntries(WorkspaceEntriesParams),
     #[serde(rename = "hoh/workspace/add")]
     WorkspaceAdd(WorkspaceAddParams),
+    #[serde(rename = "hoh/workspace/resolve")]
+    WorkspaceResolve(WorkspaceResolveParams),
     #[serde(rename = "hoh/executor/title/generate")]
     ExecutorTitleGenerate(ExecutorTitleGenerateParams),
     #[serde(rename = "approval/request")]

@@ -1,8 +1,8 @@
 import { ChartNoAxesColumnIcon, GraduationCapIcon, LayoutDashboardIcon, MessagesSquareIcon, PanelRightIcon, PlusIcon, PuzzleIcon, SquarePenIcon, WrenchIcon } from 'lucide-react';
 import { useLocation, useNavigate } from '@tanstack/react-router';
-import { useState, type MouseEvent } from 'react';
+import { useState } from 'react';
 
-import { SidebarHeaderIconButton } from '~/components/sidebar/SidebarThreadHeader';
+import { SidebarHeaderIconButton, SidebarThreadHeader, type SidebarThreadHeaderProps } from '~/components/sidebar/SidebarThreadHeader';
 import { SidebarMenuButton, useSidebar } from '~/components/ui/sidebar';
 import { PAGE_TITLES, pages, workspacePage } from './pages';
 import { PageLayer, usePage } from './SidebarPages';
@@ -17,13 +17,8 @@ const WORKSPACE_PAGES = [
   ['usage', ChartNoAxesColumnIcon],
 ] as const satisfies ReadonlyArray<readonly [keyof typeof PAGE_TITLES, typeof PuzzleIcon]>;
 
-interface Props {
-  onNewThread: (event: MouseEvent) => void;
-  newThreadDisabled: boolean;
-  newThreadShortcutLabel: string | null | undefined;
-}
-
-export function SidebarTop({ onNewThread, newThreadDisabled, newThreadShortcutLabel }: Props) {
+export function SidebarTop(props: SidebarThreadHeaderProps) {
+  const { onNewThread, newThreadDisabled, newThreadShortcutLabel } = props;
   const page = usePage();
   const { catalog } = useExternalUiCatalog();
   const navigate = useNavigate();
@@ -136,6 +131,13 @@ export function SidebarTop({ onNewThread, newThreadDisabled, newThreadShortcutLa
       </div>
       <div className="hoh-side__section hoh-side__recent">
         <div className="hoh-side__group" data-hoh-hide-in-rail="">Recent chats</div>
+        <div data-hoh-hide-in-rail="">
+          <SidebarThreadHeader
+            {...props}
+            showNewThread={false}
+            onNewProject={() => { pages.close(); props.onNewProject(); }}
+          />
+        </div>
         <SidebarMenuButton
           type="button"
           className="hoh-side__action hoh-side__recent-trigger"

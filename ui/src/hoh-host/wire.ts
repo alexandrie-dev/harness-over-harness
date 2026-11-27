@@ -46,7 +46,7 @@ export function notSupported(method: string): { typed: boolean; error: unknown }
 }
 
 export interface WireServerOptions {
-  /** Called for every request, after the handler is chosen. For diagnostics only. */
+  /** Observes ordinary request payloads for diagnostics. Credential answers are excluded. */
   readonly onRequest?: (method: string, payload: unknown) => void;
   readonly onError?: (method: string, error: unknown) => void;
 }
@@ -113,7 +113,7 @@ export class WireServer {
         case 'Ping': write({ _tag: 'Pong' }); return;
         case 'Request': {
           const id = message.id; const method = String(message.tag);
-          this.options.onRequest?.(method, message.payload);
+          if (method !== 'secrets.answerRequest') this.options.onRequest?.(method, message.payload);
           if (STREAM_METHODS.has(method) || this.handlers.stream[method]) stream(id, method, message.payload);
           else unary(id, method, message.payload);
           return;

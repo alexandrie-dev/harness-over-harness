@@ -214,6 +214,11 @@ test('/ and $ before the first turn: the folder\'s snapshot is what Claude decla
   // The person's words stay as typed, and the engine's echo is the same message.
   assert.deepEqual(projection.messages.filter(message => message.role === 'user').map(message => message.text), ['$release-notes for v2, not $5k or $unknown']);
 
+  // Claude's session owns inline dispatch so the last known skill can begin its own native block.
+  await newThread(client, 'chat-inline-skill');
+  await client.call('orchestration.dispatchCommand', dispatch('chat-inline-skill', 'm-inline', 'Check $release-notes with $unknown'));
+  assert.deepEqual(sent(engine, 'session/prompt').at(-1).params.contentBlocks, [{ type: 'text', text: 'Check $release-notes with $unknown' }]);
+
   // Claude could not be asked: T3's pending snapshot, which it asks for again later.
   engine.commandsFail = true;
   const pending = await client.call('server.refreshProviders', { instanceId: 'claudeAgent', cwd: DEFAULT_FOLDER });
@@ -221,6 +226,69 @@ test('/ and $ before the first turn: the folder\'s snapshot is what Claude decla
   assert.deepEqual(pending.providers[0].workspaceSnapshots[0].slashCommands, []);
   // Without a folder the answer is the machine's provider, as before.
   assert.equal((await client.call('server.refreshProviders', {})).providers[0].workspaceSnapshots, undefined);
+});
+
+test('Codex and Pi use the selected harness catalog and native skill syntax', async () => {
+  const engine = new FakeEngine({
+    piDiscovery: {
+      executor: 'pi', installed: true, version: '1.6.1', versionStatus: 'supported',
+      auth: 'unknown', models: [{ id: 'local/demo', isDefault: true }],
+    },
+  });
+  engine.commandCatalogs = {
+    codex: { skills: [{ name: 'repo-review', description: 'Review changes' }] },
+    pi: { skills: [{ name: 'ship' }], commands: [{ name: 'summary' }] },
+  };
+  const restored = engine.seed('chat-restored-skill', 'Previous Pi chat', [
+    ['user/message', { id: 'earlier', source: { kind: 'user' }, content: [{ type: 'text', text: 'Earlier turn' }] }],
+  ]);
+  Object.assign(restored, { executor: 'pi', model: 'local/demo' });
+  const { client, host } = connect(engine);
+  try {
+    const catalog = async (instanceId, cwd) => {
+      const { providers } = await client.call('server.refreshProviders', { instanceId, cwd });
+      return providers[0].workspaceSnapshots[0];
+    };
+    const fresh = await catalog('codex', '~/Documents/HoH');
+    assert.deepEqual(fresh.skills.map(skill => skill.name), ['repo-review']);
+    assert.deepEqual(sent(engine, 'hoh/executor/commands').at(-1).params, { executor: 'codex' });
+
+    await siteProject(client);
+    const pi = await catalog('pi', SITE);
+    assert.deepEqual(pi.skills.map(skill => skill.name), ['ship']);
+    assert.deepEqual(pi.slashCommands.map(command => command.name), ['summary']);
+    assert.deepEqual(sent(engine, 'hoh/executor/commands').at(-1).params, { executor: 'pi', cwd: SITE });
+    assert.equal(sent(engine, 'session/prompt').length, 0);
+
+    const cases = [
+      ['codex', 'gpt-6-sol', 'hoh-project', 'Please £repo-review, then $unknown', 'Please £repo-review, then $unknown'],
+      ['codex', 'gpt-6-sol', 'hoh-project', 'Please £repo-review and $ship', 'Please $repo-review and $ship'],
+      ['pi', 'local/demo', 'p-site', '$ship release with $repo-review', '/skill:ship release with $repo-review'],
+      ['pi', 'local/demo', 'p-site', '/summary the release', '/summary the release'],
+    ];
+    for (const [index, [instanceId, model, projectId, text, nativeText]] of cases.entries()) {
+      await client.call('orchestration.launchThread', {
+        commandId: 'launch-skills-' + index, threadId: 'chat-skills-' + index, projectId,
+        modelSelection: { instanceId, model }, runtimeMode: 'full-access', interactionMode: 'default',
+        workspaceStrategy: { type: 'root' },
+        initialMessage: { messageId: 'msg-' + index, text, attachments: [] },
+      });
+      const prompt = sent(engine, 'session/prompt').at(-1).params;
+      assert.equal(engine.store.get(prompt.sessionId).executor, instanceId);
+      assert.deepEqual(prompt.contentBlocks, [{ type: 'text', text: nativeText }]);
+    }
+
+    await client.call('orchestration.getThreadProjection', { threadId: 'chat-restored-skill' });
+    const scratch = await catalog('pi', DEFAULT_FOLDER);
+    assert.deepEqual(scratch.skills.map(skill => skill.name), ['ship']);
+    await client.call('orchestration.dispatchCommand', dispatch('chat-restored-skill', 'msg-restored', '$ship the next release'));
+    const restoredPrompt = sent(engine, 'session/prompt').at(-1).params;
+    assert.equal(restoredPrompt.sessionId, 'chat-restored-skill');
+    assert.deepEqual(restoredPrompt.contentBlocks, [{ type: 'text', text: '/skill:ship the next release' }]);
+  } finally {
+    client.close();
+    host.stop();
+  }
 });
 
 test('/ and $ in a fresh window: "No project" asks for the engine\'s own folder and learns it; a new project is asked by its folder', async () => {

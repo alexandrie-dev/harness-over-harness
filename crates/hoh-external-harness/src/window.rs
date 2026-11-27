@@ -30,7 +30,8 @@ use hoh_protocol::{
     ExecutorEffectiveAccess, ExecutorLimitsResult, ExecutorLimitsState, ExecutorParams,
     ExecutorRuntimeMode, ExecutorSelectParams, ExecutorSessionAccess, ExecutorTitleGenerateParams,
     ExecutorTrustGetParams, ExecutorTrustResult, ExecutorTrustSetParams, SessionInteractionMode,
-    WorkspaceAddParams, WorkspaceAddResult, WorkspaceEntriesParams, WorkspaceEntriesResult,
+    WorkingDirectoryRootIdentity, WorkspaceAddParams, WorkspaceAddResult, WorkspaceEntriesParams,
+    WorkspaceEntriesResult, WorkspaceResolveParams, WorkspaceResolveResult,
 };
 use hoh_sdk_jsonrpc_server::HohRpcMethods;
 use hoh_session::SessionId;
@@ -72,6 +73,7 @@ const TRUST_GET: &str = "hoh/executor/trust/get";
 const TRUST_SET: &str = "hoh/executor/trust/set";
 const ENTRIES: &str = "hoh/workspace/entries";
 const ADD: &str = "hoh/workspace/add";
+const RESOLVE: &str = "hoh/workspace/resolve";
 const FOLDER_CACHE_TTL: Duration = Duration::from_secs(30);
 const TITLE_GENERATE: &str = "hoh/executor/title/generate";
 
@@ -96,7 +98,7 @@ impl Drop for TrustReservations {
         }
     }
 }
-const METHODS: [&str; 11] = [
+const METHODS: [&str; 12] = [
     DISCOVER,
     LIMITS,
     SELECT,
@@ -105,6 +107,7 @@ const METHODS: [&str; 11] = [
     COMMANDS,
     ENTRIES,
     ADD,
+    RESOLVE,
     TRUST_GET,
     TRUST_SET,
     TITLE_GENERATE,
@@ -346,7 +349,10 @@ impl Window {
                     Ok(None) => (ExecutorLimitsState::Unavailable, Vec::new()),
                     Err(_) => (ExecutorLimitsState::Failed, Vec::new()),
                 };
-                Ok(serde_json::to_value(ExecutorLimitsResult { state, windows })?)
+                Ok(serde_json::to_value(ExecutorLimitsResult {
+                    state,
+                    windows,
+                })?)
             }
             SELECT => self.select(parse(method, params)?).await,
             ACCESS_GET => {
@@ -435,6 +441,9 @@ impl Window {
             ADD => Ok(serde_json::to_value(
                 self.add_folder(parse(method, params)?).await?,
             )?),
+            RESOLVE => Ok(serde_json::to_value(
+                self.resolve_folder(parse(method, params)?).await?,
+            )?),
             TITLE_GENERATE => {
                 let params: ExecutorTitleGenerateParams = parse(method, params)?;
                 let harness = self
@@ -480,6 +489,20 @@ impl Window {
                 None => {}
             }
         }
+        match directories.initial_directory_match(&wanted) {
+            Some(true) => return Ok(wanted),
+            // A fresh identity is accepted only after the user rebinds or moves an open chat.
+            Some(false) => {
+                return self
+                    .agents
+                    .list()
+                    .iter()
+                    .any(|agent| directories.has_recorded_directory(agent.session(), &wanted))
+                    .then_some(wanted)
+                    .ok_or_else(unknown);
+            }
+            None => {}
+        }
         // Unlike the request spelling, accepted identities never follow a newly introduced link.
         // The default target was frozen at startup; WorkingDirectoryService stores canonical paths
         // for session changes, so the same saved-identity check covers active-only conversations.
@@ -503,6 +526,50 @@ impl Window {
             }
         }
         Err(unknown())
+    }
+
+    /// Only the native host consumes this identity. Catch a replacement while the folder is
+    /// authorized, and let the host check the same identity on the opened directory descriptor.
+    async fn resolve_folder(
+        &self,
+        params: WorkspaceResolveParams,
+    ) -> Result<WorkspaceResolveResult, BoxError> {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+
+            if !Path::new(&params.cwd).is_absolute() {
+                return Err("a project requires an absolute folder path".into());
+            }
+            let candidate = tokio::fs::canonicalize(&params.cwd).await?;
+            let before = tokio::fs::symlink_metadata(&candidate).await?;
+            let folder = self.known_folder(&params.cwd).await?;
+            let after = tokio::fs::symlink_metadata(&folder).await?;
+            if folder != candidate
+                || !before.is_dir()
+                || !after.is_dir()
+                || before.dev() != after.dev()
+                || before.ino() != after.ino()
+            {
+                return Err("the project folder changed during authorization".into());
+            }
+            let cwd = folder
+                .into_os_string()
+                .into_string()
+                .map_err(|_| "the project folder path is not UTF-8")?;
+            Ok(WorkspaceResolveResult {
+                cwd,
+                root_identity: WorkingDirectoryRootIdentity {
+                    device: after.dev().to_string(),
+                    inode: after.ino().to_string(),
+                },
+            })
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = params;
+            Err("project folder identities are unsupported on this platform".into())
+        }
     }
 
     /// `/` and `$` of the window: what the executor itself declares for a known folder, asked
@@ -1473,7 +1540,9 @@ async fn write(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Window, build_15_mode, darwin_protected_folder, protected_folder, saved_folder_match};
+    use super::{
+        Window, build_15_mode, darwin_protected_folder, protected_folder, saved_folder_match,
+    };
     use crate::contract::{
         AuthState, Discovery, DiscoveryFailure, DiscoveryOperation, VersionStatus,
     };

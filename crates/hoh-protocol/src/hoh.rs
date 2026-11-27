@@ -1,5 +1,8 @@
 //! HoH additions. Open design decisions are documented in PORT_NOTES.md.
-use crate::{ApprovalOutcome, JsonObject, SessionEvent, choices, object, optional};
+use crate::{
+    ApprovalOutcome, JsonObject, SessionEvent, WorkingDirectoryRootIdentity, choices, object,
+    optional,
+};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -15,11 +18,18 @@ optional!(SessionListParams {
     #[schemars(required)]
     employee_id: Option<String>,
 });
-object!(SessionSummary {
+object!(SessionSideChat {
+    parent_session_id: String,
+    seed_end_seq: u64
+});
+optional!(SessionSummary {
     id: String,
     title: String,
     employee_id: String,
-    updated_at: u64
+    updated_at: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "crate::present")]
+    #[schemars(required)]
+    side_chat: Option<SessionSideChat>,
 });
 object!(SessionListResult { sessions: Vec<SessionSummary> });
 optional!(SessionEventsParams {
@@ -41,6 +51,14 @@ object!(SessionForkForEditParams {
 object!(SessionForkForEditResult {
     session_id: String,
     attachments: Vec<Value>
+});
+object!(SessionForkSideChatParams {
+    session_id: String,
+    target_session_id: String
+});
+object!(SessionForkSideChatResult {
+    session_id: String,
+    seed_end_seq: u64
 });
 choices!(EmployeeStatus { Working => "working", Waiting => "waiting", Sleeping => "sleeping" });
 choices!(InternetMode { Ask => "ask", Public => "public", Deny => "deny" });
@@ -771,6 +789,12 @@ object!(ExecutorCommandsResult {
 // project's first conversation. Privileged. The answer is the folder as the engine resolved it.
 object!(WorkspaceAddParams { cwd: String });
 object!(WorkspaceAddResult { cwd: String });
+// The desktop host binds an authorized project folder to its filesystem identity before use.
+object!(WorkspaceResolveParams { cwd: String });
+object!(WorkspaceResolveResult {
+    cwd: String,
+    root_identity: WorkingDirectoryRootIdentity
+});
 // `hoh/workspace/entries` (HOH-41): files and folders of a folder the engine knows whose relative
 // path matches `query` (the window's `@`), at most `limit` (1..=200) of them. Names and relative
 // paths only, never contents.

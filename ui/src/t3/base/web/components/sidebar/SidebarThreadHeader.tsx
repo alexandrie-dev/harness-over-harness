@@ -17,6 +17,7 @@ export interface SidebarThreadHeaderProps {
   hasProjects: boolean;
   projectScope: ReactNode;
   onNewProject: () => void;
+  showNewThread?: boolean;
   onNewThread: (event: ReactMouseEvent) => void;
   newThreadDisabled: boolean;
   newThreadShortcutLabel: string | null | undefined;
@@ -36,6 +37,7 @@ export function SidebarThreadHeader({
   hasProjects,
   projectScope,
   onNewProject,
+  showNewThread = true,
   onNewThread,
   newThreadDisabled,
   newThreadShortcutLabel,
@@ -99,15 +101,11 @@ export function SidebarThreadHeader({
         ) : null}
       </div>
       <div className="flex shrink-0 items-center">
-        {hasProjects ? (
-          <>
-            {projectScope}
-            <SidebarHeaderIconButton label={gt("Add project")} onClick={onNewProject}>
-              <FolderPlusIcon />
-            </SidebarHeaderIconButton>
-          </>
-        ) : null}
-        <SidebarHeaderIconButton
+        {hasProjects ? projectScope : null}
+        <SidebarHeaderIconButton label={gt("Add project")} onClick={onNewProject}>
+          <FolderPlusIcon />
+        </SidebarHeaderIconButton>
+        {showNewThread ? <SidebarHeaderIconButton
           label={gt("New chat")}
           tooltip={
             showNewThreadInProjectHint ? (
@@ -129,7 +127,7 @@ export function SidebarThreadHeader({
           onClick={onNewThread}
         >
           <SquarePenIcon />
-        </SidebarHeaderIconButton>
+        </SidebarHeaderIconButton> : null}
       </div>
     </div>
   );

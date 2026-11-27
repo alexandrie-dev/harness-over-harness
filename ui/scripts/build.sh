@@ -23,6 +23,7 @@ exec /usr/bin/env -i /usr/bin/python3 -I scripts/offline.py /bin/bash -peuc '
   fi
   if [[ $1 == --check ]]; then
     ./node_modules/.bin/tsc --noEmit
+    ./node_modules/.bin/tsc --noEmit -p tsconfig.t3-host.json
     pnpm run test:unit
     if [[ -f src/t3/base/web/bootstrap.ts ]]; then
       node scripts/check-grid.mjs

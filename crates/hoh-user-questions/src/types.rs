@@ -38,6 +38,7 @@ pub struct ApprovalDisplay {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
 pub enum AskUserQuestionIntent {
+    SecretFile,
     PlanReview {
         approve: String,
         #[serde(default, rename = "callId", skip_serializing_if = "Option::is_none")]
@@ -58,6 +59,7 @@ pub enum AskUserQuestionIntent {
 impl AskUserQuestionIntent {
     pub fn kind(&self) -> &'static str {
         match self {
+            Self::SecretFile => "secret-file",
             Self::PlanReview { .. } => "plan-review",
             Self::Approval { .. } => "approval",
         }

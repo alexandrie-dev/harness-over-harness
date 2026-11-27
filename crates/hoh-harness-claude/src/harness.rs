@@ -1385,14 +1385,17 @@ impl ExternalHarness for ClaudeHarness {
                 settings_of(&config, launch.bypass),
             )
             .await?;
-            let skills = session.control("reload_skills", config.init_timeout).await;
+            let skills = session
+                .control("reload_skills", config.init_timeout)
+                .await
+                .map(|answer| commands_from(answer.get("skills")))
+                .unwrap_or_default();
+            session.set_skills(skills.iter().map(|skill| skill.name.clone()).collect());
             command_snapshots.replace(
                 command_key,
                 HarnessCommands {
                     commands: commands_from(init.response.get("commands")),
-                    skills: skills
-                        .map(|answer| commands_from(answer.get("skills")))
-                        .unwrap_or_default(),
+                    skills,
                 },
             );
             Ok(Started {

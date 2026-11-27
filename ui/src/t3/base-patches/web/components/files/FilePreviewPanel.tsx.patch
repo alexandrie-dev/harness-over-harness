@@ -1,29 +1,28 @@
 --- a/web/components/files/FilePreviewPanel.tsx
 +++ b/web/components/files/FilePreviewPanel.tsx
-@@ -1216 +1216,13 @@
--export default function FilePreviewPanel({
-+// HoH: the host has no projects.readFile or projects.listEntries. Keep the panel
-+// useful without issuing unsupported requests; uploaded attachments still use the asset path.
-+export default function FilePreviewPanel(props: FilePreviewPanelProps) {
-+  if (props.attachment !== undefined) return <T3FilePreviewPanel {...props} />;
-+  return (
-+    <div className="flex h-full flex-col items-center justify-center gap-2 p-4 text-sm text-muted-foreground" role="status">
-+      <p>File preview and Open in editor</p>
-+      <p>Coming Soon</p>
-+    </div>
-+  );
-+}
-+
-+function T3FilePreviewPanel({
-@@ -1559,10 +1571 @@
--            <OpenInPicker
--              environmentId={environmentId}
--              keybindings={keybindings}
--              availableEditors={availableEditors}
--              enableShortcut={openInShortcutEnabled}
--              openInCwd={absolutePath}
--              openInCwdIsFile={file.isFile}
--              compact
--              revealFileManager={revealsInFileManager}
--            />
-+            <span className="text-sm text-muted-foreground">Open in editor · Coming Soon</span>
+@@ -1260,2 +1260,4 @@
+-  const isVideo = relativePath !== null && isWorkspaceVideoPreviewPath(relativePath);
+-  const isAudio = relativePath !== null && !isVideo && isWorkspaceAudioPreviewPath(relativePath);
++  // The HoH host serves workspace text and raster assets without T3's range-download service.
++  const workspaceAssetStreams = environmentId !== "hoh-local";
++  const isVideo = workspaceAssetStreams && relativePath !== null && isWorkspaceVideoPreviewPath(relativePath);
++  const isAudio = workspaceAssetStreams && relativePath !== null && !isVideo && isWorkspaceAudioPreviewPath(relativePath);
+@@ -1264 +1266 @@
+-  const isPdf = relativePath !== null && isPdfPreviewFile(relativePath);
++  const isPdf = workspaceAssetStreams && relativePath !== null && isPdfPreviewFile(relativePath);
+@@ -1266 +1268 @@
+-    relativePath !== null &&
++    workspaceAssetStreams && relativePath !== null &&
+@@ -1270 +1272 @@
+-  const isHtml = relativePath !== null && !isPdf && isBrowserPreviewFile(relativePath);
++  const isHtml = workspaceAssetStreams && relativePath !== null && !isPdf && isBrowserPreviewFile(relativePath);
+@@ -1623 +1625 @@
+-          <T>Read-only connection. Unsaved edits are kept until write access returns.</T>
++          <T>Read-only file preview.</T>
+@@ -1631 +1633 @@
+-      (draft || isMarkdown || isMermaid || isHtml) ? (
++      (!workspaceAssetStreams || draft || isMarkdown || isMermaid || isHtml) ? (
+@@ -1712,0 +1715 @@
++            workspaceAssetStreams &&
+@@ -1732,0 +1736 @@
++            workspaceAssetStreams &&

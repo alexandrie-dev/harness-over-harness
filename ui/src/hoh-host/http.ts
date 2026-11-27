@@ -6,7 +6,7 @@
 import { environmentDescriptor, type EnvironmentPlatform } from './config.ts';
 
 export const HOH_SCOPES = [
-  'orchestration:read', 'orchestration:operate', 'settings:write', 'providers:manage', 'filesystem:read', 'filesystem:write', 'diagnostics:read',
+  'orchestration:read', 'orchestration:operate', 'settings:write', 'providers:manage', 'filesystem:read', 'diagnostics:read',
 ] as const;
 
 export function authSessionState() {

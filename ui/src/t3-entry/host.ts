@@ -13,11 +13,9 @@ export interface HohEngineLike {
 export interface HohHostOptions {
   readonly engine: HohEngineLike;
   readonly platform?: import('../hoh-host/config').EnvironmentPlatform;
+  readonly createLocalSettings?: import('./local-settings').CreateHohLocalSettings;
   readonly pluginAuthoringSkill?: string;
   readonly pluginAuthoringGuide?: string;
 }
 export type InstallHohHost = (options: HohHostOptions) => unknown;
 export type TauriEngine = () => HohEngineLike;
-
-/** Адрес, на который собран T3 (VITE_HTTP_URL): его никто не слушает, отвечает хост в странице. */
-export const HOH_HTTP_URL = 'http://hoh.local';

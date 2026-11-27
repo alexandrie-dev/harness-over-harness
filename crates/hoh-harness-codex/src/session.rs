@@ -197,6 +197,7 @@ enum ServerRequestKind {
     CommandOrFile,
     Permissions { requested: Value },
     Question { ids: Vec<String> },
+    SecretFile,
     McpElicitation,
 }
 
@@ -376,6 +377,20 @@ impl CodexSession {
             params["excludeTurns"] = json!(false);
             "thread/resume"
         } else {
+            params["dynamicTools"] = json!([{
+                "type": "function",
+                "name": "request_secret",
+                "description": "Ask the user to provide a credential in a masked private form. The result gives a temporary owner-only file path for shell use. Quote the path and read it only inside the command that needs it. Keep the value out of tool arguments and output, shell traces, and logs. If declined, do not ask for the value in chat.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "label": {"type": "string", "description": "Short name of the credential"},
+                        "reason": {"type": "string", "description": "Why the credential is needed"}
+                    },
+                    "required": ["label", "reason"],
+                    "additionalProperties": false
+                }
+            }]);
             "thread/start"
         };
         let result = session.request(method, params).await.map_err(|failure| {
@@ -411,6 +426,29 @@ impl CodexSession {
         Ok((session, events, thread_id, resumed))
     }
 
+    pub(crate) async fn read_skills(
+        supervisor: Supervisor,
+        request_timeout: Duration,
+        cwd: String,
+    ) -> Result<Value, HarnessFailure> {
+        let (session, _events) = Self::open(
+            supervisor,
+            1,
+            request_timeout,
+            mode_settings(hoh_external_harness::AccessMode::Confirm),
+            cwd.clone(),
+            false,
+            None,
+            None,
+        )
+        .await?;
+        let result = session
+            .request("skills/list", json!({ "cwds": [cwd] }))
+            .await;
+        session.terminate_now(Duration::from_millis(300)).await;
+        result
+    }
+
     pub(crate) async fn read_rate_limits(
         supervisor: Supervisor,
         request_timeout: Duration,
@@ -427,7 +465,9 @@ impl CodexSession {
             None,
         )
         .await?;
-        let result = session.request("account/rateLimits/read", Value::Null).await;
+        let result = session
+            .request("account/rateLimits/read", Value::Null)
+            .await;
         session.terminate_now(Duration::from_millis(300)).await;
         result
     }
@@ -801,6 +841,25 @@ impl HarnessSession for CodexSession {
                     }
                     json!({"answers":output})
                 }
+                (ServerRequestKind::SecretFile, response) => {
+                    let path = match response {
+                        HarnessResponse::Answer { answers } => answers
+                            .into_iter()
+                            .find(|answer| answer.id == "credential")
+                            .and_then(|answer| answer.custom)
+                            .filter(|path| is_credential_file(path)),
+                        _ => None,
+                    };
+                    let result = match path {
+                        Some(path) => {
+                            json!({"status":"saved","file":path,"note":"Read the file inside the command that needs it. Keep the value out of command arguments sent to tools and all output."})
+                        }
+                        None => {
+                            json!({"status":"declined","note":"Do not ask for the value in chat."})
+                        }
+                    };
+                    json!({"success":true,"contentItems":[{"type":"inputText","text":result.to_string()}]})
+                }
                 (ServerRequestKind::McpElicitation, HarnessResponse::Approval { decision }) => {
                     json!({"action": if decision == ApprovalDecision::Allow {"accept"} else {"decline"}})
                 }
@@ -1007,6 +1066,7 @@ async fn handle_server_request(inner: &Arc<Inner>, method: &str, id: Value, para
     enum Registration {
         Event(HarnessEvent),
         CancelStandalone,
+        InvalidToolInput(&'static str),
     }
 
     if !matches!(
@@ -1015,6 +1075,7 @@ async fn handle_server_request(inner: &Arc<Inner>, method: &str, id: Value, para
             | "item/fileChange/requestApproval"
             | "item/permissions/requestApproval"
             | "item/tool/requestUserInput"
+            | "item/tool/call"
             | "mcpServer/elicitation/request"
     ) {
         let _ = inner
@@ -1051,6 +1112,14 @@ async fn handle_server_request(inner: &Arc<Inner>, method: &str, id: Value, para
                 state.server_standalone_seen.insert(request_id.clone());
                 return Ok(Registration::CancelStandalone);
             };
+            if state.server_seen.contains_key(&request_id)
+                || state.server_standalone_seen.contains(&request_id)
+            {
+                return Err(format!(
+                    "Codex app-server reused JSON-RPC request id in one process: {}",
+                    rpc_key(&id)
+                ));
+            }
             let request_parent = item_id
                 .as_deref()
                 .and_then(|item| state.item_parents.get(item).cloned())
@@ -1138,6 +1207,56 @@ async fn handle_server_request(inner: &Arc<Inner>, method: &str, id: Value, para
                         },
                     )
                 }
+                "item/tool/call"
+                    if params["tool"] == "request_secret" && params["namespace"].is_null() =>
+                {
+                    let arguments = &params["arguments"];
+                    let label = string(arguments, "label")
+                        .filter(|value| !value.trim().is_empty() && value.chars().count() <= 100);
+                    let reason = string(arguments, "reason")
+                        .filter(|value| !value.trim().is_empty() && value.chars().count() <= 800);
+                    let (Some(label), Some(reason)) = (label, reason) else {
+                        state.server_seen.insert(request_id.clone(), context);
+                        return Ok(Registration::InvalidToolInput(
+                            "Provide a short label and reason for request_secret.",
+                        ));
+                    };
+                    if !arguments.as_object().is_some_and(|args| args.len() == 2) {
+                        state.server_seen.insert(request_id.clone(), context);
+                        return Ok(Registration::InvalidToolInput(
+                            "request_secret accepts only label and reason.",
+                        ));
+                    }
+                    (
+                        ServerRequestKind::SecretFile,
+                        HarnessEvent::QuestionAsked {
+                            request_id: request_id.clone(),
+                            questions: vec![HarnessQuestion {
+                                id: "credential".into(),
+                                question: reason,
+                                header: Some(label),
+                                options: Vec::new(),
+                                multi_select: false,
+                                secret_file: true,
+                            }],
+                            parent_item_id: request_parent,
+                        },
+                    )
+                }
+                "item/tool/call" => {
+                    state.server_seen.insert(request_id.clone(), context);
+                    return Ok(Registration::InvalidToolInput("Unknown dynamic tool."));
+                }
+                "item/tool/requestUserInput"
+                    if params["questions"]
+                        .as_array()
+                        .is_some_and(|items| items.iter().any(|item| item["isSecret"] == true)) =>
+                {
+                    state.server_seen.insert(request_id.clone(), context);
+                    return Ok(Registration::InvalidToolInput(
+                        "Use request_secret for secrets. Keep them out of chat.",
+                    ));
+                }
                 "item/tool/requestUserInput" => {
                     let questions = questions(&params);
                     let ids = questions
@@ -1168,14 +1287,6 @@ async fn handle_server_request(inner: &Arc<Inner>, method: &str, id: Value, para
                 ),
                 _ => unreachable!("supported method checked above"),
             };
-            if state.server_seen.contains_key(&request_id)
-                || state.server_standalone_seen.contains(&request_id)
-            {
-                return Err(format!(
-                    "Codex app-server reused JSON-RPC request id in one process: {}",
-                    rpc_key(&id)
-                ));
-            }
             state
                 .server_seen
                 .insert(request_id.clone(), context.clone());
@@ -1201,6 +1312,12 @@ async fn handle_server_request(inner: &Arc<Inner>, method: &str, id: Value, para
             let _ = inner
                 .supervisor
                 .send(&json!({"id":id,"result":{"action":"cancel"}}))
+                .await;
+        }
+        Ok(Registration::InvalidToolInput(message)) => {
+            let _ = inner
+                .supervisor
+                .send(&json!({"id":id,"error":{"code":-32602,"message":message}}))
                 .await;
         }
         Err(message) => protocol_violation(inner, message).await,
@@ -1731,6 +1848,16 @@ fn file_changes(value: &Value) -> Vec<FileChange> {
         .collect()
 }
 
+fn is_credential_file(path: &str) -> bool {
+    let path = std::path::Path::new(path);
+    path.is_absolute()
+        && path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .and_then(|name| name.strip_prefix("turn-"))
+            .is_some_and(|nonce| nonce.len() == 64 && nonce.bytes().all(|c| c.is_ascii_hexdigit()))
+}
+
 fn questions(params: &Value) -> Vec<HarnessQuestion> {
     params
         .get("questions")
@@ -1755,6 +1882,7 @@ fn questions(params: &Value) -> Vec<HarnessQuestion> {
                         })
                     })
                     .collect(),
+                secret_file: false,
                 multi_select: question
                     .get("multiSelect")
                     .and_then(Value::as_bool)

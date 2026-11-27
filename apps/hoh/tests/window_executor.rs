@@ -16,7 +16,12 @@
 
 use hoh_protocol::{HostApprovalRequest, approval};
 use serde_json::{Value, json};
-use std::{os::unix::fs::PermissionsExt, path::PathBuf, process::Stdio, time::Duration};
+use std::{
+    os::unix::fs::PermissionsExt,
+    path::{Path, PathBuf},
+    process::Stdio,
+    time::Duration,
+};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, Lines};
 
 const FRAME_TIMEOUT: Duration = Duration::from_secs(60);
@@ -679,8 +684,12 @@ impl Host {
     }
 
     async fn initialize(&mut self, workspace: &Workspace) {
+        self.initialize_at(&workspace.folder).await;
+    }
+
+    async fn initialize_at(&mut self, directory: &Path) {
         let params = json!({
-            "cwd": workspace.folder,
+            "cwd": directory,
             "provider": "openai-compatible",
             "model": "window-mock",
             "hoh": {"protocolVersion": 1, "approvalKey": approval::hex(&self.key)},
@@ -3631,6 +3640,57 @@ async fn p15_an_oversized_or_mistyped_picture_is_refused_and_claude_gets_nothing
 
 // ------------------------------------------------- `/`, `$` and `@` of the window (HOH-41 package 1)
 
+#[tokio::test]
+async fn initialized_workspace_has_commands_before_a_session_and_keeps_its_identity() {
+    let workspace = Workspace::new();
+    let scratch = workspace
+        .root
+        .path()
+        .canonicalize()
+        .unwrap()
+        .join("scratch");
+    std::fs::create_dir(&scratch).unwrap();
+    let profile = workspace.profile().with_file_name("window-external");
+    std::fs::create_dir(&profile).unwrap();
+    std::fs::copy(
+        workspace.profile().join("cordis.patch.yml"),
+        profile.join("cordis.patch.yml"),
+    )
+    .unwrap();
+    let mut host = Host::start_profile(&workspace, "window-external", &[]);
+    host.initialize_at(&scratch).await;
+    let params = json!({"executor": "claude"});
+    let result = host.ok("hoh/executor/commands", params.clone()).await;
+    assert_eq!(result["cwd"], json!(scratch));
+    assert!(!result["skills"].as_array().unwrap().is_empty());
+    host.select_claude().await;
+    host.prompt("hello").await;
+
+    std::fs::rename(&scratch, scratch.with_file_name("previous-scratch")).unwrap();
+    std::fs::create_dir(&scratch).unwrap();
+    let request = host.send("hoh/executor/commands", params.clone()).await;
+    let (frame, _) = host.response(&request, None).await;
+    assert!(frame.get("error").is_some(), "{frame}");
+    let status = host
+        .ok(
+            "session/working-directory/status",
+            json!({"sessionId":SESSION}),
+        )
+        .await;
+    assert_eq!(status["changed"], true, "{status}");
+    let accepted = host.privileged(
+        "session/working-directory/rebind",
+        json!({"sessionId":SESSION, "path":status["cwd"], "rootIdentity":status["rootIdentity"]}),
+        "allowed-once",
+    ).await;
+    assert!(accepted.get("error").is_none(), "{accepted}");
+    assert_eq!(
+        host.ok("hoh/executor/commands", params).await["cwd"],
+        json!(scratch)
+    );
+    host.shutdown().await;
+}
+
 /// 16. Before any turn, `/` and `$` are what Claude itself declares for the folder: the commands of
 /// its `initialize` and the skills of its `reload_skills`, from a probe in that folder that starts
 /// no conversation.
@@ -4356,4 +4416,94 @@ async fn m3_the_new_modes_outlive_stop_and_a_restart() {
         assert!(starts[2].has("--resume"), "{runtime_mode}: {:?}", starts[2]);
         host.shutdown().await;
     }
+}
+
+#[tokio::test]
+async fn side_chat_forks_the_stable_context_while_the_parent_waits() {
+    let workspace = Workspace::new();
+    let mut host = engine_with_claude(&workspace, "confirm").await;
+    host.prompt("stable-parent-context").await;
+    host.send(
+        "session/prompt",
+        json!({"sessionId":SESSION,"contentBlocks":[{"type":"text","text":"edit"}]}),
+    )
+    .await;
+    let pending = loop {
+        let frame = host.next().await;
+        if frame["method"] == "approval/request" {
+            break frame;
+        }
+    };
+    let side = host
+        .ok(
+            "session/fork-side-chat",
+            json!({"sessionId":SESSION, "targetSessionId":"side-question"}),
+        )
+        .await;
+    assert_eq!(side["sessionId"], "side-question");
+    let seed_end = side["seedEndSeq"].as_i64().expect("fork cursor");
+
+    assert!(
+        host.turn("side-question", "side-only-question", None)
+            .await
+            .is_empty()
+    );
+    assert_eq!(host.turn_end("side-question")["kind"], "completed");
+    let child_prompt = workspace.prompts().last().unwrap().to_string();
+    assert!(
+        child_prompt.contains("stable-parent-context"),
+        "{child_prompt}"
+    );
+    assert!(
+        child_prompt.contains("side-only-question"),
+        "{child_prompt}"
+    );
+    let starts: Vec<_> = workspace
+        .starts()
+        .into_iter()
+        .filter(Start::is_session)
+        .collect();
+    assert_eq!(starts.len(), 2);
+    assert_ne!(
+        starts[0].value_of("--session-id"),
+        starts[1].value_of("--session-id")
+    );
+    assert_eq!(starts[0].cwd, starts[1].cwd);
+
+    // The original approval is still outstanding after the side question finishes.
+    assert_eq!(
+        host.access_of(SESSION).await["session"]["runningRuntimeMode"],
+        "confirm"
+    );
+    host.answer_approval(&pending, Some("rejected")).await;
+    host.ok("session/wait", json!({"sessionId":SESSION})).await;
+    host.shutdown().await;
+
+    let mut reopened = Host::start(&workspace);
+    reopened.initialize(&workspace).await;
+    reopened
+        .ok("session/resume", json!({"sessionId":"side-question"}))
+        .await;
+    let inventory = reopened.ok("session/list", json!({})).await;
+    let child = inventory["sessions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|session| session["id"] == "side-question")
+        .unwrap();
+    assert_eq!(
+        child["sideChat"],
+        json!({"parentSessionId":SESSION, "seedEndSeq":seed_end})
+    );
+    assert_eq!(child["title"], "side-only-question");
+    let events = reopened
+        .ok(
+            "session/events",
+            json!({"sessionId":"side-question", "afterSeq":seed_end, "limit":100}),
+        )
+        .await;
+    let text = events.to_string();
+    assert!(text.contains("side-only-question"), "{text}");
+    assert!(!text.contains("stable-parent-context"), "{text}");
+    reopened.shutdown().await;
 }

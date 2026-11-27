@@ -7,6 +7,7 @@ pub mod shim;
 
 use std::collections::HashMap;
 use std::future::Future;
+use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
 
@@ -199,11 +200,16 @@ struct Inner {
     ctx: Context,
     fs: Service<Fs>,
     default_directory: String,
-    initialized_default_directory: OnceLock<String>,
+    initialized_default_directory: OnceLock<InitialDirectory>,
     handle: ProjectionHandle<Option<String>>,
     lifecycle: AbortController,
     queues: Mutex<Queues>,
     operations: Arc<Operations>,
+}
+
+struct InitialDirectory {
+    path: String,
+    identity: Option<Value>,
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -427,7 +433,34 @@ impl WorkingDirectoryService {
     /// Set the launch fallback once the SDK initialization route has been validated.
     pub fn set_initial_default_directory(&self, directory: String) {
         debug_assert!(is_absolute(&directory));
-        let _ = self.inner.initialized_default_directory.set(directory);
+        let identity = std::fs::canonicalize(&directory)
+            .ok()
+            .and_then(|path| directory_identity(path.to_str()?).ok());
+        let _ = self
+            .inner
+            .initialized_default_directory
+            .set(InitialDirectory {
+                path: directory,
+                identity,
+            });
+    }
+
+    /// Match the host's initialized workspace and report whether its original identity still holds.
+    pub fn initial_directory_match(&self, canonical: &Path) -> Option<bool> {
+        let identity = self
+            .inner
+            .initialized_default_directory
+            .get()?
+            .identity
+            .as_ref()?;
+        directory_identity_match(identity, canonical)
+    }
+
+    /// True only when a session explicitly recorded this directory and its identity still holds.
+    pub fn has_recorded_directory(&self, session: &Session, canonical: &Path) -> bool {
+        recorded_identity(session)
+            .and_then(|identity| directory_identity_match(&identity, canonical))
+            == Some(true)
     }
 
     /// Read the committed directory without filesystem I/O.
@@ -567,6 +600,12 @@ fn recorded_identity(session: &Session) -> Option<Value> {
         .flatten()
 }
 
+fn directory_identity_match(identity: &Value, canonical: &Path) -> Option<bool> {
+    let path = identity["path"].as_str()?;
+    (Path::new(path) == canonical)
+        .then(|| directory_identity(path).is_ok_and(|current| &current == identity))
+}
+
 #[cfg(unix)]
 fn directory_identity(path: &str) -> Result<Value, BoxError> {
     use std::os::unix::fs::MetadataExt;
@@ -628,6 +667,7 @@ impl Inner {
     fn default_directory(&self) -> &str {
         self.initialized_default_directory
             .get()
+            .map(|directory| &directory.path)
             .unwrap_or(&self.default_directory)
     }
 

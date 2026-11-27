@@ -99,7 +99,10 @@ export class FakeEngine {
         else this.access = { ...this.access, mode: params.runtimeMode ?? params.mode };
         return {};
       case 'hoh/executor/select': this.access = { ...this.access, selected: { executor: params.executor, model: params.model } }; return {};
-      case 'session/list': return { sessions: [...this.store.entries()].map(([id, s]) => ({ id, title: s.title, employeeId: 'employee-1', updatedAt: s.updatedAt })) };
+      case 'session/list': return { sessions: [...this.store.entries()].map(([id, s]) => ({
+        id, title: s.title, employeeId: 'employee-1', updatedAt: s.updatedAt,
+        ...(s.sideChat ? { sideChat: s.sideChat } : {}),
+      })) };
       case 'session/resume': if (!this.store.has(params.sessionId)) throw new Error('session not found'); this.open.add(params.sessionId); return {};
       case 'session/working-directory/get':
         if (!this.store.has(params.sessionId)) this.store.set(params.sessionId, {
@@ -124,6 +127,16 @@ export class FakeEngine {
         const after = params.afterSeq ?? -1;
         const events = session.events.filter(e => e.seq > after).slice(0, params.limit);
         return { events, nextSeq: events.at(-1)?.seq ?? after };
+      }
+      case 'session/fork-side-chat': {
+        const source = this.store.get(params.sessionId);
+        const end = source.events.findLastIndex(event => event.type === 'turn/end');
+        const seed = source.events.slice(0, end + 1).map(({ type, data }) => [type, data]);
+        const child = this.seed(params.targetSessionId, 'Side chat', [...seed, ['session/end-seed', { inherited: true }]]);
+        const sideChat = { parentSessionId: params.sessionId, seedEndSeq: seed.length };
+        Object.assign(child, { executor: source.executor, model: source.model ?? 'claude-sonnet', cwd: source.cwd, sideChat });
+        this.open.add(params.targetSessionId);
+        return { sessionId: params.targetSessionId, seedEndSeq: seed.length };
       }
       case 'session/fork-for-edit': {
         const source = this.store.get(params.sessionId);
@@ -173,7 +186,8 @@ export class FakeEngine {
         if (!known.has(cwd)) throw new Error(`"${cwd}" is not a folder this engine knows`);
         if (method === 'hoh/executor/commands') {
           if (this.commandsFail) throw new Error('Claude Code is not installed');
-          return { executor: 'claude', cwd, commands: this.commands ?? [], skills: this.skills ?? [] };
+          const catalog = this.commandCatalogs?.[params.executor];
+          return { executor: params.executor, cwd, commands: catalog?.commands ?? this.commands ?? [], skills: catalog?.skills ?? this.skills ?? [] };
         }
         const entries = (this.files ?? []).filter(entry => entry.path.includes(params.query));
         return { entries: entries.slice(0, params.limit), truncated: entries.length > params.limit };
