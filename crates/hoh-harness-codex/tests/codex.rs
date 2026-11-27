@@ -18,7 +18,7 @@ fn stub() -> PathBuf {
 fn harness(temp: &TempDir, scenario: &str) -> (CodexHarness, PathBuf) {
     let log = temp.path().join(format!("{scenario}.jsonl"));
     let release = log.with_extension("release");
-    let config = CodexConfig {
+    let mut config = CodexConfig {
         executable: stub(),
         request_timeout: Duration::from_secs(3),
         extra_env: vec![
@@ -31,7 +31,36 @@ fn harness(temp: &TempDir, scenario: &str) -> (CodexHarness, PathBuf) {
         ],
         ..CodexConfig::default()
     };
+    if scenario == "title-credential-override" {
+        config
+            .extra_env
+            .push(("CODEX_API_KEY".into(), "stub-override".into()));
+    }
     (CodexHarness::new(config), log)
+}
+
+#[tokio::test]
+async fn codex_title_refuses_exec_only_credential_overrides() {
+    let temp = TempDir::new().unwrap();
+    let (harness, log) = harness(&temp, "title-credential-override");
+    let started = harness
+        .start_with_access(start_params(&temp, None), AccessMode::Confirm)
+        .await
+        .unwrap();
+    assert_eq!(
+        started
+            .session
+            .generate_title(title_request(&temp))
+            .await
+            .unwrap_err()
+            .code,
+        hoh_external_harness::code::POLICY_UNAVAILABLE,
+    );
+    assert!(
+        !lines(&log)
+            .iter()
+            .any(|entry| entry["stubEvent"] == "title-exec")
+    );
 }
 
 #[tokio::test]

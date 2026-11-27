@@ -1,5 +1,5 @@
 import { stripImageContextReferences } from './composer.ts';
-import { isAttachmentOnlyBootstrapPrompt } from '../t3/base/shared/composerContextReferences.ts';
+import { ATTACHMENT_ONLY_BOOTSTRAP_PROMPT, isAttachmentOnlyBootstrapPrompt } from '../t3/base/shared/composerContextReferences.ts';
 
 const MAX_TITLE_LENGTH = 48;
 const MAX_PROMPT_LENGTH = 6_000;
@@ -10,7 +10,7 @@ const ARTICLE = /^(?:a|an|the)$/iu;
 const CONNECTOR = /^(?:a|an|the|and|or|of|to|for|with|in|on|at|from|by|about|before|after|during|в|во|на|и|или|с|со|к|ко|по|из|для|без|от|про|при|о|об|обо|у|за|до|через|после|перед|между|над|под)$/iu;
 const CJK = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]/u;
 const FRENCH_CONNECTOR = /^(?:à|au|aux|avec|chez|dans|de|des|du|en|et|la|le|les|par|pour|sans|sous|sur|un|une)$/iu;
-const CONNECTOR_ALPHABET = /^[a-zàâæçéèêëîïôœùûüÿа-яё]$/iu;
+const SUPPORTED_LANGUAGE_WORD = /^(?:the|and|with|from|about|before|after|during|very|au|aux|avec|chez|du|pour|sans|sous|или|для|через|после|перед|между|[а-яё]*(?:ческих|[ёыэ])[а-яё]*)$/iu;
 const QUOTED_SUBJECT = /(?<![\p{L}\p{N}])(?:плагин|проект|страниц[уа]|модуль|plugin|project|page|module)\s+[«“"]([^»”"\n]+)[»”"]/giu;
 
 export function titleSource(prompt: string, limit = MAX_PROMPT_LENGTH): string {
@@ -18,6 +18,11 @@ export function titleSource(prompt: string, limit = MAX_PROMPT_LENGTH): string {
     .replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, ' ')
     .trim();
   return isAttachmentOnlyBootstrapPrompt(source) ? '' : source.slice(0, limit).trimEnd();
+}
+
+export function isAttachmentBootstrapTitle(title: string): boolean {
+  const normalized = title.trim().replace(/^Ultrathink:\s*/i, '').replace(/^\[/, '').toLowerCase();
+  return normalized.startsWith('user attached one') && ATTACHMENT_ONLY_BOOTSTRAP_PROMPT.slice(1).toLowerCase().startsWith(normalized);
 }
 
 export function shortTitleFromPrompt(prompt: string): string {
@@ -84,8 +89,9 @@ export function shortGeneratedTitle(value: unknown, exactNames: readonly string[
     return Array.from(title).length <= 12 && (matchesWords || validEdges) ? title : '';
   }
   if (!matchesWords || words.length > 6) return '';
-  if (words.length === 1) return exactNames.includes(title) ? title : '';
+  if (exactNames.includes(title)) return title;
+  if (words.length < 2) return '';
   const meaningful = words.filter(word => !CONNECTOR.test(word) && !FRENCH_CONNECTOR.test(word)).length;
-  const supported = (title.match(/[\p{L}\p{M}]/gu) ?? []).every(letter => CONNECTOR_ALPHABET.test(letter));
+  const supported = words.some(word => SUPPORTED_LANGUAGE_WORD.test(word));
   return meaningful >= 2 && (!supported || meaningful <= 3) ? title : '';
 }

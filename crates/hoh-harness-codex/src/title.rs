@@ -21,6 +21,7 @@ const TITLE_TIMEOUT: Duration = Duration::from_secs(35);
 pub(crate) const PROBE_TIMEOUT: Duration = Duration::from_secs(5);
 const CHATGPT_BASE_URL: &str = "https://chatgpt.com/backend-api/";
 const CHATGPT_ORIGIN: &str = "https://chatgpt.com";
+const CREDENTIAL_OVERRIDES: &[&str] = &["CODEX_API_KEY", "CODEX_ACCESS_TOKEN", "OPENAI_API_KEY"];
 static TITLE_WORKERS: Semaphore = Semaphore::const_new(2);
 
 const DISABLED_FEATURES: &[&str] = &[
@@ -109,7 +110,6 @@ pub(crate) fn verified_account(account: Value) -> HarnessResult<Value> {
     }
     let routing = account.get("workspaceRouting").ok_or_else(unavailable)?;
     let standard = match account.pointer("/account/type").and_then(Value::as_str) {
-        Some("apiKey") => routing.is_null(),
         Some("chatgpt") if routing.is_null() => account
             .pointer("/account/email")
             .and_then(Value::as_str)
@@ -185,6 +185,10 @@ fn title_spec(
         args,
         cwd: Some(cwd.to_owned()),
         env: config.extra_env.clone(),
+        env_remove: CREDENTIAL_OVERRIDES
+            .iter()
+            .map(|name| (*name).into())
+            .collect(),
         ..ProcessSpec::default()
     }
 }
@@ -271,7 +275,9 @@ async fn one_shot(spec: &ProcessSpec, prompt: &str) -> HarnessResult<String> {
 }
 
 pub(crate) fn supports_environment(config: &CodexConfig) -> bool {
-    ["CODEX_HOME", "HOME"].into_iter().all(|name| {
+    CREDENTIAL_OVERRIDES.iter().all(|name| {
+        std::env::var_os(name).is_none() && config.extra_env.iter().all(|(key, _)| key != name)
+    }) && ["CODEX_HOME", "HOME"].into_iter().all(|name| {
         config
             .extra_env
             .iter()
@@ -331,7 +337,7 @@ impl TitleRoute {
         }
         tokio::time::timeout(TITLE_TIMEOUT, async {
             let _worker = TITLE_WORKERS.acquire().await.map_err(|_| unavailable())?;
-            if !live.is_running() {
+            if !live.is_running() || !supports_environment(config) {
                 return Err(unavailable());
             }
             let (probe, trusted) = workspace
@@ -373,7 +379,7 @@ impl TitleRoute {
                     )
                 })?;
             let spec = title_spec(config, directory.path(), &schema, model, self.auth_store);
-            if !live.is_running() {
+            if !live.is_running() || !supports_environment(config) {
                 return Err(unavailable());
             }
             one_shot(&spec, &request.prompt).await

@@ -5,7 +5,7 @@
 import { EXECUTOR_INSTANCES, runtimeModeOf, type HohAccessMode, type HohExecutor, type T3InteractionMode } from './config.ts';
 import type { EngineQuestion } from './engine.ts';
 import { providerFailure } from './errors.ts';
-import { shortTitleFromPrompt, titleSource } from './chat-title.ts';
+import { isAttachmentBootstrapTitle, shortTitleFromPrompt, titleSource } from './chat-title.ts';
 import { isSecretaryThreadId, readSecretaryPromptPrefix } from './secretary-chat.ts';
 import { readThreadOrganization, type ThreadOrganization } from './thread-metadata.ts';
 import type { SearchableMessage, SearchableTurnItem } from './thread-search.ts';
@@ -752,7 +752,7 @@ export class ThreadModel {
     const data = record(event.data);
     if (event.type === 'session/title') {
       const title = text(data.title).trim();
-      if (!acceptEngineTitle || !title || title === this.title) return false;
+      if (!acceptEngineTitle || !title || title === this.title || isAttachmentBootstrapTitle(title)) return false;
       this.title = title;
       this.automaticTitlePending = false;
       return true;

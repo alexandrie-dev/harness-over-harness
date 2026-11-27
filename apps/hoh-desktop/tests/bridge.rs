@@ -79,6 +79,16 @@ impl Transport for MemoryTransport {
     fn send(&mut self, frame: Value) -> Result<(), String> {
         self.frames.lock().unwrap().push(frame.clone());
         if frame["method"] == "hoh/executor/title/generate" {
+            if frame["params"]["sessionId"] == "cold" {
+                let error = framing::error(
+                    frame["id"].clone(),
+                    -32000,
+                    "CHAT_TITLE_ROUTE_UNAVAILABLE: private engine detail /secret",
+                );
+                self.inbox
+                    .send(Message::Incoming(self.generation, classify(error).unwrap()))
+                    .unwrap();
+            }
             return Ok(());
         }
         if frame["method"] == "hoh/test/missing" {
@@ -334,6 +344,18 @@ fn the_window_gets_codes_for_the_engine_and_host_refusals() {
         json!({"code":"chat-delete-busy","message":"chat-delete-busy"})
     );
     assert!(!busy.to_string().contains("secret"));
+    let title_route = sent(
+        engine
+            .request(
+                "hoh/executor/title/generate",
+                json!({"executor":"codex","sessionId":"cold","prompt":"Name the chat"}),
+            )
+            .unwrap_err(),
+    );
+    assert_eq!(
+        title_route,
+        json!({"code":"chat-title-route-unavailable","message":"chat-title-route-unavailable"})
+    );
     // The bridge's own refusals of the confirmation (what `native.rs` returns for «Отклонить» and for a timeout).
     for (message, code) in [
         (hoh_desktop::errors::REJECTED, "rejected"),

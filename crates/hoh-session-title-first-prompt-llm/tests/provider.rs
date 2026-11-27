@@ -556,6 +556,10 @@ async fn keeps_natural_connectors_within_the_content_word_limit() {
             "Δεν ανοίγει ο πίνακας του διευθυντή",
             "Πρόσβαση στον πίνακα του διευθυντή",
         ),
+        (
+            "Arregla el acceso a la oficina del director",
+            "Acceso a la oficina del director",
+        ),
     ] {
         let env = setup_with_route(
             chunks([

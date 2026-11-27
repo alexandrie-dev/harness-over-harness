@@ -1,11 +1,10 @@
-use std::os::unix::fs::{MetadataExt, PermissionsExt};
+use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::time::Duration;
 
 use hoh_external_harness::{
     AccessMode, ExternalHarness, HarnessAction, HarnessEvent, HarnessPolicy, NetworkAccess,
-    PromptImage, PromptParams, SandboxMode, StartParams, TitleRequest, TitleWorkspace,
-    VersionStatus, code,
+    PromptImage, PromptParams, SandboxMode, StartParams, TitleRequest, VersionStatus, code,
 };
 use hoh_harness_pi::PiHarness;
 use tempfile::TempDir;
@@ -58,7 +57,10 @@ else:
     saved = pathlib.Path(args[args.index("--session-dir") + 1]) / "history"
     if resume:
         assert args[args.index("--session-id") + 1] == session_id
-model = {"provider": "mock", "id": "model", "name": "Test Model"}
+root = pathlib.Path(__file__).parent
+endpoint = root / "endpoint"
+model = {"provider": "mock", "id": "model", "name": "Test Model", "api": "openai-completions",
+         "baseUrl": endpoint.read_text() if endpoint.exists() else "https://original.example/v1"}
 title_model_selected = False
 for line in sys.stdin:
     request = json.loads(line)
@@ -81,20 +83,17 @@ for line in sys.stdin:
             {"name": "run-extension", "source": "extension"},
         ]}
     elif method == "set_model":
-        if title_mode:
-            assert request["provider"] == "another"
-            if request["modelId"] == "nested/model":
-                data = {"provider": request["provider"], "id": request["modelId"]}
-                title_model_selected = True
-            else:
-                data = model
-        else:
-            assert request["provider"] == "mock" and request["modelId"] == "model"
+        assert request["provider"] in {"mock", "another"}
+        assert request["modelId"] in {"model", "nested/model"}
+        model.update(provider=request["provider"], id=request["modelId"])
+        data = model
+        title_model_selected = title_mode
     elif method == "set_thinking_level":
         assert request["level"] == ("off" if title_mode else "high")
     elif method == "prompt":
         if title_mode:
             assert title_model_selected and request["images"] == []
+            assert request["message"] in {"title", "invalid"}
         else:
             assert request["images"] == [{"type":"image", "mimeType":"image/png", "data":"aW1n"}]
         data = {"disposition": "handled" if request["message"] == "/handled" else "started"}
@@ -162,39 +161,59 @@ async fn titles_use_an_isolated_session_and_the_bound_model() {
     )
     .unwrap();
     let pi = stub(dir.path());
-    let identity = project.metadata().unwrap();
+    let mut start = params(&project);
+    start.model = Some("another/nested/model".into());
+    let started = pi.start_with_access(start, AccessMode::Full).await.unwrap();
     let request = |prompt: &str, model: Option<&str>| TitleRequest {
         prompt: prompt.into(),
         model: model.map(str::to_owned),
-        workspace: Some(TitleWorkspace::new(
-            project.clone(),
-            [identity.dev(), identity.ino()],
-            dir.path().to_owned(),
-        )),
+        workspace: None,
     };
 
     assert_eq!(
-        pi.generate_title(request("title", Some("another/nested/model")))
+        started
+            .session
+            .generate_title(request("title", Some("another/nested/model")))
             .await
             .unwrap(),
         "Доступ к кабинету CEO"
     );
     assert_eq!(
-        pi.generate_title(request("invalid", Some("another/nested/model")))
+        started
+            .session
+            .generate_title(request("invalid", Some("another/nested/model")))
             .await
             .unwrap_err()
             .code,
         code::PROTOCOL,
     );
-    assert!(pi.generate_title(request("title", None)).await.is_err());
+    assert!(
+        started
+            .session
+            .generate_title(request("title", None))
+            .await
+            .is_err()
+    );
+    assert!(
+        pi.generate_title(request("title", Some("another/nested/model")))
+            .await
+            .is_err()
+    );
+    std::fs::write(
+        dir.path().join("endpoint"),
+        "https://replacement.example/v1",
+    )
+    .unwrap();
     assert_eq!(
-        pi.generate_title(request("title", Some("another/unavailable")))
+        started
+            .session
+            .generate_title(request("private chat text", Some("another/nested/model")))
             .await
             .unwrap_err()
             .code,
-        code::PROTOCOL,
+        code::POLICY_UNAVAILABLE,
     );
-    assert!(!dir.path().join("sessions").exists());
+    assert!(!dir.path().join("sessions/history").exists());
 }
 
 #[tokio::test]

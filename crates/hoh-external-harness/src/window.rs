@@ -52,7 +52,9 @@ use crate::contract::{
     AccessMode, Discovery, HarnessCommand, HarnessCommands, InteractionMode, VersionStatus,
 };
 use crate::redact::{redact, redact_value};
-use crate::{Choices, ExternalHarnesses, ExternalHarnessesService, TitleRequest, TitleWorkspace};
+use crate::{
+    Choices, ExternalHarnesses, ExternalHarnessesService, TitleRequest, TitleWorkspace, code,
+};
 
 /// The file in the engine's profile folder that keeps the window's choices.
 pub const CHOICES_FILE: &str = "external-harness.json";
@@ -83,6 +85,8 @@ const ADD: &str = "hoh/workspace/add";
 const RESOLVE: &str = "hoh/workspace/resolve";
 const FOLDER_CACHE_TTL: Duration = Duration::from_secs(30);
 const TITLE_GENERATE: &str = "hoh/executor/title/generate";
+const TITLE_ROUTE_UNAVAILABLE: &str =
+    "CHAT_TITLE_ROUTE_UNAVAILABLE: The chat's native title route could not be verified.";
 const TITLE_CANCEL: &str = "hoh/executor/title/cancel";
 const RECENT_TITLE_CANCELLATIONS: usize = 256;
 
@@ -590,37 +594,53 @@ impl Window {
                 return Err("The chat is bound to a different harness.".into());
             }
             request.model = Some(route.model);
-            if params.executor == "codex" {
+            if matches!(params.executor.as_str(), "codex" | "pi") {
                 let shared = self
                     .service()
-                    .shared("codex")
-                    .ok_or("The Codex harness is unavailable.")?;
+                    .shared(&params.executor)
+                    .ok_or(TITLE_ROUTE_UNAVAILABLE)?;
                 let native = tokio::time::timeout(Duration::from_secs(12), async {
                     loop {
                         if let Some(native) = shared.running_session(&id) {
-                            return native;
+                            return Ok(native);
+                        }
+                        if agent.status() == AgentStatus::Idle {
+                            return Err(TITLE_ROUTE_UNAVAILABLE);
                         }
                         tokio::time::sleep(Duration::from_millis(100)).await;
                     }
                 })
                 .await
-                .map_err(|_| "The Codex chat's native session is unavailable.")?;
-                let directories = self
-                    .ctx
-                    .get::<WorkingDirectoryKey>()
-                    .ok_or("The chat's directory is unavailable.")?;
-                let (cwd, identity) = directories.verify_for_read(agent.session())?;
-                let profile = self
-                    .ctx
-                    .get::<ProfileContextKey>()
-                    .ok_or("The chat profile is unavailable.")?;
-                request.workspace = Some(TitleWorkspace::new(
-                    PathBuf::from(cwd),
-                    identity,
-                    profile.dir.clone(),
-                ));
-                return Ok(native.generate_title(request).await?);
+                .map_err(|_| TITLE_ROUTE_UNAVAILABLE)??;
+                if params.executor == "codex" {
+                    let directories = self
+                        .ctx
+                        .get::<WorkingDirectoryKey>()
+                        .ok_or(TITLE_ROUTE_UNAVAILABLE)?;
+                    let (cwd, identity) = directories
+                        .verify_for_read(agent.session())
+                        .map_err(|_| TITLE_ROUTE_UNAVAILABLE)?;
+                    let profile = self
+                        .ctx
+                        .get::<ProfileContextKey>()
+                        .ok_or(TITLE_ROUTE_UNAVAILABLE)?;
+                    request.workspace = Some(TitleWorkspace::new(
+                        PathBuf::from(cwd),
+                        identity,
+                        profile.dir.clone(),
+                    ));
+                }
+                return native.generate_title(request).await.map_err(|error| {
+                    if error.code == code::POLICY_UNAVAILABLE {
+                        TITLE_ROUTE_UNAVAILABLE.into()
+                    } else {
+                        Box::new(error) as BoxError
+                    }
+                });
             }
+        }
+        if matches!(params.executor.as_str(), "codex" | "pi") {
+            return Err(TITLE_ROUTE_UNAVAILABLE.into());
         }
         let harness = self
             .service()

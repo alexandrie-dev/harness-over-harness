@@ -8,6 +8,7 @@ import { toastManager } from '~/components/ui/toast';
 
 interface ChatTitles {
   getEnabled(): boolean;
+  getCancellationPending(): boolean;
   setEnabled(enabled: boolean): Promise<void>;
   subscribe(listener: () => void): () => void;
   rename(threadId: string): Promise<string>;
@@ -19,9 +20,11 @@ function chatTitles(): ChatTitles | undefined {
 
 const subscribe = (listener: () => void) => chatTitles()?.subscribe(listener) ?? (() => {});
 const getEnabled = () => chatTitles()?.getEnabled() ?? true;
+const getCancellationPending = () => chatTitles()?.getCancellationPending() ?? false;
 
 export function ChatTitleSetting() {
   const enabled = useSyncExternalStore(subscribe, getEnabled);
+  const cancellationPending = useSyncExternalStore(subscribe, getCancellationPending);
   const russian = useLocale() === 'ru';
   const labelId = useId();
   const descriptionId = useId();
@@ -56,6 +59,14 @@ export function ChatTitleSetting() {
         </div>
         <Switch aria-labelledby={labelId} aria-describedby={descriptionId} checked={enabled} disabled={saving} onCheckedChange={setEnabled} />
       </div>
+      {cancellationPending && !saving && (
+        <div className="mt-2 flex flex-wrap items-center gap-2 text-sm">
+          <span role="status">{russian ? 'Отмена запросов на автоназвания не подтверждена.' : 'Cancellation of automatic title requests is unconfirmed.'}</span>
+          <Button type="button" size="sm" variant="outline" onClick={() => { void setEnabled(false); }}>
+            {russian ? 'Повторить отмену' : 'Retry cancellation'}
+          </Button>
+        </div>
+      )}
     </section>
   );
 }

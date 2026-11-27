@@ -22,7 +22,7 @@ import {
   isAccessMode, KEYBINDINGS_LOCATION, presentProvider, type EnvironmentPlatform, type T3InteractionMode,
 } from './config.ts';
 import { usagePricing, usageSummary, type UsageSummaryInput } from './usage.ts';
-import { explicitTitleFromPrompt, explicitTitlesFromPrompt, shortGeneratedTitle, shortTitleFromPrompt, titleGenerationPrompt, titleSource } from './chat-title.ts';
+import { explicitTitleFromPrompt, explicitTitlesFromPrompt, isAttachmentBootstrapTitle, shortGeneratedTitle, shortTitleFromPrompt, titleGenerationPrompt, titleSource } from './chat-title.ts';
 import type { EngineNotification, EngineQuestion, EngineQuestionAnswer, HohEngine, LocalImageAsset } from './engine.ts';
 import { base64Of, readUploads, searchAnswer, skillsAsCommands, stripAttachedImageReferences, UPLOAD_PATH, UPLOAD_TTL_MS, uploadSlot, workspaceSnapshot, type KeptImage, type UploadSlot } from './composer.ts';
 import { englishError, hostFailure } from './errors.ts';
@@ -367,6 +367,7 @@ export class HohHost {
   private autoTitlesEnabled = true;
   private readonly titleSettingListeners = new Set<() => void>();
   private automaticTitleCancellationId?: string;
+  private automaticTitleCancellation?: Promise<void>;
   private readonly titleRequests = new Map<string, { automatic: boolean; cancellationId: string; result: Promise<string> }>();
   private workspaceRoot: string;
   private workspaceKnown = false;
@@ -550,9 +551,14 @@ export class HohHost {
 
   readonly chatTitles = {
     getEnabled: () => this.autoTitlesEnabled,
+    getCancellationPending: () => !this.autoTitlesEnabled && this.automaticTitleCancellationId !== undefined,
     setEnabled: async (enabled: boolean) => {
-      if (enabled === this.autoTitlesEnabled) return;
+      if (enabled === this.autoTitlesEnabled) {
+        if (!enabled) await this.cancelAutomaticTitleRequests();
+        return;
+      }
       if (!this.storage) throw new Error('Chat settings could not be saved on this device.');
+      if (enabled) await this.cancelAutomaticTitleRequests();
       this.storage.setItem(CHAT_TITLE_SETTINGS_KEY, String(enabled));
       this.autoTitlesEnabled = enabled;
       const cancellation = enabled ? undefined : this.cancelAutomaticTitleRequests();
@@ -1590,7 +1596,8 @@ export class HohHost {
           // The cache is only continuity for the first snapshot. Once this session is visible on
           // disk, let its current list entry and history replace stale presentation metadata.
           const listedTitle = typeof session.title === 'string' ? session.title : '';
-          existing.title = this.titles.get(session.id) ?? (listedTitle || (existing.automaticTitlePending ? existing.title : ''));
+          const preservePending = existing.automaticTitlePending && (!listedTitle || isAttachmentBootstrapTitle(listedTitle));
+          existing.title = this.titles.get(session.id) ?? (preservePending ? existing.title : listedTitle);
           existing.sideChat = this.readSideChat(session.sideChat) ?? existing.sideChat;
           this.applyThreadMetadata(existing);
           existing.updatedAt = Math.max(existing.updatedAt, at);
@@ -3058,10 +3065,16 @@ export class HohHost {
   }
 
   private async cancelAutomaticTitleRequests() {
-    for (const [id, request] of this.titleRequests) if (request.automatic) this.titleRequests.delete(id);
+    if (this.automaticTitleCancellation) return this.automaticTitleCancellation;
     const cancellationId = this.automaticTitleCancellationId;
-    this.automaticTitleCancellationId = undefined;
-    if (cancellationId) return this.cancelExecutorTitle(cancellationId);
+    if (!cancellationId) return;
+    for (const [id, request] of this.titleRequests) if (request.automatic) this.titleRequests.delete(id);
+    const cancellation = this.cancelExecutorTitle(cancellationId).then(() => {
+      this.automaticTitleCancellationId = undefined;
+      if (!this.autoTitlesEnabled) for (const listener of this.titleSettingListeners) listener();
+    }).finally(() => { this.automaticTitleCancellation = undefined; });
+    this.automaticTitleCancellation = cancellation;
+    return cancellation;
   }
 
   private armTitleRegeneration(thread: ThreadModel, requestId?: string): Promise<string> {
@@ -3108,8 +3121,13 @@ export class HohHost {
         sessionId: thread.id,
         prompt: titleGenerationPrompt(prompts, automatic ? undefined : baseline),
         cancellationId,
+      }).catch(error => {
+        if (!automatic && hostFailure(error).code === 'chat-title-route-unavailable') return null;
+        throw error;
       });
-      const generated = shortGeneratedTitle(response?.title, prompts.flatMap(explicitTitlesFromPrompt));
+      const generated = response === null
+        ? shortTitleFromPrompt(latest)
+        : shortGeneratedTitle(response?.title, prompts.flatMap(explicitTitlesFromPrompt));
       if (!generated) throw new Error('The model did not return a valid chat title.');
       if (!current() || (automatic && (!this.autoTitlesEnabled || !this.canApplyAutomaticTitle(thread)))) {
         throw new Error('The title request was superseded.');

@@ -258,6 +258,37 @@ fn is_title_connector(word: &str) -> bool {
     )
 }
 
+fn has_supported_connector_language(word: &str) -> bool {
+    let word = word.to_lowercase();
+    matches!(
+        word.as_str(),
+        "the"
+            | "and"
+            | "with"
+            | "from"
+            | "about"
+            | "before"
+            | "after"
+            | "during"
+            | "very"
+            | "au"
+            | "aux"
+            | "avec"
+            | "chez"
+            | "du"
+            | "pour"
+            | "sans"
+            | "sous"
+            | "или"
+            | "для"
+            | "через"
+            | "после"
+            | "перед"
+            | "между"
+    ) || (word.chars().all(|ch| matches!(ch, 'а'..='я' | 'ё'))
+        && (word.contains("ческих") || word.contains(['ё', 'ы', 'э'])))
+}
+
 fn title_from_response(
     response: &SessionTitleLlmResponse,
     max_words: Option<NonZeroUsize>,
@@ -296,12 +327,9 @@ fn title_from_response(
         {
             return Err("session-title-llm: title output exceeds the short title limit".into());
         }
-        let supported = title.chars().all(|character| {
-            !character.is_alphabetic()
-                || character.is_ascii_alphabetic()
-                || matches!(character, 'А'..='Я' | 'а'..='я' | 'Ё' | 'ё')
-                || "ÀÂÆÇÉÈÊËÎÏÔŒÙÛÜŸàâæçéèêëîïôœùûüÿ".contains(character)
-        });
+        let supported = title
+            .split_whitespace()
+            .any(has_supported_connector_language);
         if supported
             && title
                 .split_whitespace()

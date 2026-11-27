@@ -481,6 +481,10 @@ fn supervise(
                                     && error_code(&error) == Some("CHAT_DELETE_BUSY")
                                 {
                                     crate::errors::CHAT_DELETE_BUSY.into()
+                                } else if p.method == "hoh/executor/title/generate"
+                                    && error_code(&error) == Some("CHAT_TITLE_ROUTE_UNAVAILABLE")
+                                {
+                                    crate::errors::CHAT_TITLE_ROUTE_UNAVAILABLE.into()
                                 } else if error_code(&error) == Some("EXECUTOR_FOLDER_FIXED") {
                                     // A closed list of codes may pass on (no text): the window explains this one.
                                     crate::errors::FOLDER_FIXED.into()

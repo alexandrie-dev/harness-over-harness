@@ -111,6 +111,7 @@ test('an image-only chat keeps its image label across a restart until a text pro
   host.stop();
 
   const restartedEngine = new FakeEngine({ store: engine.store });
+  restartedEngine.store.get(threadId).title = '[User attached one';
   const restarted = connect(restartedEngine, { storage });
   t.after(() => restarted.host.stop());
   assert.equal((await restarted.client.call('orchestration.getThreadProjection', { threadId })).thread.title, 'Attached image');

@@ -1307,6 +1307,26 @@ test('Claude can refine a short local title without replacing a manual rename', 
   named.host.stop();
 });
 
+test('sparkle uses saved history when the native title route is unavailable', async t => {
+  const engine = new FakeEngine();
+  const threadId = 'cold-codex-title';
+  Object.assign(engine.seed(threadId, 'Saved chat', [
+    ['user/message', { id: 'saved', source: { kind: 'user' }, content: [{ type: 'text', text: 'Fix login redirect' }] }],
+  ]), { executor: 'codex', model: 'gpt-6-sol', runtimeMode: 'confirm' });
+  const request = engine.request.bind(engine);
+  engine.request = (method, params) => method === 'hoh/executor/title/generate'
+    ? Promise.reject({ code: 'chat-title-route-unavailable' })
+    : request(method, params);
+  const values = new Map();
+  const storage = { getItem: key => values.get(key) ?? null, setItem: (key, value) => values.set(key, value) };
+  const { host, client } = connect(engine, { storage });
+  t.after(() => { host.stop(); client.close(); });
+  await host.start();
+  assert.equal(await host.chatTitles.rename(threadId), 'Fix login redirect');
+  assert.equal((await client.call('orchestration.getThreadProjection', { threadId })).thread.title, 'Fix login redirect');
+  assert(!engine.requests.some(request => request.method === 'session/prompt'));
+});
+
 test('a Codex draft gets its first short title from a prompt accepted by the engine', async () => {
   const engine = new FakeEngine();
   const request = engine.request.bind(engine);
@@ -1354,6 +1374,7 @@ test('turning off automatic titles persists and explicit naming uses the bound c
     if (method === 'hoh/executor/title/cancel') {
       cancellations.push(params.cancellationId);
       if (cancellations.length === 1) return new Promise(resolve => { acknowledgeCancellation = resolve; });
+      if (cancellations.length === 2) return Promise.reject(new Error('Cancellation queue is full'));
       return Promise.resolve({ cancelled: true });
     }
     if (method !== 'hoh/executor/title/generate') return request(method, params);
@@ -1371,7 +1392,7 @@ test('turning off automatic titles persists and explicit naming uses the bound c
   const settings = host.chatTitles;
   assert.equal(settings.getEnabled(), true);
   const observed = [];
-  const unsubscribe = settings.subscribe(() => observed.push(settings.getEnabled()));
+  const unsubscribe = settings.subscribe(() => observed.push([settings.getEnabled(), settings.getCancellationPending()]));
   await launch('pending-name');
   await launch('queued-name');
   assert.equal(titleRequests.length, 2);
@@ -1390,11 +1411,17 @@ test('turning off automatic titles persists and explicit naming uses the bound c
   assert.notEqual((await projection('pending-name')).thread.title, 'Доступ к кабинету CEO');
   assert.notEqual((await projection('queued-name')).thread.title, 'Доступ к кабинету CEO');
 
+  await launch('cancel-retry');
+  await assert.rejects(settings.setEnabled(false), /Cancellation queue is full/);
+  assert.equal(settings.getCancellationPending(), true);
   await settings.setEnabled(false);
-  assert.deepEqual(observed, [false, true, false]);
+  assert.equal(settings.getCancellationPending(), false);
+  assert.equal(cancellations[1], cancellations[2]);
+  titleRequests.at(-1).resolve({ title: 'Доступ к кабинету CEO' });
+  assert.deepEqual(observed, [[false, true], [false, false], [true, false], [false, true], [false, false]]);
   unsubscribe();
   assert.equal((await launch('explicit-name')).projection.thread.title, text);
-  assert.equal(titleRequests.length, 2);
+  assert.equal(titleRequests.length, 3);
   const reopened = connect(new FakeEngine({ store: engine.store }), { storage });
   t.after(() => { reopened.host.stop(); reopened.client.close(); });
   assert.equal(reopened.host.chatTitles.getEnabled(), false);
@@ -1402,18 +1429,18 @@ test('turning off automatic titles persists and explicit naming uses the bound c
   const renaming = settings.rename('explicit-name');
   const duplicate = settings.rename('explicit-name');
   await tick(5);
-  assert.equal(titleRequests.length, 3);
-  assert.equal(titleRequests[2].params.executor, 'codex');
-  assert.equal(titleRequests[2].params.sessionId, 'explicit-name');
-  assert.notEqual(titleRequests[2].params.cancellationId, cancellations[0]);
-  titleRequests[2].resolve({ title: 'Доступ к кабинету CEO' });
+  assert.equal(titleRequests.length, 4);
+  assert.equal(titleRequests[3].params.executor, 'codex');
+  assert.equal(titleRequests[3].params.sessionId, 'explicit-name');
+  assert.notEqual(titleRequests[3].params.cancellationId, cancellations[0]);
+  titleRequests[3].resolve({ title: 'Доступ к кабинету CEO' });
   assert.deepEqual(await Promise.all([renaming, duplicate]), ['Доступ к кабинету CEO', 'Доступ к кабинету CEO']);
   assert.equal((await projection('explicit-name')).thread.title, 'Доступ к кабинету CEO');
 
   const retry = settings.rename('explicit-name');
   const rejected = assert.rejects(retry, /valid chat title/);
   await tick(5);
-  titleRequests[3].resolve({ title: 'A very long generated title' });
+  titleRequests[4].resolve({ title: 'A very long generated title' });
   await rejected;
   assert.equal((await projection('explicit-name')).thread.title, 'Доступ к кабинету CEO');
 
@@ -1421,10 +1448,12 @@ test('turning off automatic titles persists and explicit naming uses the bound c
     ['named-object', 'Делаю плагин «OpenSearch»', 'Плагин OpenSearch', 'OpenSearch'],
     ['named-dotnet', 'Update project ".NET"', '.NET', '.NET'],
     ['named-cpp', 'Fix module "C++"', 'C++', 'C++'],
+    ['named-article', 'Update project "The Who"', 'The Who', 'The Who'],
     ['title-connectors', 'Добавь уведомления о платежах Stripe', 'Уведомления о платежах Stripe', 'Уведомления о платежах Stripe'],
     ['title-french', 'Le tableau du PDG ne s’ouvre plus', 'Accès au tableau du PDG', 'Accès au tableau du PDG'],
     ['title-french-ascii', 'Configurer le serveur de production', 'Configuration du serveur de production', 'Configuration du serveur de production'],
     ['title-greek', 'Δεν ανοίγει ο πίνακας του διευθυντή', 'Πρόσβαση στον πίνακα του διευθυντή', 'Πρόσβαση στον πίνακα του διευθυντή'],
+    ['title-spanish', 'Arregla el acceso a la oficina del director', 'Acceso a la oficina del director', 'Acceso a la oficina del director'],
   ]) {
     await launch(id, message);
     const rename = settings.rename(id);
