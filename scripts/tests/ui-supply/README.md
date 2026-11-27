@@ -78,4 +78,4 @@
 
 Не проверяется сознательно (P2-3 ревью, решение владельца): содержимое самой политики в DEPS.md. Расширение `licenseExceptions` или `scriptExceptions` правкой DEPS.md гейт принимает; такая правка видна в diff и принимается владельцем. Overrides workspace и lock гейт не сверяет, набор патчей в политике DEPS.md не закреплён (проверяются согласованность workspace, lock и файлов). Всё это решение ведущего: политика DEPS.md и lock под контролем владельца, как и P2-3.
 
-Окружение сборки окна: Node 22.23.1 (`ui/scripts/build-env.allow`, ожидание в environment.py); pdfjs-dist и commander требуют Node не ниже 22. В worktree environment.py всё равно сверяет PATH с каталогом `ui/scripts/tools` текущего корня, а allow-файл называет путь основного дерева, поэтому там он проходит только из `/home/save/Alexandrie/HarnessOverHarness`.
+Тест окружения проверяет PATH для текущего checkout, временный HOME, запрет IP и очистку окружения в точках входа сборки и подготовки.

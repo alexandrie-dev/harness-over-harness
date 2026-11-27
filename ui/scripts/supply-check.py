@@ -81,8 +81,11 @@ def audit_clean(report):
 
 
 def check(args):
-    if not shutil.which('cargo-deny'):
+    cargo_deny = None if args.npm_only else shutil.which('cargo-deny')
+    if not args.npm_only and not cargo_deny:
         print('skipped: cargo-deny not installed', flush=True)
+    require(not args.before_install or args.refresh, 'pre-install gate requires --refresh')
+    require(not args.local or args.refresh, '--local requires --refresh')
     root = args.root.resolve()
     ui = root / 'ui'
     policy_text = (root / 'docs/ts/DEPS.md').read_text()
@@ -96,8 +99,9 @@ def check(args):
                 'frozenLockfile': True, 'offline': True, 'nodeLinker': 'isolated', 'verifyStoreIntegrity': True, 'registry': 'https://registry.npmjs.org/'}
     for key, value in expected.items():
         require(cfg.get(key) == value, f'config: {key} must be {value!r}')
-    require('store-dir=/mnt/toshiba/alexandrie/hoh/pnpm-store' in (ui / '.npmrc').read_text(),
-            'config: missing dedicated store')
+    cache_settings = {'storeDir': '.supply-cache/store', 'cacheDir': '.supply-cache/cache'}
+    for key, value in cache_settings.items():
+        require(cfg.get(key) == value, f'config: {key} must be {value!r}')
     manifest = read_json(ui / 'package.json')
     require(not ({'packageManager', 'devEngines', 'pnpm', 'configDependencies'} & set(manifest)),
             'direct: automatic package manager/runtime downloads forbidden')
@@ -109,7 +113,10 @@ def check(args):
         effective = json.loads(subprocess.check_output(['pnpm', '-C', str(ui), 'config', 'list'], text=True))
         for key, value in expected.items():
             require(effective.get(key) == value, f'config: effective {key} differs')
-        require(effective.get('storeDir') == '/mnt/toshiba/alexandrie/hoh/pnpm-store', 'config: effective store differs')
+        for key, value in cache_settings.items():
+            actual = effective.get(key)
+            require(isinstance(actual, str) and (ui / actual).resolve() == (ui / value).resolve(),
+                    f'config: effective {key} differs')
     direct = manifest.get('dependencies', {}) | manifest.get('devDependencies', {})
     require(direct == policy['direct'], 'direct: package.json differs from DEPS.md pins')
     require(not manifest.get('optionalDependencies'), 'direct: optional dependencies forbidden')
@@ -155,8 +162,10 @@ def check(args):
     cache = ui / '.supply-cache'
     cache.mkdir(exist_ok=True)
     now = dt.datetime.now(dt.timezone.utc)
+    local_evidence = cache / 'npm-lock-metadata.json'
     evidence_path = root / 'docs/ts/npm-lock-metadata.json'
-    evidence = read_json(evidence_path) if evidence_path.exists() else {}
+    cached_evidence = local_evidence if local_evidence.exists() else evidence_path
+    evidence = read_json(cached_evidence) if not args.refresh and cached_evidence.exists() else {}
     if evidence and not args.refresh:
         require(evidence['lockSha256'] == lock_hash, 'metadata: evidence bound to a different lock')
     seen = {}
@@ -196,28 +205,33 @@ def check(args):
             compact.setdefault(name, {'versions': {}, 'time': {}})
             compact[name]['time'][version] = seen[name]['time'][version]
             compact[name]['versions'][version] = {key: release[key] for key in ['license', 'scripts', 'gypfile', 'dist'] if key in release}
-        evidence_path.write_text(json.dumps({'lockSha256': lock_hash, 'registry': expected['registry'], 'checkedAt': now.isoformat(), 'packages': compact}, indent=2) + '\n')
+        evidence_json = json.dumps({'lockSha256': lock_hash, 'registry': expected['registry'],
+                                    'checkedAt': now.isoformat(), 'packages': compact}, indent=2) + '\n'
+        local_evidence.write_text(evidence_json)
+        if not args.local:
+            evidence_path.write_text(evidence_json)
     print(f'passed: integrity, exact pins, 7-day age, scripts, licenses ({len(packages)} lock packages)')
-    # The manifest inside every materialized tarball is checked as well as registry metadata.
-    store = Path(os.path.realpath(ui / 'node_modules/.pnpm'))
-    for directory in sorted(store.iterdir()) if store.is_dir() else []:
-        if directory.name == 'lock.yaml' and directory.is_file():
-            continue
-        require(not directory.is_symlink() and directory.is_dir(), f'installed: unexpected store entry {directory.name}')
-        if directory.name == 'node_modules':  # pnpm's hoisted symlinks: same rules as any node_modules
-            inspect_modules(directory, policy, packages, store)
-            continue
-        found = STORE_ENTRY.fullmatch(directory.name)
-        require(found, f'installed: unexpected store entry {directory.name}')
-        name, version = found[1].replace('+', '/', 1), found[2]
-        require(name + '@' + version in packages, f'installed: not in lock {name}@{version}')
-        modules = directory / 'node_modules'
-        require(not modules.is_symlink() and not (modules / name).is_symlink(), f'installed: node_modules is a symlink in {directory.name}')
-        manifest = modules / name / 'package.json'
-        require(manifest.is_file(), f'installed: missing manifest for {name}@{version}')
-        inspect_installed(manifest, policy, name, version)
-        # Everything else physically present (real neighbours, nested node_modules) is inspected too.
-        inspect_modules(modules, policy, packages, store, modules / name)
+    if not args.before_install:
+        # The manifest inside every materialized tarball is checked as well as registry metadata.
+        store = Path(os.path.realpath(ui / 'node_modules/.pnpm'))
+        for directory in sorted(store.iterdir()) if store.is_dir() else []:
+            if directory.name == 'lock.yaml' and directory.is_file():
+                continue
+            require(not directory.is_symlink() and directory.is_dir(), f'installed: unexpected store entry {directory.name}')
+            if directory.name == 'node_modules':  # pnpm's hoisted symlinks: same rules as any node_modules
+                inspect_modules(directory, policy, packages, store)
+                continue
+            found = STORE_ENTRY.fullmatch(directory.name)
+            require(found, f'installed: unexpected store entry {directory.name}')
+            name, version = found[1].replace('+', '/', 1), found[2]
+            require(name + '@' + version in packages, f'installed: not in lock {name}@{version}')
+            modules = directory / 'node_modules'
+            require(not modules.is_symlink() and not (modules / name).is_symlink(), f'installed: node_modules is a symlink in {directory.name}')
+            manifest = modules / name / 'package.json'
+            require(manifest.is_file(), f'installed: missing manifest for {name}@{version}')
+            inspect_installed(manifest, policy, name, version)
+            # Everything else physically present (real neighbours, nested node_modules) is inspected too.
+            inspect_modules(modules, policy, packages, store, modules / name)
     audit_path = cache / 'audit.json'
     if not audit_path.exists() and (root / 'docs/ts/pnpm-audit.json').exists():
         audit_path = root / 'docs/ts/pnpm-audit.json'
@@ -231,7 +245,8 @@ def check(args):
         (cache / 'audit.raw.json').write_text(json.dumps(report, indent=2))
         audit_path = cache / 'audit.json'
         audit_path.write_text(json.dumps({'lockSha256': lock_hash, 'checkedAt': now.isoformat(), 'report': report}, indent=2))
-        (root / 'docs/ts/pnpm-audit.json').write_text(audit_path.read_text() + '\n')
+        if not args.local:
+            (root / 'docs/ts/pnpm-audit.json').write_text(audit_path.read_text() + '\n')
         audit_clean(report)
         require(result.returncode == 0, 'audit: pnpm audit returned failure')
     record = read_json(audit_path)
@@ -240,10 +255,9 @@ def check(args):
     require(dt.timedelta() <= now - checked <= dt.timedelta(hours=24), 'audit: stale/future report; run --refresh')
     audit_clean(record['report'])
     print('passed: pnpm audit (whole lock, including optional entries; lock-bound report <24h)')
-    if shutil.which('cargo-deny'):
-        # --disable-fetch is deliberate: this task does not authorize GitHub/RustSec network access.
-        env = os.environ | {'CARGO_BUILD_JOBS': '2', 'CARGO_TARGET_DIR': '/mnt/toshiba/alexandrie/hoh/target-ui2',
-                            'CARGO_HOME': '/mnt/toshiba/alexandrie/hoh/cargo-home-ui2', 'CARGO_NET_OFFLINE': 'true'}
+    if cargo_deny:
+        # Keep the Rust check offline and use Cargo's configured local cache.
+        env = os.environ | {'CARGO_NET_OFFLINE': 'true'}
         subprocess.run(['cargo', 'deny', '--manifest-path', str(root / 'apps/hoh-desktop/Cargo.toml'),
                         '--locked', '--offline', 'check', '--disable-fetch'], env=env, check=True, cwd=root)
 
@@ -343,6 +357,10 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--config-only', action='store_true', help='preflight before the first resolve, without network')
     parser.add_argument('--refresh', action='store_true', help='npm registry metadata + pnpm audit; no other network')
+    parser.add_argument('--before-install', action='store_true',
+                        help='audit the lock before pnpm updates the installed tree')
+    parser.add_argument('--npm-only', action='store_true', help='skip the optional Rust cargo-deny check')
+    parser.add_argument('--local', action='store_true', help='save refreshed evidence only to the local cache')
     parser.add_argument('--root', type=Path, default=ROOT, help='alternate complete input tree for planted tests')
     try:
         check(parser.parse_args())

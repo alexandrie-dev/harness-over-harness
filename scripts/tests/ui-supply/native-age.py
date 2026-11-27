@@ -13,6 +13,9 @@ root = Path(__file__).resolve().parents[3]
 with tempfile.TemporaryDirectory(prefix='hoh-native-age-') as tmp:
     fixture = Path(tmp)
     cfg = yaml.safe_load((root/'ui/pnpm-workspace.yaml').read_text())
+    for key in ('storeDir', 'cacheDir'):
+        cfg[key] = str((root/'ui'/cfg[key]).resolve())
+    cfg.pop('patchedDependencies', None)  # The isolated React fixture applies no UI patches.
     cfg.update(yaml.safe_load((Path(__file__).parent/'native-age.yaml').read_text()))
     (fixture/'pnpm-workspace.yaml').write_text(yaml.safe_dump(cfg))
     (fixture/'package.json').write_text(json.dumps({'private': True, 'dependencies': {'react': '19.3.1'}}))

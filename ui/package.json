@@ -7,7 +7,8 @@
     "build": "/bin/bash -p scripts/build.sh",
     "snapshot": "python3 scripts/offline.py node scripts/snapshot.mjs",
     "supply": "../scripts/ui-supply-check.sh",
-    "build:offline": "/usr/bin/env -i /usr/bin/python3 -I scripts/offline.py /bin/sh -c 'pnpm install --frozen-lockfile --offline && ../scripts/ui-supply-check.sh && ./node_modules/.bin/tsc --noEmit && pnpm run test:unit && ./node_modules/.bin/vite build && node scripts/check-dist.mjs'",
+    "build:offline": "/bin/bash -p scripts/build.sh",
+    "check": "/bin/bash -p scripts/build.sh --check",
     "test:unit": "TMPDIR=${TMPDIR:-${XDG_RUNTIME_DIR:-/tmp}} node --test --test-concurrency=2 tests/hoh-host/*.test.mjs tests/*.test.mjs tests/chat/*.test.mjs tests/screens-a/core.test.mjs tests/screens-a/folder-trust.test.mjs",
     "test:chat:core": "/usr/bin/env -i /usr/bin/python3 -I scripts/offline.py node tests/chat/run.mjs",
     "test:chat": "/usr/bin/env -i /usr/bin/python3 -I scripts/offline.py node tests/chat/behavior.mjs"
@@ -96,21 +97,19 @@
     "@tailwindcss/vite": "4.3.5",
     "typescript": "6.0.3",
     "playwright-core": "1.65.0",
-    "@tauri-apps/cli": "2.12.4",
     "@types/react": "19.3.0",
     "@types/react-dom": "19.3.0",
     "@types/node": "24.19.2",
     "@rolldown/binding-linux-x64-gnu": "1.2.19",
     "@tailwindcss/oxide-linux-x64-gnu": "4.3.5",
     "lightningcss-linux-x64-gnu": "1.33.0",
-    "@tauri-apps/cli-linux-x64-gnu": "2.12.4",
     "oxc-transform-react": "0.156.0",
     "@oxc-transform-react/binding-linux-x64-gnu": "0.156.0",
     "@types/culori": "4.0.1",
     "@types/use-sync-external-store": "0.0.6"
   },
   "engines": {
-    "node": ">=20.19.0",
+    "node": ">=22.13.0",
     "pnpm": "12.21.0"
   }
 }

@@ -15,10 +15,13 @@ with tempfile.TemporaryDirectory(prefix='hoh-env-test-') as directory:
     scripts.mkdir(parents=True)
     for filename in ('offline.py', 'build-env.allow'):
         shutil.copyfile(ROOT / 'ui/scripts' / filename, scripts / filename)
-    # Substitute only the final build command in a copy of the real shell launcher.
-    source = (ROOT / 'ui/scripts/build.sh').read_text()
-    assert source.count('pnpm run build:offline') == 1
-    (scripts / 'build.sh').write_text(source.replace('pnpm run build:offline', '/usr/bin/env'))
+    # Replace the final child with an environment printer, leaving the real
+    # shell and runner entrypoints in place.
+    for filename in ('build.sh', 'acquire.sh'):
+        launcher = (ROOT / 'ui/scripts' / filename).read_text()
+        boundary, separator, _ = launcher.partition("/bin/bash -peuc '")
+        assert separator
+        (scripts / filename).write_text(boundary + '/usr/bin/env\n')
     bad_shell = root / 'bad-shell.sh'
     bad_shell.write_text('echo injected > "' + str(root / 'injected') + '"\n')
     poisoned = os.environ | {
@@ -31,7 +34,7 @@ with tempfile.TemporaryDirectory(prefix='hoh-env-test-') as directory:
     env = dict(line.split('=', 1) for line in printed.splitlines())
     assert set(env) == ALLOWED, env
     assert env['LANG'] == env['LC_ALL'] == 'C.UTF-8'
-    assert env['PATH'].startswith(str(ROOT / 'ui/scripts/tools') + ':/home/save/.nvm/versions/node/v22.23.1/bin:')
+    assert env['PATH'] == f'{root}/ui/.supply-cache/bin:/usr/local/bin:/usr/bin:/bin'
     assert env['HOME'].startswith('/tmp/hoh-ui-build-') and not Path(env['HOME']).exists()
     assert env['XDG_RUNTIME_DIR'] == env['HOME'] + '/runtime'
     assert not (root / 'injected').exists()
@@ -57,20 +60,14 @@ print(json.dumps(dict(os.environ)))'''
     tauri = json.loads((ROOT / 'apps/hoh-desktop/tauri.conf.json').read_text())
     desktop = root / 'apps/hoh-desktop'
     desktop.mkdir(parents=True)
-    for command, cwd in [(package['scripts']['build'], root / 'ui'),
-                         (tauri['build']['beforeBuildCommand'], desktop)]:
+    for command, cwd in [(package['scripts'][key], root / 'ui')
+                         for key in ('build', 'build:offline', 'check')] + [
+                            (tauri['build']['beforeBuildCommand'], desktop),
+                            ('/bin/bash -p scripts/acquire.sh', root / 'ui')]:
         printed = subprocess.check_output(['/bin/sh', '-c', command], cwd=cwd, env=poisoned, text=True)
         entry_env = dict(line.split('=', 1) for line in printed.splitlines())
-        assert set(entry_env) == ALLOWED, entry_env
+        assert set(entry_env) == ALLOWED and entry_env['PATH'] == env['PATH'], entry_env
         assert not (root / 'injected').exists()
-    raw_entry = package['scripts']['build:offline']
-    prefix, payload, suffix = raw_entry.split("'")
-    assert prefix == '/usr/bin/env -i /usr/bin/python3 -I scripts/offline.py /bin/sh -c ' and not suffix
-    printed = subprocess.check_output(['/bin/sh', '-c', prefix + "'/usr/bin/env'"],
-                                      cwd=root / 'ui', env=poisoned, text=True)
-    entry_env = dict(line.split('=', 1) for line in printed.splitlines())
-    assert ALLOWED <= set(entry_env) <= ALLOWED | {'PWD'}, entry_env
-    assert entry_env.get('PWD', str(root / 'ui')) == str(root / 'ui')
     # Preserve the existing native probe's fixed Mesa settings, without running it
     # or forwarding the caller's environment. The extra argument selects its profile.
     printed = subprocess.check_output(['/usr/bin/python3', '-I', str(ROOT / 'ui/scripts/offline.py'),
