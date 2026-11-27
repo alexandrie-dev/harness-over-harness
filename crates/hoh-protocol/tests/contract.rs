@@ -137,6 +137,7 @@ fn schemas_and_generated_types_are_current() {
         "export type Shutdown",
         "approval/request",
         "user-question/ask",
+        SECRETARY_PROPOSE_METHOD,
     ] {
         assert!(
             !window.contains(forbidden),
@@ -145,6 +146,7 @@ fn schemas_and_generated_types_are_current() {
     }
     let native = fs::read_to_string(root().join("protocol/core.ts")).unwrap();
     assert!(native.contains("HostApprovalRequest") && native.contains("approvalKey"));
+    assert!(native.contains(SECRETARY_PROPOSE_METHOD));
     let schema_dir = root().join("protocol/schema");
     let expected = schemas();
     let actual: BTreeSet<_> = fs::read_dir(&schema_dir)

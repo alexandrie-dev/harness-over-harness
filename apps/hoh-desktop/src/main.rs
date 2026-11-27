@@ -34,6 +34,7 @@ fn main() {
             hoh_desktop::native::confirm_external_image,
             hoh_desktop::native::preview_html,
             hoh_desktop::external_ui::list_external_ui_plugins,
+            hoh_desktop::external_ui::install_external_ui_plugin,
             hoh_desktop::external_ui::open_external_ui_plugin,
             hoh_desktop::external_ui::layout_external_ui_workspace,
             hoh_desktop::external_ui::update_external_ui_panel,

@@ -10,6 +10,7 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+futures-util.workspace = true
 hoh-credentials = { path = "../hoh-credentials" }
 hoh-error = { path = "../hoh-error" }
 hoh-kernel = { path = "../hoh-kernel" }
@@ -24,5 +25,4 @@ serde_json.workspace = true
 tokio.workspace = true
 
 [dev-dependencies]
-futures-util.workspace = true
 tokio = { workspace = true, features = ["net", "test-util"] }

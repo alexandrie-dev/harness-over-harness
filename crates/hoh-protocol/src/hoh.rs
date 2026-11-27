@@ -359,6 +359,59 @@ object!(ModelProbeResult {
     tool_calls: bool,
     models: Vec<String>
 });
+
+pub const SECRETARY_PROPOSE_METHOD: &str = "hoh/model/secretary/propose";
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SecretaryProposeParams {
+    #[serde(deserialize_with = "secretary_message")]
+    #[schemars(length(min = 1, max = 4096))]
+    pub message: String,
+    #[serde(deserialize_with = "secretary_instructions")]
+    #[schemars(length(max = 12288))]
+    pub instructions: String,
+    pub context: JsonObject,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SecretaryProposeResult {
+    #[serde(deserialize_with = "secretary_text")]
+    #[schemars(length(min = 1, max = 49152))]
+    pub text: String,
+}
+
+fn secretary_message<'de, D: serde::Deserializer<'de>>(d: D) -> Result<String, D::Error> {
+    let message = String::deserialize(d)?;
+    if message.trim().is_empty() || message.len() > 4 * 1024 {
+        return Err(serde::de::Error::custom(
+            "secretary message must contain 1–4096 bytes",
+        ));
+    }
+    Ok(message)
+}
+
+fn secretary_instructions<'de, D: serde::Deserializer<'de>>(d: D) -> Result<String, D::Error> {
+    let instructions = String::deserialize(d)?;
+    if instructions.len() > 12 * 1024 {
+        return Err(serde::de::Error::custom(
+            "secretary instructions exceed 12 KiB",
+        ));
+    }
+    Ok(instructions)
+}
+
+fn secretary_text<'de, D: serde::Deserializer<'de>>(d: D) -> Result<String, D::Error> {
+    let text = String::deserialize(d)?;
+    if text.trim().is_empty() || text.len() > 48 * 1024 {
+        return Err(serde::de::Error::custom(
+            "secretary response must contain 1–49152 bytes",
+        ));
+    }
+    Ok(text)
+}
+
 object!(ModelSettings {
     base_url: String,
     model: String

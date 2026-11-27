@@ -2,6 +2,10 @@
 use serde::{Deserialize, Serialize};
 use tauri::{Manager, WebviewWindow, ipc::JavaScriptChannelId};
 
+#[cfg(target_os = "linux")]
+#[path = "external_ui_secretary.rs"]
+mod secretary;
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct PagePlugin {
@@ -68,6 +72,13 @@ pub struct Catalog {
     directory: String,
     packages: Vec<PagePlugin>,
     rejected: Vec<Rejection>,
+    prepared: Option<PagePlugin>,
+}
+
+#[derive(Serialize)]
+pub struct InstalledPlugin {
+    package: PagePlugin,
+    catalog: Catalog,
 }
 
 #[derive(Serialize)]
@@ -93,12 +104,48 @@ pub async fn list_external_ui_plugins(window: WebviewWindow) -> Result<Catalog, 
             .path()
             .app_data_dir()
             .map_err(|e| e.to_string())?;
-        tauri::async_runtime::spawn_blocking(move || linux::catalog(&folder))
+        tauri::async_runtime::spawn_blocking(move || linux::catalog_with_prepared(&folder))
             .await
             .map_err(|_| "The plugin catalog could not be read.")?
     }
     #[cfg(not(target_os = "linux"))]
     Err("External UI plugins require the isolated Linux WebKit view.".into())
+}
+
+#[tauri::command]
+pub async fn install_external_ui_plugin(
+    window: WebviewWindow,
+    prepared: Option<PagePlugin>,
+) -> Result<Option<InstalledPlugin>, String> {
+    ensure_main(&window)?;
+    #[cfg(target_os = "linux")]
+    {
+        let profile = window
+            .app_handle()
+            .path()
+            .app_data_dir()
+            .map_err(|error| error.to_string())?;
+        let source = if prepared.is_some() {
+            linux::prepared_path().ok_or("The prepared plugin folder is unavailable.")?
+        } else {
+            let Some(folder) = crate::native::pick_folder(window).await? else {
+                return Ok(None);
+            };
+            std::path::PathBuf::from(folder)
+        };
+        tauri::async_runtime::spawn_blocking(move || {
+            let package = linux::install(&profile, &source, prepared.as_ref())?;
+            let catalog = linux::catalog_with_prepared(&profile)?;
+            Ok(Some(InstalledPlugin { package, catalog }))
+        })
+        .await
+        .map_err(|_| "The plugin installation was interrupted.")?
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = prepared;
+        Err("External UI plugins require the isolated Linux WebKit view.".into())
+    }
 }
 
 #[tauri::command]
@@ -123,6 +170,9 @@ pub async fn open_external_ui_plugin(
         let snapshot = tauri::async_runtime::spawn_blocking(move || linux::open(&folder, &package))
             .await
             .map_err(|_| "The plugin package could not be read.")??;
+        let engine = app
+            .try_state::<crate::native::Host>()
+            .map(|host| host.engine.clone());
         let (send, receive) = std::sync::mpsc::channel();
         app.run_on_main_thread(move || {
             let result = match panel_id.zip(on_event) {
@@ -133,7 +183,7 @@ pub async fn open_external_ui_plugin(
                 None if snapshot.is_workspace_page() => window
                     .default_vbox()
                     .map_err(|_| "The main HoH window is unavailable.".into())
-                    .and_then(|parent| linux::open_workspace(&parent, snapshot)),
+                    .and_then(|parent| linux::open_workspace(&parent, snapshot, engine)),
                 None => window
                     .gtk_window()
                     .map_err(|_| "The main HoH window is unavailable.".into())
@@ -228,7 +278,7 @@ mod linux {
             fd::{AsRawFd, FromRawFd},
             unix::{
                 ffi::OsStrExt,
-                fs::{MetadataExt, OpenOptionsExt},
+                fs::{DirBuilderExt, MetadataExt, OpenOptionsExt},
             },
         },
         path::{Path, PathBuf},
@@ -303,6 +353,7 @@ mod linux {
     pub(super) struct Snapshot {
         package: PagePlugin,
         script: String,
+        secretary: bool,
     }
 
     impl Snapshot {
@@ -394,9 +445,17 @@ mod linux {
         }
         let dir = open_beneath(root, Path::new(id), libc::O_RDONLY | libc::O_DIRECTORY)
             .map_err(|_| "The plugin folder could not be opened safely.")?;
-        let manifest_bytes = read_file(&dir, Path::new("hoh-package.json"), MANIFEST_MAX)?;
-        let manifest: Manifest = serde_json::from_slice(&manifest_bytes)
-            .map_err(|error| format!("Unsupported plugin manifest: {error}"))?;
+        read_package(&dir, id)
+    }
+
+    fn parse_manifest(bytes: &[u8]) -> Result<Manifest, String> {
+        serde_json::from_slice(bytes)
+            .map_err(|error| format!("Unsupported plugin manifest: {error}"))
+    }
+
+    fn read_package(dir: &File, id: &str) -> Result<Snapshot, String> {
+        let manifest_bytes = read_file(dir, Path::new("hoh-package.json"), MANIFEST_MAX)?;
+        let manifest = parse_manifest(&manifest_bytes)?;
         if manifest.format_version != 2
             || manifest.id != id
             || manifest.version.len() > 64
@@ -422,7 +481,7 @@ mod linux {
                 && valid_label(&panel.title)
                 && valid_label(&panel.sidebar_label) =>
             {
-                let script = read_script(&dir, ui, &digest)?;
+                let script = read_script(dir, ui, &digest)?;
                 Ok(Snapshot {
                     package: PagePlugin {
                         id: id.to_owned(),
@@ -436,6 +495,7 @@ mod linux {
                         workspace_label: None,
                     },
                     script: format!("{script}\n{}", include_str!("external_ui_panel.js")),
+                    secretary: false,
                 })
             }
             (
@@ -445,8 +505,24 @@ mod linux {
                 },
                 Some(ui),
                 Some(digest),
-            ) if protocols == [1] && permissions == &["page"] => {
-                read_page(&dir, id, manifest.version, page, ui, digest)
+            ) if (protocols == [1] && permissions == &["page"])
+                || (protocols == [4]
+                    && page.sidebar_label.is_some()
+                    && permissions.len() == 2
+                    && ["page", "secretary"]
+                        .iter()
+                        .all(|permission| permissions.iter().any(|p| p == permission))) =>
+            {
+                let secretary_manifest = (protocols == [4]).then_some(manifest_bytes.as_slice());
+                read_page(
+                    dir,
+                    id,
+                    manifest.version,
+                    page,
+                    ui,
+                    digest,
+                    secretary_manifest,
+                )
             }
             _ => Err("This package does not match a supported external UI contract.".into()),
         }
@@ -468,6 +544,7 @@ mod linux {
         page: Page,
         ui: Ui,
         expected_digest: String,
+        secretary_manifest: Option<&[u8]>,
     ) -> Result<Snapshot, String> {
         if page.id != "main"
             || page.handler != "mount"
@@ -483,33 +560,52 @@ mod linux {
             return Err("This package does not match the supported UI-only page contract.".into());
         }
         let source = read_script(dir, ui, &expected_digest)?;
+        let (digest, mount) = if let Some(manifest) = secretary_manifest {
+            (
+                format!(
+                    "sha256:{}",
+                    hoh_protocol::approval::hex(&Sha256::digest(manifest))
+                ),
+                include_str!("external_ui_secretary.js"),
+            )
+        } else {
+            (
+                expected_digest,
+                ";mount(document.getElementById('hoh-plugin-root'));\n",
+            )
+        };
         Ok(Snapshot {
             package: PagePlugin {
                 id: id.to_owned(),
                 name: page.name,
                 version,
-                digest: expected_digest,
+                digest,
                 chat_panel: None,
                 workspace_label: page.sidebar_label,
             },
-            script: format!("{source}\n;mount(document.getElementById('hoh-plugin-root'));\n"),
+            script: format!("{source}\n{mount}"),
+            secretary: secretary_manifest.is_some(),
         })
     }
 
-    fn read_script(dir: &File, ui: Ui, expected_digest: &str) -> Result<String, String> {
-        let entry = Path::new(&ui.entry);
-        if !ui.entry.split('/').all(|part| {
+    fn script_path(entry: &str) -> Result<&Path, String> {
+        let path = Path::new(entry);
+        if !entry.split('/').all(|part| {
             !part.is_empty()
                 && part != "."
                 && part != ".."
                 && part
                     .bytes()
                     .all(|byte| byte.is_ascii_alphanumeric() || b"-_.".contains(&byte))
-        }) || entry.extension().and_then(|ext| ext.to_str()) != Some("js")
+        }) || path.extension().and_then(|ext| ext.to_str()) != Some("js")
         {
             return Err("The UI entry must be a package-relative .js file.".into());
         }
-        let bytes = read_file(dir, entry, ENTRY_MAX)?;
+        Ok(path)
+    }
+
+    fn read_script(dir: &File, ui: Ui, expected_digest: &str) -> Result<String, String> {
+        let bytes = read_file(dir, script_path(&ui.entry)?, ENTRY_MAX)?;
         let digest = format!(
             "sha256:{}",
             hoh_protocol::approval::hex(&Sha256::digest(&bytes))
@@ -537,25 +633,15 @@ mod linux {
             directory: path.to_string_lossy().into_owned(),
             packages: Vec::new(),
             rejected: Vec::new(),
+            prepared: None,
         };
         let Some(directory) = directory else {
             return Ok(catalog);
         };
-        let entries = fs::read_dir(format!("/proc/self/fd/{}", directory.as_raw_fd()))
-            .map_err(|_| "The external_plugins directory could not be listed.")?;
-        for (index, entry) in entries.enumerate() {
-            if index == MAX_PACKAGES {
-                return Err(format!(
-                    "The external_plugins directory is limited to {MAX_PACKAGES} entries."
-                ));
-            }
-            let entry = entry.map_err(|_| "A plugin folder could not be listed.")?;
+        for entry in catalog_entries(&directory)? {
             let Ok(id) = entry.file_name().into_string() else {
                 continue;
             };
-            if id.starts_with('.') {
-                continue;
-            }
             match read(&directory, &id) {
                 Ok(snapshot) => catalog.packages.push(snapshot.package),
                 Err(reason) => catalog.rejected.push(Rejection { id, reason }),
@@ -564,6 +650,166 @@ mod linux {
         catalog.packages.sort_by(|a, b| a.id.cmp(&b.id));
         catalog.rejected.sort_by(|a, b| a.id.cmp(&b.id));
         Ok(catalog)
+    }
+
+    fn catalog_entries(directory: &File) -> Result<Vec<fs::DirEntry>, String> {
+        let entries = fs::read_dir(descriptor_path(directory))
+            .map_err(|_| "The external_plugins directory could not be listed.")?;
+        let mut visible = Vec::new();
+        for entry in entries {
+            let entry = entry.map_err(|_| "A plugin folder could not be listed.")?;
+            if entry.file_name().as_bytes().starts_with(b".") {
+                continue;
+            }
+            if visible.len() == MAX_PACKAGES {
+                return Err(format!(
+                    "The external_plugins directory is limited to {MAX_PACKAGES} entries."
+                ));
+            }
+            visible.push(entry);
+        }
+        Ok(visible)
+    }
+
+    fn descriptor_path(directory: &File) -> PathBuf {
+        PathBuf::from(format!("/proc/self/fd/{}", directory.as_raw_fd()))
+    }
+
+    pub(super) fn prepared_path() -> Option<PathBuf> {
+        std::env::var_os("HOH_PLUGIN_PACKAGE")
+            .map(PathBuf::from)
+            .filter(|path| path.is_absolute())
+    }
+
+    fn source_package(path: &Path) -> Result<(&str, File), String> {
+        let id = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .filter(|id| valid_id(id))
+            .ok_or("Use a lowercase alphanumeric folder ID, with optional hyphens.")?;
+        let source = OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW)
+            .open(path)
+            .map_err(|_| "The plugin folder could not be opened safely.")?;
+        Ok((id, source))
+    }
+
+    pub(super) fn catalog_with_prepared(profile: &Path) -> Result<Catalog, String> {
+        let mut catalog = catalog(profile)?;
+        if let Some(path) = prepared_path()
+            && let Ok((id, source)) = source_package(&path)
+            && !catalog.packages.iter().any(|plugin| plugin.id == id)
+        {
+            catalog.prepared = read_package(&source, id)
+                .ok()
+                .map(|snapshot| snapshot.package);
+        }
+        Ok(catalog)
+    }
+
+    pub(super) fn install(
+        profile: &Path,
+        source: &Path,
+        expected: Option<&PagePlugin>,
+    ) -> Result<PagePlugin, String> {
+        let (id, source) = source_package(source)?;
+        let manifest_bytes = read_file(&source, Path::new("hoh-package.json"), MANIFEST_MAX)?;
+        let manifest = parse_manifest(&manifest_bytes)?;
+        let entry = manifest
+            .ui
+            .as_ref()
+            .map(|ui| {
+                let path = script_path(&ui.entry)?;
+                Ok::<_, String>((path, read_file(&source, path, ENTRY_MAX)?))
+            })
+            .transpose()?;
+
+        let (path, installed) = folder(profile)?;
+        let installed = match installed {
+            Some(installed) => installed,
+            None => {
+                match fs::DirBuilder::new().mode(0o700).create(path) {
+                    Ok(()) => {}
+                    Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+                    Err(error) => {
+                        return Err(format!("Could not create the plugin directory: {error}"));
+                    }
+                }
+                folder(profile)?
+                    .1
+                    .ok_or("The plugin directory is missing.")?
+            }
+        };
+        installed
+            .lock()
+            .map_err(|error| format!("Could not lock the plugin directory: {error}"))?;
+        let root = descriptor_path(&installed);
+        let mut random = [0; 16];
+        File::open("/dev/urandom")
+            .and_then(|mut file| file.read_exact(&mut random))
+            .map_err(|error| format!("Could not prepare a plugin snapshot: {error}"))?;
+        let staging_name = format!(".install-{}", hoh_protocol::approval::hex(&random));
+        let staging = root.join(&staging_name);
+        fs::DirBuilder::new()
+            .mode(0o700)
+            .create(&staging)
+            .map_err(|error| format!("Could not stage the plugin: {error}"))?;
+        let result = (|| {
+            fs::write(staging.join("hoh-package.json"), manifest_bytes)
+                .map_err(|error| format!("Could not write the plugin manifest: {error}"))?;
+            if let Some((path, bytes)) = entry {
+                let entry = staging.join(path);
+                fs::create_dir_all(entry.parent().expect("entry inside staging"))
+                    .and_then(|()| fs::write(entry, bytes))
+                    .map_err(|error| format!("Could not write the plugin UI: {error}"))?;
+            }
+            let directory = open_beneath(
+                &installed,
+                Path::new(&staging_name),
+                libc::O_RDONLY | libc::O_DIRECTORY,
+            )
+            .map_err(|_| "The staged plugin folder could not be opened safely.")?;
+            let package = read_package(&directory, id)?.package;
+            if expected.is_some_and(|expected| *expected != package) {
+                return Err("The prepared plugin changed. Refresh Plugins and try again.".into());
+            }
+            let entries = catalog_entries(&installed)?;
+            if entries.iter().any(|entry| entry.file_name() == id) {
+                if read(&installed, id).is_ok_and(|existing| existing.package == package) {
+                    return Ok(package);
+                }
+                return Err(format!(
+                    "A different package is already installed with ID {id}."
+                ));
+            }
+            if entries.len() == MAX_PACKAGES {
+                return Err(format!(
+                    "The plugin catalog is full ({MAX_PACKAGES} packages)."
+                ));
+            }
+            let from = CString::new(staging_name).expect("generated staging name");
+            let to = CString::new(id).expect("validated package ID");
+            // SAFETY: both C strings and the shared directory descriptor outlive the call.
+            let status = unsafe {
+                libc::renameat2(
+                    installed.as_raw_fd(),
+                    from.as_ptr(),
+                    installed.as_raw_fd(),
+                    to.as_ptr(),
+                    libc::RENAME_NOREPLACE,
+                )
+            };
+            if status != 0 {
+                let error = std::io::Error::last_os_error();
+                return Err(format!("Could not install the plugin: {error}"));
+            }
+            Ok(package)
+        })();
+        if staging.exists() {
+            let _ = fs::remove_dir_all(staging);
+        }
+        result
     }
 
     pub(super) fn open(profile: &Path, expected: &PagePlugin) -> Result<Snapshot, String> {
@@ -633,7 +879,11 @@ mod linux {
         }
     }
 
-    pub(super) fn open_workspace(parent: &gtk::Box, snapshot: Snapshot) -> Result<(), String> {
+    pub(super) fn open_workspace(
+        parent: &gtk::Box,
+        snapshot: Snapshot,
+        engine: Option<std::sync::Arc<crate::engine::Engine>>,
+    ) -> Result<(), String> {
         use gtk::prelude::*;
         use webkit2gtk::WebViewExt;
         WORKSPACE.with_borrow_mut(|workspace| {
@@ -648,7 +898,12 @@ mod linux {
             {
                 return Ok(());
             }
-            let (view, url) = isolated_view(snapshot.script, None, true)?;
+            let secretary_engine = if snapshot.secretary {
+                Some(engine.ok_or("The HoH model bridge is unavailable.")?)
+            } else {
+                None
+            };
+            let (view, url) = isolated_view(snapshot.script, None, true, secretary_engine)?;
             if let Some((_, previous)) = workspace.page.take() {
                 detach_workspace(&workspace.overlay, &previous);
             }
@@ -658,6 +913,15 @@ mod linux {
             view.load_uri(&url);
             workspace.page = Some((snapshot.package, view));
             Ok(())
+        })
+    }
+
+    pub(super) fn owns_workspace_view(view: &webkit2gtk::WebView) -> bool {
+        WORKSPACE.with_borrow(|workspace| {
+            workspace
+                .as_ref()
+                .and_then(|workspace| workspace.page.as_ref())
+                .is_some_and(|(_, active)| active == view)
         })
     }
 
@@ -750,7 +1014,7 @@ mod linux {
             revision: Cell::new(0),
             activation: Cell::new(None),
         });
-        let (view, url) = isolated_view(snapshot.script, Some(Rc::clone(&bridge)), false)?;
+        let (view, url) = isolated_view(snapshot.script, Some(Rc::clone(&bridge)), false, None)?;
         close_panel(parent);
         let panel = gtk::Box::new(gtk::Orientation::Vertical, 0);
         panel.set_width_request((parent.allocated_width() / 3).clamp(180, 380));
@@ -804,6 +1068,7 @@ mod linux {
         script: String,
         panel: Option<Rc<PanelBridge>>,
         workspace: bool,
+        secretary_engine: Option<std::sync::Arc<crate::engine::Engine>>,
     ) -> Result<(webkit2gtk::WebView, String), String> {
         use gtk::{
             gio::MemoryInputStream,
@@ -816,8 +1081,8 @@ mod linux {
             NavigationPolicyDecisionExt, NetworkProxyMode, NetworkProxySettings,
             PermissionRequestExt, PolicyDecisionExt, PolicyDecisionType, SecurityManagerExt,
             SettingsExt, URIRequestExt, URISchemeRequestExt, URISchemeResponse,
-            URISchemeResponseExt, WebContext, WebContextExt, WebView, WebViewExt,
-            WebsiteDataManagerExt,
+            URISchemeResponseExt, UserContentManager, UserContentManagerExt, WebContext,
+            WebContextExt, WebView, WebViewExt, WebsiteDataManagerExt,
         };
 
         let mut random = [0; 24];
@@ -870,12 +1135,13 @@ mod linux {
         data.set_network_proxy_settings(NetworkProxyMode::Custom, Some(&mut network));
         context.connect_download_started(|_, download| download.cancel());
 
-        let mut builder = WebView::builder().web_context(&context);
+        let manager = UserContentManager::new();
+        let builder = WebView::builder()
+            .web_context(&context)
+            .user_content_manager(&manager);
         if let Some(bridge) = &panel {
             use javascriptcore::ValueExt;
-            use webkit2gtk::{UserContentManager, UserContentManagerExt};
 
-            let manager = UserContentManager::new();
             let bridge = Rc::clone(bridge);
             manager.connect_script_message_received(Some("hohOpenChat"), move |_, result| {
                 let Some(value) = result.js_value().filter(|value| value.is_string()) else {
@@ -900,9 +1166,11 @@ mod linux {
             if !manager.register_script_message_handler("hohOpenChat") {
                 return Err("The plugin navigation bridge could not be registered.".into());
             }
-            builder = builder.user_content_manager(&manager);
         }
         let view = builder.build();
+        if let Some(engine) = secretary_engine {
+            secretary::attach(&view, &manager, engine)?;
+        }
         let settings =
             WebViewExt::settings(&view).ok_or("Plugin view restrictions are unavailable.")?;
         settings.set_enable_developer_extras(false);
@@ -1013,7 +1281,7 @@ mod linux {
     pub(super) fn show(parent: &gtk::ApplicationWindow, snapshot: Snapshot) -> Result<(), String> {
         use gtk::prelude::*;
         use webkit2gtk::WebViewExt;
-        let (view, url) = isolated_view(snapshot.script, None, false)?;
+        let (view, url) = isolated_view(snapshot.script, None, false, None)?;
         let window = gtk::Window::new(gtk::WindowType::Toplevel);
         let title = format!(
             "HoH — Plugin {} ({})",
@@ -1060,6 +1328,74 @@ mod linux {
         }
 
         #[test]
+        fn installs_a_validated_snapshot_without_replacing_an_existing_package() {
+            let profile = Profile::new();
+            let author = Profile::new();
+            let source = author.0.join("hello-workspace");
+            fs::create_dir(&source).unwrap();
+            let manifest = include_str!("../../../docs/examples/hello-workspace/hoh-package.json");
+            let script = include_bytes!("../../../docs/examples/hello-workspace/ui.js");
+            fs::write(source.join("hoh-package.json"), manifest).unwrap();
+            fs::write(source.join("ui.js"), b"bad digest").unwrap();
+            assert!(install(&profile.0, &source, None).is_err());
+            assert!(catalog(&profile.0).unwrap().rejected.is_empty());
+
+            fs::write(source.join("ui.js"), script).unwrap();
+            let (_, source_dir) = source_package(&source).unwrap();
+            let expected = read_package(&source_dir, "hello-workspace")
+                .unwrap()
+                .package;
+            let installed = install(&profile.0, &source, Some(&expected)).unwrap();
+            assert_eq!(installed, expected);
+            assert_eq!(install(&profile.0, &source, None).unwrap(), installed);
+
+            let updated = manifest.replace("Hello Workspace", "Changed Workspace");
+            fs::write(source.join("hoh-package.json"), updated).unwrap();
+            assert!(install(&profile.0, &source, Some(&expected)).is_err());
+            assert!(install(&profile.0, &source, None).is_err());
+            fs::remove_dir_all(&source).unwrap();
+            assert_eq!(catalog(&profile.0).unwrap().packages, [installed.clone()]);
+            assert!(open(&profile.0, &installed).unwrap().is_workspace_page());
+            assert_eq!(
+                fs::read_dir(profile.0.join("external_plugins"))
+                    .unwrap()
+                    .count(),
+                1
+            );
+        }
+
+        #[test]
+        fn full_catalog_remains_readable_after_a_failed_install() {
+            let profile = Profile::new();
+            let author = Profile::new();
+            let source = author.0.join("hello-workspace");
+            fs::create_dir(&source).unwrap();
+            fs::write(
+                source.join("hoh-package.json"),
+                include_bytes!("../../../docs/examples/hello-workspace/hoh-package.json"),
+            )
+            .unwrap();
+            fs::write(
+                source.join("ui.js"),
+                include_bytes!("../../../docs/examples/hello-workspace/ui.js"),
+            )
+            .unwrap();
+            let directory = profile.0.join("external_plugins");
+            fs::create_dir(&directory).unwrap();
+            fs::create_dir(directory.join(".leftover-stage")).unwrap();
+            for index in 0..MAX_PACKAGES {
+                fs::create_dir(directory.join(format!("package-{index}"))).unwrap();
+            }
+            assert!(
+                install(&profile.0, &source, None)
+                    .unwrap_err()
+                    .contains("full")
+            );
+            assert_eq!(catalog(&profile.0).unwrap().rejected.len(), MAX_PACKAGES);
+            assert!(!directory.join("hello-workspace").exists());
+        }
+
+        #[test]
         fn page_sidebar_label_opts_into_workspace_and_is_verified_on_open() {
             let profile = Profile::new();
             let dir = profile.0.join("external_plugins/hello-workspace");
@@ -1092,6 +1428,52 @@ mod linux {
                 catalog(&profile.0).unwrap().rejected[0].id,
                 "hello-workspace"
             );
+        }
+
+        #[test]
+        fn secretary_requires_workspace_protocol_and_binds_permissions_to_the_catalog() {
+            let profile = Profile::new();
+            let dir = profile.0.join("external_plugins/hello-workspace");
+            fs::create_dir_all(&dir).unwrap();
+            fs::write(
+                dir.join("ui.js"),
+                include_bytes!("../../../docs/examples/hello-workspace/ui.js"),
+            )
+            .unwrap();
+            let path = dir.join("hoh-package.json");
+            let mut manifest: serde_json::Value = serde_json::from_str(include_str!(
+                "../../../docs/examples/hello-workspace/hoh-package.json"
+            ))
+            .unwrap();
+            fs::write(&path, manifest.to_string()).unwrap();
+            let v1 = catalog(&profile.0).unwrap().packages.pop().unwrap();
+            assert!(!open(&profile.0, &v1).unwrap().secretary);
+
+            manifest["requestedPermissions"]["ui"] = serde_json::json!(["page", "secretary"]);
+            fs::write(&path, manifest.to_string()).unwrap();
+            assert_eq!(catalog(&profile.0).unwrap().rejected.len(), 1);
+
+            manifest["requires"]["services"]["ui"]["protocolVersions"] = serde_json::json!([4]);
+            fs::write(&path, manifest.to_string()).unwrap();
+            let v4 = catalog(&profile.0).unwrap().packages.pop().unwrap();
+            let snapshot = open(&profile.0, &v4).unwrap();
+            assert!(snapshot.secretary);
+            assert!(snapshot.is_workspace_page());
+            assert!(snapshot.script.contains("hohSecretaryPropose"));
+            assert_ne!(v1.digest, v4.digest);
+            assert!(open(&profile.0, &v1).is_err());
+
+            manifest["requestedPermissions"]["ui"] = serde_json::json!(["secretary", "page"]);
+            fs::write(&path, manifest.to_string()).unwrap();
+            assert!(open(&profile.0, &v4).is_err());
+            assert_eq!(catalog(&profile.0).unwrap().packages.len(), 1);
+
+            manifest["contributes"]["ui"]["pages"][0]
+                .as_object_mut()
+                .unwrap()
+                .remove("sidebarLabel");
+            fs::write(&path, manifest.to_string()).unwrap();
+            assert_eq!(catalog(&profile.0).unwrap().rejected.len(), 1);
         }
 
         #[test]

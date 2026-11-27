@@ -14,6 +14,16 @@
   gap: 1rem;
 }
 
+.hoh-external-ui__header,
+.hoh-external-ui__actions {
+  flex-wrap: wrap;
+}
+
+.hoh-external-ui__actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
 .hoh-external-ui h2,
 .hoh-external-ui strong { font-weight: 600; }
 

@@ -14,6 +14,7 @@ fn main() {
             "read_pasted_image",
             "preview_html",
             "list_external_ui_plugins",
+            "install_external_ui_plugin",
             "open_external_ui_plugin",
             "layout_external_ui_workspace",
             "update_external_ui_panel",

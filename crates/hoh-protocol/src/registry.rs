@@ -169,6 +169,8 @@ pub enum Request {
     SettingsRulesSet(SettingsRulesSetParams),
     #[serde(rename = "hoh/model/probe")]
     ModelProbe(ModelProbeParams),
+    #[serde(rename = "hoh/model/secretary/propose")]
+    SecretaryPropose(SecretaryProposeParams),
     #[serde(rename = "hoh/plugins/list")]
     PluginsList(PluginListParams),
     #[serde(rename = "hoh/voice/whisper")]
@@ -259,6 +261,7 @@ impl Request {
             Self::ModelKeySet(_) => "hoh/model/key/set",
             Self::SettingsRulesSet(_) => "hoh/settings/rules/set",
             Self::ModelProbe(_) => "hoh/model/probe",
+            Self::SecretaryPropose(_) => SECRETARY_PROPOSE_METHOD,
             Self::PluginsList(_) => "hoh/plugins/list",
             Self::WhisperDictation(_) => "hoh/voice/whisper",
             Self::SettingsGet(_) => "hoh/settings/get",
@@ -369,6 +372,7 @@ pub const REQUEST_METHODS: &[&str] = &[
     "hoh/model/key/set",
     "hoh/settings/rules/set",
     "hoh/model/probe",
+    SECRETARY_PROPOSE_METHOD,
     "hoh/plugins/list",
     "hoh/voice/whisper",
     "hoh/settings/get",
@@ -463,6 +467,7 @@ pub fn validate_params(method: &str, value: &Value) -> Result<(), String> {
         "hoh/model/key/set" => admit::<ModelKeySetParams>(value),
         "hoh/settings/rules/set" => admit::<SettingsRulesSetParams>(value),
         "hoh/model/probe" => admit::<ModelProbeParams>(value),
+        SECRETARY_PROPOSE_METHOD => admit::<SecretaryProposeParams>(value),
         "hoh/plugins/list" => admit::<PluginListParams>(value),
         "hoh/voice/whisper" => admit::<WhisperDictationParams>(value),
         "hoh/settings/get" => admit::<Empty>(value),
@@ -540,6 +545,7 @@ pub fn validate_result(method: &str, value: &Value) -> Result<(), String> {
         "hoh/artifact/render" => admit::<ArtifactRenderResult>(value),
         "hoh/model/key/set" | "hoh/settings/rules/set" => admit::<Empty>(value),
         "hoh/model/probe" => admit::<ModelProbeResult>(value),
+        SECRETARY_PROPOSE_METHOD => admit::<SecretaryProposeResult>(value),
         "hoh/plugins/list" => admit::<Vec<PluginInventoryItem>>(value),
         "hoh/voice/whisper" => admit::<WhisperDictationResult>(value),
         "hoh/settings/get" => admit::<Settings>(value),
@@ -1189,6 +1195,18 @@ pub fn schemas() -> Vec<(String, Value)> {
         schemas.push(("ModelProbeResult".into(), schema));
     }
     schemas.push((
+        "SecretaryProposeParams".into(),
+        serde_json::to_value(schema_for!(SecretaryProposeParams)).unwrap(),
+    ));
+    {
+        let mut schema = serde_json::to_value(schema_for!(SecretaryProposeResult)).unwrap();
+        schema.as_object_mut().unwrap().insert(
+            "x-method".into(),
+            Value::String(SECRETARY_PROPOSE_METHOD.into()),
+        );
+        schemas.push(("SecretaryProposeResult".into(), schema));
+    }
+    schemas.push((
         "SettingsGetParams".into(),
         serde_json::to_value(schema_for!(Empty)).unwrap(),
     ));
@@ -1465,6 +1483,8 @@ enum RequestDecode {
     SettingsRulesSet(SettingsRulesSetParams),
     #[serde(rename = "hoh/model/probe")]
     ModelProbe(ModelProbeParams),
+    #[serde(rename = "hoh/model/secretary/propose")]
+    SecretaryPropose(SecretaryProposeParams),
     #[serde(rename = "hoh/plugins/list")]
     PluginsList(PluginListParams),
     #[serde(rename = "hoh/voice/whisper")]

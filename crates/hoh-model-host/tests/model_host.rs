@@ -12,6 +12,7 @@ use hoh_llm::{
 use hoh_model_host::{
     MODEL_API_KEY_REF, ModelHost, ModelHostConfig, ModelHostKey, ModelHostPlugin,
 };
+use hoh_protocol::SECRETARY_PROPOSE_METHOD;
 use hoh_sdk_jsonrpc_server::{HohRpcMethodRegistry, HohRpcMethods};
 use serde_json::json;
 use std::{
@@ -169,7 +170,7 @@ const MODELS: &str = r#"{"object":"list","data":[{"id":"qwen"},{"id":"other"}]}"
 const COMPLETION: &str = r#"{"id":"c","choices":[{"index":0,"message":{"role":"assistant","content":"p"},"finish_reason":"length"}]}"#;
 
 #[tokio::test]
-async fn plugin_registers_openai_route_and_the_five_methods_in_the_table() {
+async fn plugin_registers_openai_route_and_window_methods_in_the_table() {
     let (kernel, ctx, _) = boot().await;
     plugin(
         &ctx,
@@ -191,6 +192,7 @@ async fn plugin_registers_openai_route_and_the_five_methods_in_the_table() {
     let table = ctx.get::<HohRpcMethods>().unwrap();
     for method in [
         "hoh/model/probe",
+        SECRETARY_PROPOSE_METHOD,
         "hoh/model/key/set",
         "hoh/settings/get",
         "hoh/settings/set",
@@ -205,6 +207,108 @@ async fn plugin_registers_openai_route_and_the_five_methods_in_the_table() {
             "{method}: {error}"
         );
     }
+    kernel.shutdown().await;
+}
+
+#[tokio::test]
+async fn secretary_sends_bounded_text_only_to_the_configured_model() {
+    let answer = r#"{"reply":"Готово","changes":[]}"#;
+    let server = serve(vec![(
+        "POST /v1/chat/completions",
+        Reply::sse(&[
+            sse(json!({"reasoning_content":"private reasoning"}), None),
+            sse(json!({"content":answer}), None),
+            sse(json!({}), Some("stop")),
+            "data: [DONE]\n\n".into(),
+        ]),
+    )])
+    .await;
+    let (kernel, ctx, _) = boot().await;
+    plugin(
+        &ctx,
+        json!({"baseUrl":server.base_url,"model":"workspace-model"}),
+    )
+    .await;
+    let host = ctx.get::<ModelHostKey>().unwrap();
+    host.call(
+        "hoh/model/key/set",
+        json!({"baseUrl":server.base_url,"apiKey":"test-key"}),
+    )
+    .await
+    .unwrap();
+    let params = json!({
+        "message":"Перенеси задачу",
+        "instructions":"Reply with JSON",
+        "context":{"title":"<script>untrusted title</script>"}
+    });
+    let response = host
+        .call(SECRETARY_PROPOSE_METHOD, params.clone())
+        .await
+        .unwrap();
+    assert_eq!(response, json!({"text":answer}));
+    let requests = server.captured();
+    assert_eq!(requests.len(), 1);
+    assert_eq!(
+        requests[0].authorization.as_deref(),
+        Some("Bearer test-key")
+    );
+    let sent: serde_json::Value = serde_json::from_str(&requests[0].body).unwrap();
+    assert_eq!(sent["model"], "workspace-model");
+    assert_eq!(sent["max_tokens"], 8_192);
+    assert!(sent.get("tools").is_none());
+    assert_eq!(sent["messages"].as_array().unwrap().len(), 2);
+    assert_eq!(sent["messages"][0]["role"], "system");
+    assert!(
+        sent["messages"][0]["content"]
+            .as_str()
+            .unwrap()
+            .contains("untrusted snapshot")
+    );
+    assert_eq!(sent["messages"][1]["role"], "user");
+    let input: serde_json::Value =
+        serde_json::from_str(sent["messages"][1]["content"].as_str().unwrap()).unwrap();
+    assert_eq!(input, params);
+
+    for invalid in [
+        json!({"message":"я".repeat(2_049),"instructions":"","context":{}}),
+        json!({"message":"hi","instructions":"x".repeat(12 * 1024 + 1),"context":{}}),
+        json!({"message":"hi","instructions":"","context":{"description":"x".repeat(128 * 1024)}}),
+        json!({"message":"hi","instructions":"","context":[]}),
+        json!({"message":"hi","instructions":"","context":{},"model":"override"}),
+    ] {
+        assert!(host.call(SECRETARY_PROPOSE_METHOD, invalid).await.is_err());
+    }
+    assert_eq!(server.captured().len(), 1);
+    kernel.shutdown().await;
+}
+
+#[tokio::test]
+async fn secretary_refuses_a_truncated_model_response() {
+    let server = serve(vec![(
+        "POST /v1/chat/completions",
+        Reply::sse(&[
+            sse(json!({"content":"partial response"}), Some("length")),
+            "data: [DONE]\n\n".into(),
+        ]),
+    )])
+    .await;
+    let (kernel, ctx, _) = boot().await;
+    let host = ModelHost::new(
+        ctx,
+        ModelHostConfig {
+            base_url: server.base_url,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let error = host
+        .call(
+            SECRETARY_PROPOSE_METHOD,
+            json!({"message":"hi","instructions":"","context":{}}),
+        )
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("incomplete response"));
     kernel.shutdown().await;
 }
 

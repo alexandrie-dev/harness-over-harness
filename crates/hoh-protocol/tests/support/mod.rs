@@ -204,6 +204,10 @@ pub fn typed_result(method: &str, value: Value) -> Value {
             serde_json::to_value(serde_json::from_value::<ModelProbeResult>(value).unwrap())
                 .unwrap()
         }
+        SECRETARY_PROPOSE_METHOD => {
+            serde_json::to_value(serde_json::from_value::<SecretaryProposeResult>(value).unwrap())
+                .unwrap()
+        }
         "hoh/plugins/list" => {
             serde_json::to_value(serde_json::from_value::<Vec<PluginInventoryItem>>(value).unwrap())
                 .unwrap()

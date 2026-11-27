@@ -219,6 +219,12 @@
           "markdownDescription": "Enables the environment_platform command without any pre-configured scope."
         },
         {
+          "description": "Enables the install_external_ui_plugin command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-install-external-ui-plugin",
+          "markdownDescription": "Enables the install_external_ui_plugin command without any pre-configured scope."
+        },
+        {
           "description": "Enables the layout_external_ui_workspace command without any pre-configured scope.",
           "type": "string",
           "const": "allow-layout-external-ui-workspace",
@@ -331,6 +337,12 @@
           "type": "string",
           "const": "deny-environment-platform",
           "markdownDescription": "Denies the environment_platform command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the install_external_ui_plugin command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-install-external-ui-plugin",
+          "markdownDescription": "Denies the install_external_ui_plugin command without any pre-configured scope."
         },
         {
           "description": "Denies the layout_external_ui_workspace command without any pre-configured scope.",

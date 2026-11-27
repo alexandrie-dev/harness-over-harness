@@ -15,6 +15,7 @@ interface Catalog {
   directory: string;
   packages: PagePlugin[];
   rejected: { id: string; reason: string }[];
+  prepared: PagePlugin | null;
 }
 
 export function externalUiError(error: unknown, fallback: string) {
@@ -30,18 +31,38 @@ function subscribeCatalog(listener: () => void) {
   return () => { listeners.delete(listener); };
 }
 let catalogRequest: Promise<void> | undefined;
+function publishCatalog(catalog: Catalog) {
+  catalogState = { catalog, error: '' };
+  for (const listener of listeners) listener();
+}
+
 export function refreshExternalUiCatalog() {
   if (catalogRequest) return catalogRequest;
-  catalogRequest = invoke<Catalog>('list_external_ui_plugins')
-    .then(catalog => { catalogState = { catalog, error: '' }; })
+  const request: Promise<void> = invoke<Catalog>('list_external_ui_plugins')
+    .then(catalog => {
+      if (catalogRequest === request) publishCatalog(catalog);
+    })
     .catch(error => {
+      if (catalogRequest !== request) return;
       catalogState = { ...catalogState, error: externalUiError(error, 'The plugin catalog could not be loaded.') };
+      for (const listener of listeners) listener();
     })
     .finally(() => {
-      catalogRequest = undefined;
-      for (const listener of listeners) listener();
+      if (catalogRequest === request) catalogRequest = undefined;
     });
-  return catalogRequest;
+  catalogRequest = request;
+  return request;
+}
+
+export async function installExternalUiPlugin(prepared?: PagePlugin) {
+  const installed = await invoke<{ package: PagePlugin; catalog: Catalog } | null>(
+    'install_external_ui_plugin',
+    { prepared: prepared ?? null },
+  );
+  if (!installed) return null;
+  catalogRequest = undefined;
+  publishCatalog(installed.catalog);
+  return installed.package;
 }
 
 export function useExternalUiCatalog() {

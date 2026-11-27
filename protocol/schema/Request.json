@@ -803,6 +803,22 @@
       "properties": {
         "method": {
           "type": "string",
+          "const": "hoh/model/secretary/propose"
+        },
+        "params": {
+          "$ref": "#/$defs/SecretaryProposeParams"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "type": "string",
           "const": "hoh/plugins/list"
         },
         "params": {
@@ -2441,6 +2457,30 @@
       "required": [
         "baseUrl",
         "model"
+      ]
+    },
+    "SecretaryProposeParams": {
+      "type": "object",
+      "properties": {
+        "message": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "instructions": {
+          "type": "string",
+          "maxLength": 12288
+        },
+        "context": {
+          "type": "object",
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "message",
+        "instructions",
+        "context"
       ]
     },
     "PluginListParams": {

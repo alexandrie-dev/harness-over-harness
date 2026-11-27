@@ -1,7 +1,7 @@
 //! Window-engine wiring for an OpenAI-compatible model and its credential.
 //!
 //! The API key lives only in [`hoh_credentials::Credentials`]. This crate keeps the
-//! non-secret model address/name and the first-run rules, and publishes the five window RPC handlers.
+//! non-secret model address/name and the first-run rules, and publishes the window RPC handlers.
 
 use hoh_credentials::{Credentials, credential_ref};
 use hoh_error::BoxError;
@@ -15,8 +15,8 @@ use hoh_llm_openai::{
 };
 use hoh_protocol::{
     Empty, InternetMode, ModelKeySetParams, ModelProbeParams, ModelProbeResult, ModelSettings,
-    Permissions, Settings, SettingsRulesSetParams, SettingsSetParams, SetupInternetMode, Theme,
-    ViewSettings,
+    Permissions, SECRETARY_PROPOSE_METHOD, Settings, SettingsRulesSetParams, SettingsSetParams,
+    SetupInternetMode, Theme, ViewSettings,
 };
 use hoh_sdk_jsonrpc_server::HohRpcMethods;
 use hoh_timeout::AbortSignal;
@@ -27,7 +27,9 @@ use std::{
     fmt,
     sync::{Arc, Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard},
 };
-use tokio::sync::watch;
+use tokio::sync::{Semaphore, watch};
+
+mod secretary;
 
 pub const MODEL_API_KEY_REF: &str = "model_api_key";
 pub const DEFAULT_PROVIDER: &str = "openai-compatible";
@@ -168,6 +170,7 @@ struct Inner {
     settings: RwLock<Settings>,
     adapter: Mutex<Option<CachedAdapter>>,
     changes: watch::Sender<PersistedSettings>,
+    secretary_slot: Semaphore,
 }
 
 /// Live model host. Its Debug representation contains no credential material.
@@ -212,6 +215,7 @@ impl ModelHost {
                 changes: watch::channel(persisted_of(&settings)).0,
                 settings: RwLock::new(settings),
                 adapter: Mutex::new(None),
+                secretary_slot: Semaphore::new(1),
             }),
         })
     }
@@ -415,7 +419,7 @@ impl ModelHost {
         Ok(settings.clone())
     }
 
-    /// Run one of the five model-host RPC methods. Host approval of the privileged ones
+    /// Run a model-host RPC method. Host approval of the privileged ones
     /// (`hoh/model/key/set`, `hoh/model/probe` with an address, `hoh/settings/set` with `model` or
     /// `security`, `hoh/settings/rules/set`) is the SDK server's job; it must have granted it
     /// before the table calls the handler.
@@ -423,6 +427,7 @@ impl ModelHost {
         self.inner.ctx.ensure_active()?;
         let value = match method {
             METHOD_PROBE => serde_json::to_value(self.probe(parse(method, params)?).await?)?,
+            SECRETARY_PROPOSE_METHOD => self.propose_as_secretary(params).await?,
             METHOD_KEY_SET => serde_json::to_value(self.set_key(parse(method, params)?).await?)?,
             METHOD_SETTINGS_GET => {
                 let _: Empty = parse(method, params)?;
@@ -448,8 +453,9 @@ pub const METHOD_KEY_SET: &str = "hoh/model/key/set";
 pub const METHOD_SETTINGS_GET: &str = "hoh/settings/get";
 pub const METHOD_SETTINGS_SET: &str = "hoh/settings/set";
 pub const METHOD_RULES_SET: &str = "hoh/settings/rules/set";
-const METHODS: [&str; 5] = [
+const METHODS: &[&str] = &[
     METHOD_PROBE,
+    SECRETARY_PROPOSE_METHOD,
     METHOD_KEY_SET,
     METHOD_SETTINGS_GET,
     METHOD_SETTINGS_SET,
@@ -549,7 +555,7 @@ impl Plugin for ModelHostPlugin {
             vec![host.provider().into()],
             Arc::new(HostedOpenAiAdapter { host: host.clone() }),
         )?;
-        for method in METHODS {
+        for &method in METHODS {
             let host = host.clone();
             deps.methods.register(&ctx, method, move |params| {
                 let host = host.clone();

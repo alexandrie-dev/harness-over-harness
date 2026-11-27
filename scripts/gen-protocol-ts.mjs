@@ -73,7 +73,7 @@ const nativeDefinitions = definitions;
 const nativeRoots = roots;
 // A renderer request can ask the engine to perform an action, but cannot act as
 // the native host, supply a handshake key, or answer an approval itself.
-const hostMethods = new Set(['initialize', 'shutdown', 'approval/request', 'user-question/ask']);
+const hostMethods = new Set(['initialize', 'shutdown', 'approval/request', 'user-question/ask', 'hoh/model/secretary/propose']);
 function windowSchema(schema) {
   if (!schema || typeof schema !== 'object') return schema;
   if (Array.isArray(schema)) return schema.map(windowSchema);
