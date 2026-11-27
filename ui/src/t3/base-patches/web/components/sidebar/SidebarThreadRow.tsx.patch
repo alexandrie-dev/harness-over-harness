@@ -26,13 +26,22 @@
 +                        <T>Un-settle chat</T>
 @@ -1504 +1504 @@
 -                            aria-label={gt("Settle thread")}
-+                            aria-label={gt("Settle chat")}
++                            aria-label={gt("Done")}
+@@ -1508 +1508 @@
+-                              "pointer-events-none absolute inset-y-0 right-0 -mr-2 inline-flex cursor-pointer items-center gap-1 rounded-md bg-transparent px-2 text-xs text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:pointer-events-auto focus-visible:opacity-100 group-any-hover/sidebar-row:pointer-events-auto group-any-hover/sidebar-row:opacity-100",
++                              "pointer-events-none absolute inset-y-0 right-0 -mr-2 inline-flex cursor-pointer items-center gap-1 rounded-md bg-transparent px-2 text-xs text-success-foreground opacity-0 transition-opacity focus-visible:pointer-events-auto focus-visible:opacity-100 group-any-hover/sidebar-row:pointer-events-auto group-any-hover/sidebar-row:opacity-100",
 @@ -1517 +1517 @@
 -                        <T>Settle thread</T>
-+                        <T>Settle chat</T>
++                        <T>Done</T>
 @@ -1709 +1709 @@
 -                                aria-label={gt("Settle thread")}
-+                                aria-label={gt("Settle chat")}
++                                aria-label={gt("Done")}
+@@ -1712 +1712 @@
+-                                className="-mr-1 inline-flex cursor-pointer items-center gap-1 rounded-md bg-transparent px-1.5 text-xs text-muted-foreground hover:text-foreground"
++                                className="-mr-1 inline-flex cursor-pointer items-center gap-1 rounded-md bg-transparent px-1.5 text-xs text-success-foreground"
+@@ -1717 +1717 @@
+-                            <T>Settle</T>
++                            <T>Done</T>
 @@ -1720 +1720 @@
 -                            <T>Settle thread</T>
-+                            <T>Settle chat</T>
++                            <T>Done</T>
