@@ -54,6 +54,31 @@ pub(super) fn is_backup(bundle: &Path) -> bool {
 }
 
 impl Recovery {
+    #[cfg(target_os = "linux")]
+    pub(super) fn check_exchange_permissions(installed: &Path, staged: &Path) -> io::Result<()> {
+        let directory = parent(installed)?;
+        for (path, mode) in [
+            (directory, libc::W_OK | libc::X_OK),
+            (installed, libc::W_OK),
+            (staged, libc::W_OK),
+        ] {
+            let path = std::ffi::CString::new(path.as_os_str().as_bytes())?;
+            if unsafe { libc::faccessat(libc::AT_FDCWD, path.as_ptr(), mode, libc::AT_EACCESS) } < 0 {
+                return Err(io::Error::last_os_error());
+            }
+        }
+        let directory = directory.metadata()?;
+        let user = unsafe { libc::geteuid() };
+        if directory.mode() & libc::S_ISVTX != 0
+            && user != 0
+            && user != directory.uid()
+            && user != installed.metadata()?.uid()
+        {
+            return Err(io::ErrorKind::PermissionDenied.into());
+        }
+        Ok(())
+    }
+
     pub(super) fn open(installed: &Path) -> io::Result<Option<Self>> {
         let directory = sibling_path(installed, ROLLBACK_SUFFIX)?;
         let metadata = match read_install_metadata(&directory.join(PENDING)) {

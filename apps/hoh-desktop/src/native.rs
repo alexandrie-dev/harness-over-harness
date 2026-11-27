@@ -144,6 +144,49 @@ fn engine_launch(engine_home: &std::path::Path) -> Result<EngineLaunch, String> 
     )
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub(crate) fn staged_engine_config(
+    executable: PathBuf,
+    home: &std::path::Path,
+) -> Result<ProcessConfig, String> {
+    let launch = select_engine_launch(
+        None,
+        Some(executable.into_os_string()),
+        std::env::var_os("HOH_WINDOW_PROFILE").as_deref(),
+        home,
+    )?;
+    Ok(ProcessConfig {
+        path: launch.path,
+        args: launch.args,
+        env: launch.env,
+        stderr_file: None,
+        cwd: home.to_path_buf(),
+        provider: launch.provider.into(),
+        model: launch.model.into(),
+    })
+}
+
+pub(crate) fn engine_approval_key() -> std::io::Result<[u8; 32]> {
+    use std::io::Read;
+    let mut key = [0_u8; 32];
+    std::fs::File::open("/dev/urandom")?.read_exact(&mut key)?;
+    Ok(key)
+}
+
+pub(crate) fn engine_initialize(
+    cwd: &std::path::Path,
+    config: &ProcessConfig,
+    key: &[u8; 32],
+) -> Value {
+    json!({
+        "cwd": cwd,
+        "provider": config.provider,
+        "model": config.model,
+        "capabilities": {"approvals": "host", "userQuestions": true},
+        "hoh": {"protocolVersion": 1, "approvalKey": hoh_protocol::approval::hex(key)}
+    })
+}
+
 #[tauri::command]
 pub fn environment_platform(window: tauri::WebviewWindow) -> Result<Value, String> {
     if window.label() != "main" {
@@ -205,9 +248,7 @@ pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     // shell keeps the separate approval window.
     let in_chat = !legacy;
     let data_dir = app.path().app_data_dir()?;
-    let mut key = [0_u8; 32];
-    use std::io::Read;
-    std::fs::File::open("/dev/urandom")?.read_exact(&mut key)?;
+    let key = engine_approval_key()?;
     let approvals = Arc::new(Broker::new(key)?.with_audit_file(data_dir.join("approvals.log")));
     let questions = Arc::new(QuestionBroker::default());
     let ready = Arc::new(AtomicBool::new(false));
@@ -290,7 +331,7 @@ pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     let event_ready = ready.clone();
     let notifications = EngineNotifications::default();
     let event_notifications = notifications.clone();
-    let init = json!({"cwd":session_folder,"provider":config.provider,"model":config.model,"capabilities":{"approvals":"host","userQuestions":true},"hoh":{"protocolVersion":1,"approvalKey":hoh_protocol::approval::hex(&key)}});
+    let init = engine_initialize(&session_folder, &config, &key);
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     let (connector, ready_handler): (Arc<dyn Connector>, _) =
         if let Some(installation) = handle.try_state::<crate::auto_update::Installation>() {
@@ -1202,14 +1243,15 @@ pub fn approval_decide(
     decision.command_result
 }
 
-pub fn shutdown(handle: &tauri::AppHandle, host: &Host) {
+pub fn shutdown(handle: &tauri::AppHandle, host: &Host) -> bool {
     host.questions.clear();
     for (label, resolution) in host.approvals.cancel_all() {
         dispatch_resolution(handle, resolution);
         destroy_window(handle, &label);
     }
-    host.engine.stop();
+    let stopped = host.engine.stop_confirmed();
     host.chat_secrets.close();
+    stopped
 }
 
 /// The executor that runs a conversation, as the engine reports it (`hoh/executor/access/get`):

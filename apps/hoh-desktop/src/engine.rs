@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::{
     collections::HashMap,
-    io::{BufReader, PipeWriter},
+    io::{self, BufReader, PipeReader, PipeWriter},
     path::PathBuf,
     process::{Child, Command, Stdio},
     sync::{
@@ -49,7 +49,8 @@ fn error_code(error: &hoh_protocol::framing::RpcError) -> Option<&str> {
 pub type OnSend = Box<dyn FnOnce(u64, &str) + Send>;
 pub type Reply = mpsc::Sender<Result<Value, String>>;
 pub type Sink = Arc<dyn Fn(HostEvent) + Send + Sync>;
-pub(crate) type ReadyHandler = Box<dyn FnMut(Option<Instant>) -> bool + Send>;
+pub(crate) type ReadyHandler =
+    Box<dyn FnMut(Option<(u64, Instant)>, &mut dyn Transport) -> bool + Send>;
 #[derive(Clone)]
 pub enum HostEvent {
     Notification(Value),
@@ -85,6 +86,10 @@ pub trait Transport: Send {
         false
     }
     fn close(&mut self);
+    fn close_confirmed(&mut self) -> bool {
+        self.close();
+        true
+    }
 }
 pub trait Connector: Send + Sync + 'static {
     fn connect(
@@ -130,7 +135,7 @@ impl ProcessConfig {
     pub(crate) fn connect_process(
         &self,
         mut command: Command,
-        guard: Option<PipeWriter>,
+        guard: Option<(PipeWriter, PipeReader)>,
         generation: u64,
         inbox: mpsc::Sender<Message>,
     ) -> Result<Box<dyn Transport>, String> {
@@ -195,17 +200,17 @@ impl ProcessConfig {
             tx: Some(tx),
             threads: vec![reader, writer],
             disconnected,
-            closed: false,
+            closed: None,
         }))
     }
 }
 struct StdioTransport {
     child: Child,
-    guard: Option<PipeWriter>,
+    guard: Option<(PipeWriter, PipeReader)>,
     tx: Option<mpsc::SyncSender<Value>>,
     threads: Vec<thread::JoinHandle<()>>,
     disconnected: Arc<AtomicBool>,
-    closed: bool,
+    closed: Option<bool>,
 }
 impl Transport for StdioTransport {
     fn send(&mut self, frame: Value) -> Result<(), String> {
@@ -217,28 +222,74 @@ impl Transport for StdioTransport {
     }
     fn exited(&mut self) -> bool {
         process_exited(&mut self.child)
+            || self
+                .guard
+                .as_ref()
+                .is_some_and(|(_, lifetime)| pipe_closed(lifetime, Instant::now()))
     }
     fn disconnected(&self) -> bool {
         self.disconnected.load(Ordering::Acquire)
     }
     fn close(&mut self) {
-        if self.closed {
-            return;
+        self.close_confirmed();
+    }
+    fn close_confirmed(&mut self) -> bool {
+        if let Some(confirmed) = self.closed {
+            return confirmed;
         }
-        self.closed = true;
         self.tx.take();
-        if let Some(guard) = self.guard.take() {
-            drop(guard);
-            let _ = self.child.wait();
+        let confirmed = if let Some((control, lifetime)) = self.guard.take() {
+            drop(control);
+            let deadline = Instant::now() + SHUTDOWN_GRACE;
+            wait_for_exit(&mut self.child, deadline).is_ok() && pipe_closed(&lifetime, deadline)
         } else {
-            kill_and_wait(&mut self.child);
-        }
+            kill_and_wait(&mut self.child).is_ok()
+        };
+        self.closed = Some(confirmed);
         for handle in self.threads.drain(..) {
             if handle.is_finished() {
                 let _ = handle.join();
             }
         }
+        confirmed
     }
+}
+
+#[cfg(unix)]
+fn pipe_closed(pipe: &PipeReader, deadline: Instant) -> bool {
+    use std::os::fd::AsRawFd;
+    let mut descriptor = libc::pollfd {
+        fd: pipe.as_raw_fd(),
+        events: 0,
+        revents: 0,
+    };
+    loop {
+        let timeout = deadline.saturating_duration_since(Instant::now());
+        let result = unsafe { libc::poll(&mut descriptor, 1, timeout.as_millis() as libc::c_int) };
+        if result >= 0 {
+            return result > 0 && descriptor.revents & libc::POLLHUP != 0;
+        }
+        if io::Error::last_os_error().kind() != io::ErrorKind::Interrupted
+            || Instant::now() >= deadline
+        {
+            return false;
+        }
+    }
+}
+
+#[cfg(not(unix))]
+fn pipe_closed(_pipe: &PipeReader, _deadline: Instant) -> bool {
+    false
+}
+
+fn wait_for_exit(child: &mut Child, deadline: Instant) -> io::Result<()> {
+    while child.try_wait()?.is_none() {
+        if Instant::now() >= deadline {
+            return Err(io::ErrorKind::TimedOut.into());
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+    Ok(())
 }
 
 pub(crate) fn process_exited(child: &mut Child) -> bool {
@@ -262,14 +313,21 @@ pub(crate) fn process_exited(child: &mut Child) -> bool {
     }
 }
 
-pub(crate) fn kill_and_wait(child: &mut Child) {
+pub(crate) fn kill_and_wait(child: &mut Child) -> io::Result<()> {
     // The child is not reaped yet, so its process-group id cannot have been reused.
     #[cfg(unix)]
-    unsafe {
-        libc::kill(-(child.id() as libc::pid_t), libc::SIGKILL);
-    }
+    let group_error = if unsafe { libc::kill(-(child.id() as libc::pid_t), libc::SIGKILL) } < 0 {
+        Some(io::Error::last_os_error()).filter(|error| error.raw_os_error() != Some(libc::ESRCH))
+    } else {
+        None
+    };
     let _ = child.kill();
-    let _ = child.wait();
+    wait_for_exit(child, Instant::now() + SHUTDOWN_GRACE)?;
+    #[cfg(unix)]
+    if let Some(error) = group_error {
+        return Err(error);
+    }
+    Ok(())
 }
 impl Drop for StdioTransport {
     fn drop(&mut self) {
@@ -280,7 +338,12 @@ impl Drop for StdioTransport {
 pub struct Engine {
     tx: mpsc::Sender<Message>,
     initialize: Arc<std::sync::Mutex<Value>>,
-    join: std::sync::Mutex<Option<thread::JoinHandle<()>>>,
+    supervisor: std::sync::Mutex<Supervisor>,
+}
+
+enum Supervisor {
+    Running(thread::JoinHandle<bool>),
+    Stopped(bool),
 }
 impl Engine {
     pub fn start(connector: Arc<dyn Connector>, initialize: Value, sink: Sink) -> Arc<Self> {
@@ -302,7 +365,7 @@ impl Engine {
         Arc::new(Self {
             tx,
             initialize,
-            join: std::sync::Mutex::new(Some(join)),
+            supervisor: std::sync::Mutex::new(Supervisor::Running(join)),
         })
     }
     pub fn request(&self, method: &str, params: Value) -> Result<Value, String> {
@@ -341,10 +404,18 @@ impl Engine {
             .map_err(|_| "Помощник остановлен".into())
     }
     pub fn stop(&self) {
+        self.stop_confirmed();
+    }
+
+    pub(crate) fn stop_confirmed(&self) -> bool {
         let _ = self.tx.send(Message::Stop);
-        if let Some(join) = self.join.lock().unwrap_or_else(|p| p.into_inner()).take() {
-            let _ = join.join();
-        }
+        let mut supervisor = self.supervisor.lock().unwrap_or_else(|p| p.into_inner());
+        let confirmed = match std::mem::replace(&mut *supervisor, Supervisor::Stopped(false)) {
+            Supervisor::Running(join) => join.join().unwrap_or(false),
+            Supervisor::Stopped(confirmed) => confirmed,
+        };
+        *supervisor = Supervisor::Stopped(confirmed);
+        confirmed
     }
 }
 impl Drop for Engine {
@@ -372,8 +443,28 @@ pub fn spawn_problem(kind: std::io::ErrorKind) -> String {
 /// earlier loses the end of the conversation: a restart under load found no session to resume. An
 /// engine that ignores `shutdown` is still killed once this has passed.
 pub const SHUTDOWN_GRACE: Duration = Duration::from_secs(5);
+
+pub(crate) fn request_shutdown(
+    transport: &mut dyn Transport,
+    id: &str,
+    cancelled: impl Fn() -> bool,
+) {
+    let _ = transport.send(framing::request(json!(id), "shutdown", json!({})));
+    let deadline = Instant::now() + SHUTDOWN_GRACE;
+    while !cancelled() && !transport.exited() && Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(10));
+    }
+}
+
 /// After this many failed starts in a row the window is told the assistant is not starting, with the reason.
 pub const START_FAILURES_BEFORE_REPORT: u32 = 4;
+
+pub(crate) fn valid_initialize_result(result: &Value) -> bool {
+    hoh_protocol::validate_result("initialize", result).is_ok()
+        && result["hoh"]["protocolVersion"] == 1
+        && result["hoh"]["approvals"] == "host"
+}
+
 fn supervise(
     connector: Arc<dyn Connector>,
     initialize: Arc<std::sync::Mutex<Value>>,
@@ -381,7 +472,7 @@ fn supervise(
     inbox: mpsc::Sender<Message>,
     rx: mpsc::Receiver<Message>,
     mut ready_handler: Option<ReadyHandler>,
-) {
+) -> bool {
     let mut generation = 0;
     let mut next = 0_u64;
     let mut pending = HashMap::<String, Pending>::new();
@@ -422,7 +513,9 @@ fn supervise(
             ))
             .is_err()
         {
-            transport.close();
+            if !transport.close_confirmed() {
+                return false;
+            }
             sink(HostEvent::Status(
                 json!({"state":"unavailable","message":"Помощник пока недоступен. Подключаюсь снова…"}),
             ));
@@ -441,15 +534,7 @@ fn supervise(
             let event = rx.recv_timeout(Duration::from_millis(50));
             match event {
                 Ok(Message::Stop) | Err(mpsc::RecvTimeoutError::Disconnected) => {
-                    let _ = transport.send(framing::request(
-                        json!("native-shutdown"),
-                        "shutdown",
-                        json!({}),
-                    ));
-                    let until = Instant::now() + SHUTDOWN_GRACE;
-                    while !transport.exited() && Instant::now() < until {
-                        thread::sleep(Duration::from_millis(10));
-                    }
+                    request_shutdown(&mut *transport, "native-shutdown", || false);
                     stopping = true;
                     break;
                 }
@@ -499,11 +584,7 @@ fn supervise(
                 Ok(Message::Incoming(g, incoming)) if g == generation => match incoming {
                     Incoming::Response { id, result, error } => {
                         if id.key() == format!("s:{initialize_id}") && !ready {
-                            if error.is_some()
-                                || hoh_protocol::validate_result("initialize", &result).is_err()
-                                || result["hoh"]["protocolVersion"] != 1
-                                || result["hoh"]["approvals"] != "host"
-                            {
+                            if error.is_some() || !valid_initialize_result(&result) {
                                 break;
                             }
                             ready = true;
@@ -562,15 +643,7 @@ fn supervise(
                 Ok(Message::Disconnected(g)) if g == generation => break,
                 Ok(Message::Restart) => {
                     // Let the engine flush what it keeps (settings) before it is replaced.
-                    let _ = transport.send(framing::request(
-                        json!("native-restart"),
-                        "shutdown",
-                        json!({}),
-                    ));
-                    let until = Instant::now() + SHUTDOWN_GRACE;
-                    while !transport.exited() && Instant::now() < until {
-                        thread::sleep(Duration::from_millis(10));
-                    }
+                    request_shutdown(&mut *transport, "native-restart", || false);
                     break;
                 }
                 _ => {}
@@ -579,7 +652,7 @@ fn supervise(
                 break;
             }
             if let Some(handler) = &mut ready_handler
-                && handler(ready_at.filter(|_| !transport.disconnected()))
+                && handler(ready_at.map(|at| (generation, at)), &mut *transport)
             {
                 ready_handler = None;
             }
@@ -592,7 +665,7 @@ fn supervise(
             });
         }
         if let Some(handler) = &mut ready_handler
-            && handler(None)
+            && handler(None, &mut *transport)
         {
             ready_handler = None;
         }
@@ -602,7 +675,12 @@ fn supervise(
                 .reply
                 .send(Err(crate::errors::CONNECTION_INTERRUPTED.into()));
         }
-        transport.close();
+        if !transport.close_confirmed() {
+            sink(HostEvent::Status(
+                json!({"state":"failed","message":"Не удалось остановить Помощника."}),
+            ));
+            return false;
+        }
         sink(HostEvent::Status(
             json!({"state":if stopping {"stopped"} else {"restarting"},"message":if stopping {"Помощник остановлен"} else {"Связь с Помощником прервалась. Подключаюсь снова…"}}),
         ));
@@ -610,6 +688,7 @@ fn supervise(
             stopping = drain_backoff(&rx);
         }
     }
+    true
 }
 fn drain_backoff(rx: &mpsc::Receiver<Message>) -> bool {
     let until = Instant::now() + Duration::from_millis(500);

@@ -384,7 +384,7 @@ impl Asset {
             .ok_or_else(|| "GitHub did not provide a SHA-256 checksum for this package.".into())
     }
 
-    fn verify(&self, path: &Path) -> Result<(), String> {
+    fn verify(&self, path: &Path, cancelled: impl Fn() -> bool) -> Result<(), String> {
         let read_error = |error| format!("Could not read the downloaded package ({error}).");
         let file = File::open(path).map_err(read_error)?;
         if file.metadata().map_err(read_error)?.len() != self.size {
@@ -393,6 +393,9 @@ impl Asset {
         let mut reader = BufReader::new(file);
         let mut hash = Sha256::new();
         loop {
+            if cancelled() {
+                return Err("The update was cancelled.".into());
+            }
             let bytes = reader.fill_buf().map_err(read_error)?;
             if bytes.is_empty() {
                 break;
@@ -558,7 +561,7 @@ fn update(
             "GitHub could not serve the update package (HTTP {status})."
         ));
     }
-    asset.verify(&archive)?;
+    asset.verify(&archive, cancelled)?;
 
     progress(UpdateProgress::Installing(version.clone()));
     let unpacked = staging.path().join("unpacked");
@@ -571,6 +574,10 @@ fn update(
     extract::preserve_access_modes(installed, &bundle).map_err(|error| {
         format!("Could not preserve permissions for the HoH installation ({error}).")
     })?;
+    candidate::qualify(bundle.join(package.binary_dir).join("hoh"), cancelled)?;
+    #[cfg(target_os = "linux")]
+    recovery::Recovery::check_exchange_permissions(installed, &bundle)
+        .map_err(|error| format!("Could not replace the HoH installation ({error})."))?;
     installation.handoff(executable, installed, staging)?;
     Ok(UpdateOutcome::Restarting(version))
 }
@@ -723,9 +730,9 @@ mod tests {
             )),
         };
         fs::write(&file, bytes).unwrap();
-        assert!(asset.verify(&file).is_ok());
+        assert!(asset.verify(&file, || false).is_ok());
         fs::write(&file, b"modified").unwrap();
-        assert!(asset.verify(&file).is_err());
+        assert!(asset.verify(&file, || false).is_err());
     }
 
     #[test]

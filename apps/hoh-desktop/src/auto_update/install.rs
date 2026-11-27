@@ -34,6 +34,8 @@ const START_TIMEOUT: Duration = Duration::from_secs(45);
 const START_STABILITY: Duration = Duration::from_secs(1);
 const STOP_TIMEOUT: Duration = Duration::from_secs(10);
 const WAIT_STEP: Duration = Duration::from_millis(75);
+const CHECK_READY: u8 = 1;
+const SHUTDOWN_COMPLETE: u8 = 1;
 
 #[derive(Default)]
 enum Job {
@@ -42,7 +44,7 @@ enum Job {
     Installing,
     Cancelling,
     Restarting {
-        _until_exit: UnixStream,
+        until_exit: UnixStream,
     },
 }
 
@@ -285,6 +287,7 @@ impl Installation {
             });
         }
         let result = (|| {
+            check_lease(installed, lease)?;
             let (until_exit, parent) = UnixStream::pair()?;
             let launch_args = current_launch_args();
             let output: OwnedFd = parent.into();
@@ -300,15 +303,22 @@ impl Installation {
             thread::spawn(move || {
                 let _ = child.wait();
             });
-            *job = Job::Restarting {
-                _until_exit: until_exit,
-            };
+            *job = Job::Restarting { until_exit };
             Ok(())
         })();
         if result.is_err() {
             lease.lock_shared().map_err(error_message)?;
         }
         result.map_err(error_message)
+    }
+
+    pub fn acknowledge_shutdown(&self) {
+        let job = self.job.lock().unwrap_or_else(|error| error.into_inner());
+        if let Job::Restarting { until_exit } = &*job
+            && let Err(error) = (&*until_exit).write_all(&[SHUTDOWN_COMPLETE])
+        {
+            eprintln!("HoH could not confirm shutdown to the update worker: {error}");
+        }
     }
 
     pub(super) fn ui_status(&self, view: u32, ready: bool) {
@@ -330,29 +340,32 @@ impl Installation {
 
     pub(crate) fn engine_ready_handler(&self) -> Option<crate::engine::ReadyHandler> {
         let readiness = self.readiness.clone()?;
-        let mut reported = false;
-        Some(Box::new(move |engine_ready_at| {
+        Some(Box::new(move |generation, transport| {
             let mut lifecycle = &*readiness.lifecycle;
-            match lifecycle.read(&mut [0]) {
-                Err(error) if error.kind() == io::ErrorKind::WouldBlock => {}
-                Err(error) if error.kind() == io::ErrorKind::Interrupted => return false,
+            let mut request = [0];
+            match lifecycle.read(&mut request) {
+                Ok(1) if request[0] == CHECK_READY => {}
+                Err(error)
+                    if matches!(
+                        error.kind(),
+                        io::ErrorKind::WouldBlock | io::ErrorKind::Interrupted
+                    ) =>
+                {
+                    return false;
+                }
                 _ => return true,
             }
-            let ready = engine_ready_at.is_some_and(|engine_ready_at| {
-                let ui = readiness.ui.lock().unwrap_or_else(|error| error.into_inner());
+            let ui = readiness.ui.lock().unwrap_or_else(|error| error.into_inner());
+            let confirmed = generation.filter(|(_, engine_ready_at)| {
                 ui.is_some_and(|(_, ui_ready_at)| {
-                    engine_ready_at.max(ui_ready_at).elapsed() >= START_STABILITY
-                })
+                    (*engine_ready_at).max(ui_ready_at).elapsed() >= START_STABILITY
+                }) && !transport.exited()
+                    && !transport.disconnected()
             });
-            if ready != reported {
-                match lifecycle.write_all(&[u8::from(ready)]) {
-                    Ok(()) => reported = ready,
-                    Err(error) if error.kind() == io::ErrorKind::WouldBlock => {}
-                    Err(error) => {
-                        eprintln!("HoH could not report update readiness: {error}");
-                        return true;
-                    }
-                }
+            let reply = confirmed.map_or(0, |(generation, _)| generation).to_be_bytes();
+            if let Err(error) = lifecycle.write_all(&reply) {
+                eprintln!("HoH could not confirm update readiness: {error}");
+                return true;
             }
             false
         }))
@@ -413,31 +426,35 @@ fn launch(
 
 fn await_ready(child: &mut Child, lifecycle: &mut UnixStream) -> io::Result<bool> {
     let deadline = Instant::now() + START_TIMEOUT;
-    lifecycle.set_nonblocking(true)?;
-    let mut changes = [0; 64];
-    loop {
-        let mut ready = false;
-        loop {
-            match lifecycle.read(&mut changes) {
-                Ok(0) => break,
-                Ok(count) => ready = changes[count - 1] == 1,
-                Err(error) if error.kind() == io::ErrorKind::WouldBlock => break,
-                Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
-                Err(error) => return Err(error),
+    lifecycle.set_read_timeout(Some(WAIT_STEP))?;
+    lifecycle.set_write_timeout(Some(WAIT_STEP))?;
+    let mut reply = [0; 8];
+    let mut received = 0;
+    lifecycle.write_all(&[CHECK_READY])?;
+    while child.try_wait()?.is_none() && Instant::now() < deadline {
+        match lifecycle.read(&mut reply[received..]) {
+            Ok(0) => return Ok(false),
+            Ok(count) => received += count,
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut | io::ErrorKind::Interrupted
+                ) =>
+            {
+                continue;
             }
+            Err(error) => return Err(error),
         }
-        let exit = child.try_wait()?;
-        if exit.is_some_and(|status| !status.success()) {
-            return Ok(false);
+        if received == reply.len() {
+            if u64::from_be_bytes(reply) != 0 {
+                return Ok(child.try_wait()?.is_none());
+            }
+            thread::sleep(WAIT_STEP);
+            lifecycle.write_all(&[CHECK_READY])?;
+            received = 0;
         }
-        if ready {
-            return Ok(true);
-        }
-        if exit.is_some() || Instant::now() >= deadline {
-            return Ok(false);
-        }
-        thread::sleep(WAIT_STEP);
     }
+    Ok(false)
 }
 
 fn stop_candidate(child: &mut Child, lifecycle: &mut UnixStream) -> io::Result<()> {
@@ -456,10 +473,20 @@ fn stop_candidate(child: &mut Child, lifecycle: &mut UnixStream) -> io::Result<(
         }
         thread::sleep(WAIT_STEP);
     }
-    lifecycle.set_nonblocking(false)?;
-    lifecycle.set_read_timeout(Some(STOP_TIMEOUT))?;
-    io::copy(lifecycle, &mut io::sink())?;
-    Ok(())
+    lifecycle.set_nonblocking(true)?;
+    while Instant::now() < deadline {
+        match lifecycle.read(&mut [0; 64]) {
+            Ok(0) => return Ok(()),
+            Ok(_) => {}
+            Err(error) if error.kind() == io::ErrorKind::WouldBlock => thread::sleep(WAIT_STEP),
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
+            Err(error) => return Err(error),
+        }
+    }
+    Err(io::Error::new(
+        io::ErrorKind::TimedOut,
+        "could not confirm that the updated HoH engine stopped",
+    ))
 }
 
 fn recover_pending(
@@ -521,17 +548,10 @@ fn worker(
     }
     let lease = inherited_lease()?;
     check_lease(installed, &lease)?;
-    // This socket closes only after the previous process has shut down its engine and exited.
     let mut parent = UnixStream::from(std::io::stdout().as_fd().try_clone_to_owned()?);
-    parent.set_read_timeout(Some(START_TIMEOUT))?;
-    match parent.read(&mut [0]) {
-        Ok(0) => {}
-        result => {
-            let _ = fs::remove_dir_all(staging);
-            return Err(result
-                .err()
-                .unwrap_or_else(|| io::ErrorKind::InvalidData.into()));
-        }
+    if let Err(error) = await_parent_exit(&mut parent) {
+        let _ = fs::remove_dir_all(staging);
+        return Err(error);
     }
     let (recovery, candidate) = match Recovery::publish(installed, staging, package, &lease) {
         Ok(prepared) => prepared,
@@ -575,6 +595,21 @@ fn worker(
     let result = recovery.sync_exchange(installed).and_then(|()| recovery.finish());
     restart_previous(package, installed, args, instance, &lease)?;
     result
+}
+
+fn await_parent_exit(parent: &mut UnixStream) -> io::Result<()> {
+    parent.set_read_timeout(Some(START_TIMEOUT))?;
+    let mut reply = [0];
+    if parent.read(&mut reply)? == 1 && reply[0] == SHUTDOWN_COMPLETE {
+        parent.set_read_timeout(Some(STOP_TIMEOUT))?;
+        if parent.read(&mut reply)? == 0 {
+            return Ok(());
+        }
+    }
+    Err(io::Error::new(
+        io::ErrorKind::InvalidData,
+        "could not confirm the previous HoH shut down",
+    ))
 }
 
 pub(super) fn wait_for_child(

@@ -64,13 +64,18 @@ impl InstanceLock {
 }
 
 pub(super) fn pass_fd(command: &mut Command, file: &impl AsRawFd) -> io::Result<()> {
+    let descriptor = inherit_fd(command, file)?;
+    command.arg(descriptor.to_string());
+    Ok(())
+}
+
+pub(super) fn inherit_fd(command: &mut Command, file: &impl AsRawFd) -> io::Result<RawFd> {
     let descriptor =
         unsafe { libc::fcntl(file.as_raw_fd(), libc::F_DUPFD_CLOEXEC, FIRST_NON_STDIO_FD) };
     if descriptor < 0 {
         return Err(io::Error::last_os_error());
     }
     let inherited = unsafe { OwnedFd::from_raw_fd(descriptor) };
-    command.arg(descriptor.to_string());
     unsafe {
         command.pre_exec(move || {
             if libc::fcntl(inherited.as_raw_fd(), libc::F_SETFD, 0) < 0 {
@@ -79,7 +84,7 @@ pub(super) fn pass_fd(command: &mut Command, file: &impl AsRawFd) -> io::Result<
             Ok(())
         });
     }
-    Ok(())
+    Ok(descriptor)
 }
 
 pub(super) fn take_fd(argument: Option<&OsStr>) -> io::Result<OwnedFd> {

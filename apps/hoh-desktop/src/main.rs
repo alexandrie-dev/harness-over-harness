@@ -110,7 +110,12 @@ fn main() {
                 #[cfg(all(feature = "probe", target_os = "linux"))]
                 hoh_desktop::probe::trace("process:exit-event");
                 if let Some(host) = app.try_state::<hoh_desktop::native::Host>() {
-                    hoh_desktop::native::shutdown(app, &host);
+                    let engine_stopped = hoh_desktop::native::shutdown(app, &host);
+                    #[cfg(any(target_os = "linux", target_os = "macos"))]
+                    if engine_stopped && matches!(event, tauri::RunEvent::Exit) {
+                        app.state::<hoh_desktop::auto_update::Installation>()
+                            .acknowledge_shutdown();
+                    }
                 }
             }
         });
