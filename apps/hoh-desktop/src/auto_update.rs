@@ -519,25 +519,36 @@ fn validate_bundle_layout(bundle: &Path, package: Package, version: &Version) ->
 }
 
 #[cfg(target_os = "linux")]
-fn require_managed_linux_bundle(bundle: &Path) -> io::Result<()> {
+fn managed_linux_bundle_files(bundle: &Path) -> io::Result<Option<Vec<PathBuf>>> {
     if !bundle.symlink_metadata()?.is_dir() {
-        return Err(io::ErrorKind::Unsupported.into());
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "expected a directory",
+        ));
     }
+    let mut files = Vec::new();
     for entry in bundle.read_dir()? {
         let entry = entry?;
-        if !entry.file_type()?.is_file()
-            || !matches!(
-                entry.file_name().to_str(),
-                Some("hoh-desktop" | "hoh" | ".hoh-release" | "LICENSE" | "NOTICE")
-            )
+        if !matches!(
+            entry.file_name().to_str(),
+            Some("hoh-desktop" | "hoh" | ".hoh-release" | "LICENSE" | "NOTICE")
+        ) || !entry.file_type()?.is_file()
         {
-            return Err(io::Error::new(
-                io::ErrorKind::Unsupported,
-                "the HoH installation contains user-managed files",
-            ));
+            return Ok(None);
         }
+        files.push(entry.path());
     }
-    Ok(())
+    Ok(Some(files))
+}
+
+#[cfg(target_os = "linux")]
+fn require_managed_linux_bundle(bundle: &Path) -> io::Result<Vec<PathBuf>> {
+    managed_linux_bundle_files(bundle)?.ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::Unsupported,
+            "the HoH installation contains user-managed files",
+        )
+    })
 }
 
 fn validate_bundle(
@@ -652,7 +663,12 @@ fn update(
         return Ok(UpdateOutcome::NoCompatiblePackage(version));
     };
     #[cfg(target_os = "linux")]
-    if require_managed_linux_bundle(installed).is_err() {
+    let inspection_error = |error| format!("Could not inspect the HoH installation ({error}).");
+    #[cfg(target_os = "linux")]
+    if managed_linux_bundle_files(installed)
+        .map_err(inspection_error)?
+        .is_none()
+    {
         return Ok(UpdateOutcome::ManualUpdateAvailable(version));
     }
     if asset.size == 0 || asset.size > MAX_ASSET_SIZE {
@@ -715,7 +731,10 @@ fn update(
     })?;
     candidate::qualify(bundle.join(package.binary_dir).join("hoh"), cancelled)?;
     #[cfg(target_os = "linux")]
-    if require_managed_linux_bundle(installed).is_err() {
+    if managed_linux_bundle_files(installed)
+        .map_err(inspection_error)?
+        .is_none()
+    {
         return Ok(UpdateOutcome::ManualUpdateAvailable(version));
     }
     installation.handoff(executable, installed, staging, package)?;
@@ -796,6 +815,24 @@ pub async fn auto_update(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_bundle_inspection_distinguishes_errors_from_extra_entries() {
+        let parent = tempfile::tempdir().unwrap();
+        let bundle = parent.path().join("app");
+        assert_eq!(
+            managed_linux_bundle_files(&bundle).unwrap_err().kind(),
+            io::ErrorKind::NotFound
+        );
+        fs::create_dir(&bundle).unwrap();
+        fs::write(bundle.join(".hoh-release"), b"0.0.1").unwrap();
+        assert!(managed_linux_bundle_files(&bundle).unwrap().is_some());
+
+        let link = bundle.join("hoh");
+        std::os::unix::fs::symlink("external", &link).unwrap();
+        assert!(managed_linux_bundle_files(&bundle).unwrap().is_none());
+    }
 
     #[test]
     fn staging_survives_an_unconfirmed_helper_exit() {

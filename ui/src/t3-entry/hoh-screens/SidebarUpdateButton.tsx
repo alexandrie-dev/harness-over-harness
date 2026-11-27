@@ -22,7 +22,7 @@ function updateMessage(state: UpdateState): string {
     case 'upToDate':
       return 'HoH is up to date.';
     case 'rolledBack':
-      return 'The update could not start. HoH restored the previous version.';
+      return 'The update did not complete. HoH kept the previous version.';
     case 'noCompatiblePackage':
       return `HoH ${state.version} has no package for this system.`;
     case 'available':

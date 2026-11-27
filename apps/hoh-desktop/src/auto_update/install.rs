@@ -634,10 +634,10 @@ fn recover_pending(
         confirm_interrupted_engine_stopped(&status)?;
     }
     if restored {
-        recovery.exchange(installed)?;
+        recovery.restore_previous(installed)?;
     }
     recovery.sync_exchange(installed)?;
-    if let Err(error) = recovery.finish() {
+    if let Err(error) = recovery.finish(package) {
         eprintln!("HoH could not clean up the interrupted update: {error}");
     }
     if restored {
@@ -694,9 +694,9 @@ fn worker(
         }
     };
     let executable = installed.join(package.binary_dir).join("hoh-desktop");
-    if let Err(error) = recovery.exchange(installed) {
+    if let Err(error) = recovery.install_candidate(installed) {
         eprintln!("HoH could not replace the installation: {error}");
-        let _ = recovery.finish();
+        let _ = recovery.finish(package);
         return restart_previous(package, installed, args, instance, &lease);
     }
     let mut user_quit = false;
@@ -717,7 +717,7 @@ fn worker(
                 Ok(()) => {
                     candidate.lock_shared()?;
                     lifecycle.write_all(&[COMMIT_COMPLETE])?;
-                    return recovery.finish();
+                    return recovery.finish(package);
                 }
                 Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
                 Err(error) => eprintln!("HoH could not commit the updated installation: {error}"),
@@ -735,8 +735,10 @@ fn worker(
         Decision::UserQuit => user_quit = true,
         Decision::Pending | Decision::Rollback => {}
     }
-    recovery.exchange(installed)?;
-    let result = recovery.sync_exchange(installed).and_then(|()| recovery.finish());
+    recovery.restore_previous(installed)?;
+    let result = recovery
+        .sync_exchange(installed)
+        .and_then(|()| recovery.finish(package));
     if !user_quit {
         restart_previous(package, installed, args, instance, &lease)?;
     }

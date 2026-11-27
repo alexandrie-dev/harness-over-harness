@@ -21,6 +21,7 @@ use std::{
 
 const PENDING: &str = "pending.json";
 const ENGINE_STATUS: &str = "candidate-engine";
+const DECISION: &str = "decision";
 const ROLLBACK_SUFFIX: &str = "-rollback";
 const BACKUP_SUFFIX: &str = "-rollback-bundle";
 const RETIRED_PREFIX: &str = ".hoh-retired-";
@@ -151,11 +152,11 @@ impl Recovery {
             ));
         }
         if directory_metadata(&directory)?.is_some() {
-            retire_directory(&directory)?;
+            retire_recovery_directory(&directory, package)?;
         }
         let backup = sibling_path(installed, BACKUP_SUFFIX)?;
         if directory_metadata(&backup)?.is_some() {
-            retire_directory(&backup)?;
+            retire_directory(&backup, remove_displaced_bundle)?;
         }
         let unpacked = staging.join("unpacked");
         let staged_bundle = staging.join(package.install_dir);
@@ -221,7 +222,7 @@ impl Recovery {
     }
 
     fn decision_path(&self) -> PathBuf {
-        self.directory.join("decision")
+        self.directory.join(DECISION)
     }
 
     pub(super) fn commit(&self) -> io::Result<()> {
@@ -268,7 +269,13 @@ impl Recovery {
         }
     }
 
-    pub(super) fn exchange(&self, installed: &Path) -> io::Result<()> {
+    pub(super) fn install_candidate(&self, installed: &Path) -> io::Result<()> {
+        #[cfg(target_os = "linux")]
+        require_managed_linux_bundle(installed)?;
+        swap_directories(installed, self.backup())
+    }
+
+    pub(super) fn restore_previous(&self, installed: &Path) -> io::Result<()> {
         swap_directories(installed, self.backup())
     }
 
@@ -277,10 +284,10 @@ impl Recovery {
         sync_directory(parent(installed)?)
     }
 
-    pub(super) fn finish(&self) -> io::Result<()> {
-        retire_directory(&self.directory)?;
+    pub(super) fn finish(&self, package: Package) -> io::Result<()> {
+        retire_recovery_directory(&self.directory, package)?;
         if self.backup.parent() != Some(self.directory.as_path()) {
-            retire_directory(&self.backup)?;
+            retire_directory(&self.backup, remove_displaced_bundle)?;
         }
         Ok(())
     }
@@ -295,7 +302,47 @@ fn directory_metadata(path: &Path) -> io::Result<Option<fs::Metadata>> {
     }
 }
 
-fn retire_directory(directory: &Path) -> io::Result<()> {
+fn retire_recovery_directory(directory: &Path, _package: Package) -> io::Result<()> {
+    retire_directory(directory, |retired| {
+        #[cfg(target_os = "linux")]
+        {
+            let legacy_backup = retired.join(_package.install_dir);
+            if directory_metadata(&legacy_backup)?.is_some() {
+                remove_displaced_bundle(&legacy_backup)?;
+            }
+            for name in [PENDING, ENGINE_STATUS, DECISION] {
+                match fs::remove_file(retired.join(name)) {
+                    Ok(()) => {}
+                    Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                    Err(error) => return Err(error),
+                }
+            }
+            fs::remove_dir(retired)
+        }
+        #[cfg(target_os = "macos")]
+        fs::remove_dir_all(retired)
+    })
+}
+
+fn remove_displaced_bundle(bundle: &Path) -> io::Result<()> {
+    #[cfg(target_os = "linux")]
+    {
+        for file in require_managed_linux_bundle(bundle)? {
+            if !file.symlink_metadata()?.is_file() {
+                return Err(io::ErrorKind::DirectoryNotEmpty.into());
+            }
+            fs::remove_file(file)?;
+        }
+        fs::remove_dir(bundle)
+    }
+    #[cfg(target_os = "macos")]
+    fs::remove_dir_all(bundle)
+}
+
+fn retire_directory(
+    directory: &Path,
+    cleanup: impl FnOnce(&Path) -> io::Result<()>,
+) -> io::Result<()> {
     let parent = parent(directory)?;
     let retired = tempfile::Builder::new()
         .prefix(RETIRED_PREFIX)
@@ -303,7 +350,7 @@ fn retire_directory(directory: &Path) -> io::Result<()> {
     fs::rename(directory, retired.path())?;
     let retired = retired.keep();
     sync_directory(parent)?;
-    if let Err(error) = fs::remove_dir_all(&retired) {
+    if let Err(error) = cleanup(&retired) {
         eprintln!("HoH could not delete {}: {error}", retired.display());
     }
     Ok(())
@@ -363,6 +410,98 @@ mod tests {
         assert!(Recovery::open(&installed, package).unwrap().is_none());
     }
 
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn initial_exchange_rechecks_the_installation_after_publication() {
+        let parent = tempfile::tempdir().unwrap();
+        let package = super::super::package_for("linux", "x86_64").unwrap();
+        let (installed, staging) = prepare_update(parent.path(), package);
+        let (recovery, _candidate) = Recovery::publish(&installed, &staging, package).unwrap();
+        let plugin = installed.join("prepared-plugin");
+        fs::write(&plugin, b"plugin").unwrap();
+
+        let error = recovery.install_candidate(&installed).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::Unsupported);
+        assert!(!recovery.is_swapped(&installed).unwrap());
+
+        recovery.finish(package).unwrap();
+        assert_eq!(fs::read(plugin).unwrap(), b"plugin");
+        assert!(!recovery.backup().exists());
+        assert!(Recovery::open(&installed, package).unwrap().is_none());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn cleanup_preserves_a_plugin_displaced_by_the_exchange() {
+        let parent = tempfile::tempdir().unwrap();
+        let package = super::super::package_for("linux", "x86_64").unwrap();
+        let (installed, staging) = prepare_update(parent.path(), package);
+        let (recovery, _candidate) = Recovery::publish(&installed, &staging, package).unwrap();
+        require_managed_linux_bundle(&installed).unwrap();
+        fs::create_dir(installed.join("my-plugin")).unwrap();
+        fs::write(installed.join("my-plugin/hoh-package.json"), b"plugin").unwrap();
+        swap_directories(&installed, recovery.backup()).unwrap();
+        recovery.commit().unwrap();
+
+        recovery.finish(package).unwrap();
+
+        let retired = retired_directories(parent.path());
+        assert_eq!(retired.len(), 1);
+        assert_eq!(
+            fs::read(retired[0].join("my-plugin/hoh-package.json")).unwrap(),
+            b"plugin"
+        );
+        assert!(!recovery.backup().exists());
+        assert!(Recovery::open(&installed, package).unwrap().is_none());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn publish_preserves_stale_sibling_and_nested_backups() {
+        let parent = tempfile::tempdir().unwrap();
+        let package = super::super::package_for("linux", "x86_64").unwrap();
+        let (installed, staging) = prepare_update(parent.path(), package);
+        let backup = sibling_path(&installed, BACKUP_SUFFIX).unwrap();
+        let legacy_backup = sibling_path(&installed, ROLLBACK_SUFFIX)
+            .unwrap()
+            .join(package.install_dir);
+        fs::create_dir(&backup).unwrap();
+        fs::write(backup.join("sibling-plugin"), b"sibling").unwrap();
+        fs::create_dir_all(&legacy_backup).unwrap();
+        fs::write(legacy_backup.join("nested-plugin"), b"nested").unwrap();
+
+        let (recovery, _candidate) = Recovery::publish(&installed, &staging, package).unwrap();
+        recovery.install_candidate(&installed).unwrap();
+        recovery.finish(package).unwrap();
+
+        let retired = retired_directories(parent.path());
+        assert_eq!(retired.len(), 2);
+        assert!(retired.iter().any(|directory| {
+            fs::read(directory.join("sibling-plugin")).is_ok_and(|contents| contents == b"sibling")
+        }));
+        assert!(retired.iter().any(|directory| {
+            fs::read(directory.join(package.install_dir).join("nested-plugin"))
+                .is_ok_and(|contents| contents == b"nested")
+        }));
+        assert!(!backup.exists());
+        assert!(Recovery::open(&installed, package).unwrap().is_none());
+    }
+
+    #[cfg(target_os = "linux")]
+    fn retired_directories(parent: &Path) -> Vec<PathBuf> {
+        fs::read_dir(parent)
+            .unwrap()
+            .map(|entry| entry.unwrap())
+            .filter(|entry| {
+                entry
+                    .file_name()
+                    .as_bytes()
+                    .starts_with(RETIRED_PREFIX.as_bytes())
+            })
+            .map(|entry| entry.path())
+            .collect()
+    }
+
     #[test]
     fn user_quit_and_commit_are_mutually_exclusive() {
         let directory = tempfile::tempdir().unwrap();
@@ -401,8 +540,28 @@ mod tests {
             ("linux", "x86_64")
         };
         let package = super::super::package_for(os, arch).unwrap();
-        let installed = parent.path().join(package.install_dir);
-        let staging = parent.path().join(".hoh-update-test");
+        let (installed, staging) = prepare_update(parent.path(), package);
+        let candidate = package.staged_in(&staging.join("unpacked")).unwrap();
+
+        Recovery::check_exchange_permissions(&installed, &candidate).unwrap();
+        let previous = installed.metadata().unwrap().ino();
+        let (published, _next) = Recovery::publish(&installed, &staging, package).unwrap();
+        assert_eq!(published.backup().parent(), installed.parent());
+        assert!(is_backup(published.backup()));
+        published.install_candidate(&installed).unwrap();
+
+        let reopened = Recovery::open(&installed, package).unwrap().unwrap();
+        assert!(reopened.is_swapped(&installed).unwrap());
+        assert_eq!(reopened.backup().metadata().unwrap().mode() & 0o777, 0o755);
+        reopened.restore_previous(&installed).unwrap();
+        assert_eq!(installed.metadata().unwrap().ino(), previous);
+        reopened.finish(package).unwrap();
+        assert!(!published.backup().exists());
+    }
+
+    fn prepare_update(parent: &Path, package: Package) -> (PathBuf, PathBuf) {
+        let installed = parent.join(package.install_dir);
+        let staging = parent.join(".hoh-update-test");
         let unpacked = staging.join("unpacked");
         let candidate_parent = if package.extension == "zip" {
             unpacked
@@ -418,20 +577,6 @@ mod tests {
         fs::set_permissions(&installed, fs::Permissions::from_mode(0o755)).unwrap();
         fs::set_permissions(&candidate, fs::Permissions::from_mode(0o755)).unwrap();
         fs::write(staging.join(package.asset_name()), b"archive").unwrap();
-
-        Recovery::check_exchange_permissions(&installed, &candidate).unwrap();
-        let previous = installed.metadata().unwrap().ino();
-        let (published, _next) = Recovery::publish(&installed, &staging, package).unwrap();
-        assert_eq!(published.backup().parent(), installed.parent());
-        assert!(is_backup(published.backup()));
-        published.exchange(&installed).unwrap();
-
-        let reopened = Recovery::open(&installed, package).unwrap().unwrap();
-        assert!(reopened.is_swapped(&installed).unwrap());
-        assert_eq!(reopened.backup().metadata().unwrap().mode() & 0o777, 0o755);
-        reopened.exchange(&installed).unwrap();
-        assert_eq!(installed.metadata().unwrap().ino(), previous);
-        reopened.finish().unwrap();
-        assert!(!published.backup().exists());
+        (installed, staging)
     }
 }
