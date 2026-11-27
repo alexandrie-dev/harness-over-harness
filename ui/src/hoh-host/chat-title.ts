@@ -10,6 +10,8 @@ const ARTICLE = /^(?:a|an|the)$/iu;
 const CONNECTOR = /^(?:a|an|the|and|or|of|to|for|with|in|on|at|from|by|about|before|after|during|в|во|на|и|или|с|со|к|ко|по|из|для|без|от|про|при|о|об|обо|у|за|до|через|после|перед|между|над|под)$/iu;
 const CJK = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]/u;
 const FRENCH_CONNECTOR = /^(?:à|au|aux|avec|chez|dans|de|des|du|en|et|la|le|les|par|pour|sans|sous|sur|un|une)$/iu;
+const SUPPORTED_PROMPT_WORD = /^(?:please|the|fix|add|remove|rename|update|build|improve|check|debug|review|test|write|show|make|open|which|what|where|when|why|how|create|implement|refactor|explain|configurer|corriger|ajouter|modifier|améliorer|[а-яё]+)$/iu;
+const NON_PROSE = /```|https?:\/\//i;
 const SUPPORTED_LANGUAGE_WORD = /^(?:the|and|with|from|about|before|after|during|very|au|aux|avec|chez|du|pour|sans|sous|или|для|через|после|перед|между|[а-яё]*(?:ческих|[ёыэ])[а-яё]*)$/iu;
 const QUOTED_SUBJECT = /(?<![\p{L}\p{N}])(?:плагин|проект|страниц[уа]|модуль|plugin|project|page|module)\s+[«“"]([^»”"\n]+)[»”"]/giu;
 
@@ -26,8 +28,8 @@ export function isAttachmentBootstrapTitle(title: string): boolean {
 }
 
 export function shortTitleFromPrompt(prompt: string): string {
-  const named = explicitTitleFromPrompt(prompt);
-  if (named) return named;
+  const names = explicitTitlesFromPrompt(prompt);
+  if (names.length === 1) return names[0];
   const prose = titleSource(prompt)
     .replace(/```[\s\S]*?(?:```|$)/g, ' ')
     .replace(/https?:\/\/\S+/gi, ' ')
@@ -46,15 +48,18 @@ export function shortTitleFromPrompt(prompt: string): string {
   return '';
 }
 
-export function explicitTitleFromPrompt(prompt: string): string {
-  return explicitTitlesFromPrompt(prompt)[0] ?? '';
+export function fallbackTitleSeed(prompt: string, seed: string | undefined): string {
+  const title = titleSource(seed ?? '', 80).replace(/\s+/gu, ' ');
+  if (!title || isAttachmentBootstrapTitle(title)) return '';
+  return NON_PROSE.test(prompt) || shortTitleFromPrompt(title) ? title : '';
 }
 
 export function explicitTitlesFromPrompt(prompt: string): string[] {
-  return Array.from(titleSource(prompt).matchAll(QUOTED_SUBJECT), ([, name]) => {
+  const names = Array.from(titleSource(prompt).matchAll(QUOTED_SUBJECT), ([, name]) => {
     const exact = name.trim().replace(/ +/g, ' ');
     return shortGeneratedTitle(exact, [exact]);
   }).filter(Boolean);
+  return [...new Set(names)];
 }
 
 export function titleGenerationPrompt(messages: readonly string[], currentTitle?: string): string {
@@ -78,7 +83,7 @@ User messages in chronological order as a JSON array:
 ${JSON.stringify(messages)}`;
 }
 
-export function shortGeneratedTitle(value: unknown, exactNames: readonly string[] = []): string {
+export function shortGeneratedTitle(value: unknown, exactNames: readonly string[] = [], prompt = ''): string {
   if (typeof value !== 'string' || /[\p{Cc}\p{Cf}]/u.test(value)) return '';
   const title = value.trim().replace(/ +/g, ' ');
   if (title.length > MAX_TITLE_LENGTH) return '';
@@ -92,6 +97,8 @@ export function shortGeneratedTitle(value: unknown, exactNames: readonly string[
   if (exactNames.includes(title)) return title;
   if (words.length < 2) return '';
   const meaningful = words.filter(word => !CONNECTOR.test(word) && !FRENCH_CONNECTOR.test(word)).length;
-  const supported = words.some(word => SUPPORTED_LANGUAGE_WORD.test(word));
+  const promptWords = (prompt.match(WORD) ?? []);
+  const supported = words.some(word => SUPPORTED_LANGUAGE_WORD.test(word))
+    || promptWords.some(word => SUPPORTED_PROMPT_WORD.test(word) || SUPPORTED_LANGUAGE_WORD.test(word));
   return meaningful >= 2 && (!supported || meaningful <= 3) ? title : '';
 }

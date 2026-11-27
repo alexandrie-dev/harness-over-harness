@@ -22,7 +22,7 @@ import {
   isAccessMode, KEYBINDINGS_LOCATION, presentProvider, type EnvironmentPlatform, type T3InteractionMode,
 } from './config.ts';
 import { usagePricing, usageSummary, type UsageSummaryInput } from './usage.ts';
-import { explicitTitleFromPrompt, explicitTitlesFromPrompt, isAttachmentBootstrapTitle, shortGeneratedTitle, shortTitleFromPrompt, titleGenerationPrompt, titleSource } from './chat-title.ts';
+import { explicitTitlesFromPrompt, fallbackTitleSeed, isAttachmentBootstrapTitle, shortGeneratedTitle, shortTitleFromPrompt, titleGenerationPrompt, titleSource } from './chat-title.ts';
 import type { EngineNotification, EngineQuestion, EngineQuestionAnswer, HohEngine, LocalImageAsset } from './engine.ts';
 import { base64Of, readUploads, searchAnswer, skillsAsCommands, stripAttachedImageReferences, UPLOAD_PATH, UPLOAD_TTL_MS, uploadSlot, workspaceSnapshot, type KeptImage, type UploadSlot } from './composer.ts';
 import { englishError, hostFailure } from './errors.ts';
@@ -459,7 +459,13 @@ export class HohHost {
   // ---- projects kept between runs ----
 
   private restore() {
-    try { this.autoTitlesEnabled = this.storage?.getItem(CHAT_TITLE_SETTINGS_KEY) !== 'false'; } catch { /* Keep the default. */ }
+    try {
+      const setting = JSON.parse(this.storage?.getItem(CHAT_TITLE_SETTINGS_KEY) ?? 'true');
+      this.autoTitlesEnabled = setting !== false && setting?.enabled !== false;
+      if (!this.autoTitlesEnabled && typeof setting?.cancellationId === 'string') {
+        this.automaticTitleCancellationId = setting.cancellationId || undefined;
+      }
+    } catch { /* Keep the default. */ }
     let saved: any = null;
     try { saved = JSON.parse(this.storage?.getItem(STORAGE_KEY) ?? 'null'); } catch { saved = null; }
     for (const entry of Array.isArray(saved?.projects) ? saved.projects : []) {
@@ -559,7 +565,9 @@ export class HohHost {
       }
       if (!this.storage) throw new Error('Chat settings could not be saved on this device.');
       if (enabled) await this.cancelAutomaticTitleRequests();
-      this.storage.setItem(CHAT_TITLE_SETTINGS_KEY, String(enabled));
+      const cancellationId = this.automaticTitleCancellationId;
+      this.storage.setItem(CHAT_TITLE_SETTINGS_KEY, !enabled && cancellationId
+        ? JSON.stringify({ enabled: false, cancellationId }) : String(enabled));
       this.autoTitlesEnabled = enabled;
       const cancellation = enabled ? undefined : this.cancelAutomaticTitleRequests();
       for (const listener of this.titleSettingListeners) listener();
@@ -2849,7 +2857,7 @@ export class HohHost {
    * One message to the engine: its pictures first (the bytes kept from T3's upload or `assets.persistChatAttachments`; the engine's
    * attachment store checks and copies them), then the text in the syntax supported by the selected harness.
    */
-  private async send(thread: ThreadModel, messageId: string, text: string, attachments: unknown = [], interactionMode?: T3InteractionMode, context?: { records?: unknown }, edit?: { blocks: unknown[]; shown: ShownAttachment[]; authoringPrefix?: string }) {
+  private async send(thread: ThreadModel, messageId: string, text: string, attachments: unknown = [], interactionMode?: T3InteractionMode, context?: { records?: unknown }, edit?: { blocks: unknown[]; shown: ShownAttachment[]; authoringPrefix?: string }, titleSeed?: string) {
     if (!thread.builtin) await this.requireAccess();
     if (!this.sessionAccessKnown.has(thread.id)) await this.notificationAccess.get(thread.id);
     if (this.deletingThreads.has(thread.id) || this.deletedThreads.has(thread.id) || this.threads.get(thread.id) !== thread)
@@ -2920,7 +2928,7 @@ export class HohHost {
       }
       if (titleInput && !this.titles.has(thread.id) && !this.titleRequests.has(thread.id) && this.canApplyAutomaticTitle(thread)) {
         if (this.autoTitlesEnabled) {
-          const fallbackTitle = shortTitleFromPrompt(titleInput);
+          const fallbackTitle = shortTitleFromPrompt(titleInput) || fallbackTitleSeed(titleInput, titleSeed);
           if (fallbackTitle) this.setAutomaticTitle(thread, fallbackTitle);
           else this.save();
           void this.generateTitle(thread, titleInput, true).catch(() => { /* Keep the local title. */ });
@@ -3070,6 +3078,7 @@ export class HohHost {
     if (!cancellationId) return;
     for (const [id, request] of this.titleRequests) if (request.automatic) this.titleRequests.delete(id);
     const cancellation = this.cancelExecutorTitle(cancellationId).then(() => {
+      if (!this.autoTitlesEnabled) this.storage?.setItem(CHAT_TITLE_SETTINGS_KEY, 'false');
       this.automaticTitleCancellationId = undefined;
       if (!this.autoTitlesEnabled) for (const listener of this.titleSettingListeners) listener();
     }).finally(() => { this.automaticTitleCancellation = undefined; });
@@ -3125,14 +3134,16 @@ export class HohHost {
         if (!automatic && hostFailure(error).code === 'chat-title-route-unavailable') return null;
         throw error;
       });
+      const latestNames = explicitTitlesFromPrompt(latest);
+      const otherNames = prompts.slice(0, -1).flatMap(explicitTitlesFromPrompt);
       const generated = response === null
         ? shortTitleFromPrompt(latest)
-        : shortGeneratedTitle(response?.title, prompts.flatMap(explicitTitlesFromPrompt));
+        : shortGeneratedTitle(response?.title, [...otherNames, ...latestNames], latest);
       if (!generated) throw new Error('The model did not return a valid chat title.');
       if (!current() || (automatic && (!this.autoTitlesEnabled || !this.canApplyAutomaticTitle(thread)))) {
         throw new Error('The title request was superseded.');
       }
-      const title = explicitTitleFromPrompt(latest) || generated;
+      const title = latestNames.length === 1 ? latestNames[0] : generated;
       if (title !== baseline) {
         if (!automatic) this.threadMetadata.update(thread.id, { title });
         this.setAutomaticTitle(thread, title);
@@ -3610,7 +3621,8 @@ export class HohHost {
         this.setLevel(thread, input.modelSelection?.options);
         await this.withSelectionMutation(async () => {
           if (existing) await this.applyMode(existing, input.runtimeMode);
-          await this.send(thread, messageId, message.text, message.attachments, interactionMode, message.context);
+          const titleSeed = automaticTitle && !hasImage && typeof input.title === 'string' ? input.title : undefined;
+          await this.send(thread, messageId, message.text, message.attachments, interactionMode, message.context, undefined, titleSeed);
         });
       } else if (existing) {
         await this.withSelectionMutation(() => this.applyMode(existing, input.runtimeMode));

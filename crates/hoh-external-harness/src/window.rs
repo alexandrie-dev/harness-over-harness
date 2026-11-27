@@ -579,11 +579,8 @@ impl Window {
             let agent = self
                 .agents
                 .get(&SessionId::from(id.as_str()))
-                .ok_or("The chat is unavailable for title generation.")?;
-            let route = agent
-                .model()
-                .current()
-                .ok_or("The chat's model is unavailable.")?;
+                .ok_or(TITLE_ROUTE_UNAVAILABLE)?;
+            let route = agent.model().current().ok_or(TITLE_ROUTE_UNAVAILABLE)?;
             if params.executor == "builtin" {
                 if self.session_access(&id).await?.builtin != Some(true) {
                     return Err("The chat is not bound to the built-in agent.".into());

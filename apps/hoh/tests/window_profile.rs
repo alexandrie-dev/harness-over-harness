@@ -288,20 +288,31 @@ async fn window_profile_initializes_streams_a_mock_prompt_and_shuts_down() {
     assert_eq!(body["model"], "window-mock", "{body}");
     assert_eq!(body["stream"], true, "{body}");
 
-    for (id, executor) in [("wrong-harness", "codex"), ("generate-title", "builtin")] {
+    for (id, executor, session_id) in [
+        ("wrong-harness", "codex", "window-main"),
+        ("missing-route", "codex", "not-resumed"),
+        ("generate-title", "builtin", "window-main"),
+    ] {
         send(
             &mut stdin,
             json!({
                 "jsonrpc":"2.0",
                 "id":id,
                 "method":"hoh/executor/title/generate",
-                "params":{"executor":executor,"sessionId":"window-main","prompt":"Return a short title as JSON"}
+                "params":{"executor":executor,"sessionId":session_id,"prompt":"Return a short title as JSON"}
             }),
         )
         .await;
         let result = receive_until(&mut stdout, &mut seen, |frame| frame["id"] == id).await;
         if executor == "builtin" {
             assert_eq!(result["result"]["title"], "Названия чатов", "{result}");
+        } else if id == "missing-route" {
+            assert!(
+                result["error"]["message"]
+                    .as_str()
+                    .is_some_and(|message| message.starts_with("CHAT_TITLE_ROUTE_UNAVAILABLE:")),
+                "{result}"
+            );
         } else {
             assert!(result.get("error").is_some(), "{result}");
         }

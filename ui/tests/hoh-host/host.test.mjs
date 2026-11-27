@@ -1449,6 +1449,7 @@ test('turning off automatic titles persists and explicit naming uses the bound c
     ['named-dotnet', 'Update project ".NET"', '.NET', '.NET'],
     ['named-cpp', 'Fix module "C++"', 'C++', 'C++'],
     ['named-article', 'Update project "The Who"', 'The Who', 'The Who'],
+    ['several-named-objects', 'Compare module "Alpha" and module "Beta"', 'Beta', 'Beta'],
     ['title-connectors', 'Добавь уведомления о платежах Stripe', 'Уведомления о платежах Stripe', 'Уведомления о платежах Stripe'],
     ['title-french', 'Le tableau du PDG ne s’ouvre plus', 'Accès au tableau du PDG', 'Accès au tableau du PDG'],
     ['title-french-ascii', 'Configurer le serveur de production', 'Configuration du serveur de production', 'Configuration du serveur de production'],
@@ -1462,6 +1463,12 @@ test('turning off automatic titles persists and explicit naming uses the bound c
     assert.equal(await rename, expected);
     assert.equal((await projection(id)).thread.title, expected);
   }
+
+  await launch('english-noun-phrase', 'Review login redirect behavior');
+  const longEnglishTitle = assert.rejects(settings.rename('english-noun-phrase'), /valid chat title/);
+  await tick(5);
+  titleRequests.at(-1).resolve({ title: 'Login Redirect Authorization Failure' });
+  await longEnglishTitle;
 
   await launch('current-subject', 'Делаю плагин «OldSubject»');
   await client.call('orchestration.dispatchCommand', {
@@ -1486,26 +1493,80 @@ test('turning off automatic titles persists and explicit naming uses the bound c
   await invalidName;
 });
 
+test('an unconfirmed automatic title cancellation can be retried after restart', async t => {
+  const values = new Map();
+  const storage = { getItem: key => values.get(key) ?? null, setItem: (key, value) => values.set(key, value) };
+  const engine = new FakeEngine();
+  const request = engine.request.bind(engine);
+  let automaticId;
+  engine.request = (method, params) => {
+    if (method === 'hoh/executor/title/generate') {
+      automaticId = params.cancellationId;
+      return Promise.reject(new Error('Offline'));
+    }
+    if (method === 'hoh/executor/title/cancel') return Promise.reject(new Error('Offline'));
+    return request(method, params);
+  };
+  const original = connect(engine, { storage });
+  t.after(() => { original.host.stop(); original.client.close(); });
+  await original.client.call('orchestration.launchThread', {
+    commandId: 'cancel', threadId: 'cancel', projectId: 'hoh-project', generateTitle: true,
+    modelSelection: { instanceId: 'codex', model: 'gpt-6-sol' }, runtimeMode: 'approval-required',
+    initialMessage: { messageId: 'cancel-message', text: 'Fix login redirect', attachments: [] },
+  });
+  assert.equal(typeof automaticId, 'string');
+  await assert.rejects(original.host.chatTitles.setEnabled(false), /Offline/);
+  original.host.stop();
+
+  const restartedEngine = new FakeEngine({ store: engine.store });
+  const restartedRequest = restartedEngine.request.bind(restartedEngine);
+  let cancellationId;
+  restartedEngine.request = (method, params) => {
+    if (method !== 'hoh/executor/title/cancel') return restartedRequest(method, params);
+    cancellationId = params.cancellationId;
+    return Promise.resolve({ cancelled: true });
+  };
+  const restarted = connect(restartedEngine, { storage });
+  t.after(() => { restarted.host.stop(); restarted.client.close(); });
+  assert.equal(restarted.host.chatTitles.getEnabled(), false);
+  assert.equal(restarted.host.chatTitles.getCancellationPending(), true);
+  await restarted.host.chatTitles.setEnabled(false);
+  assert.equal(cancellationId, automaticId);
+  assert.equal(restarted.host.chatTitles.getCancellationPending(), false);
+  const confirmed = connect(new FakeEngine({ store: engine.store }), { storage });
+  t.after(() => { confirmed.host.stop(); confirmed.client.close(); });
+  assert.equal(confirmed.host.chatTitles.getEnabled(), false);
+  assert.equal(confirmed.host.chatTitles.getCancellationPending(), false);
+});
+
 test('executor naming accepts code and URLs without synthetic image references', async t => {
   const engine = new FakeEngine();
   const request = engine.request.bind(engine);
   const titleCalls = [];
+  const values = new Map();
+  const storage = { getItem: key => values.get(key) ?? null, setItem: (key, value) => values.set(key, value) };
   engine.request = (method, params) => {
     if (method !== 'hoh/executor/title/generate') return request(method, params);
     titleCalls.push(params);
+    if (titleCalls.length % 2 === 1) return Promise.reject(new Error('Offline'));
     return Promise.resolve({ title: 'Input Review' });
   };
-  const { host, client } = connect(engine);
+  const { host, client } = connect(engine, { storage });
   t.after(() => { host.stop(); client.close(); });
-  for (const [threadId, content] of [
-    ['title-code', '```js\nconsole.log(1);\n```'],
-    ['title-url', 'https://example.com/reference'],
+  for (const [threadId, content, seed] of [
+    ['title-code', '```js\nconsole.log(1);\n```', 'Code sample'],
+    ['title-url', 'https://example.com/reference', 'Reference URL'],
   ]) {
-    await client.call('orchestration.launchThread', {
+    const launched = await client.call('orchestration.launchThread', {
       commandId: threadId, threadId, projectId: 'hoh-project', generateTitle: true,
+      title: seed + ' ![picture](t3-context://v1/image/image_1)',
       modelSelection: { instanceId: 'claudeAgent', model: 'claude-sonnet' }, runtimeMode: 'approval-required',
       initialMessage: { messageId: 'm-' + threadId, text: content + ' ![picture](t3-context://v1/image/image_1)', attachments: [] },
     });
+    assert.equal(launched.projection.thread.title, seed);
+    const reopened = connect(new FakeEngine({ store: engine.store }), { storage });
+    t.after(() => { reopened.host.stop(); reopened.client.close(); });
+    assert.equal((await reopened.client.call('orchestration.getThreadProjection', { threadId })).thread.title, seed);
     assert.equal(titleCalls.at(-1).sessionId, threadId);
     assert(titleCalls.at(-1).prompt.includes(JSON.stringify([content])));
     assert.equal(await host.chatTitles.rename(threadId), 'Input Review');

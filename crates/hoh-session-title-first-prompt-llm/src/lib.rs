@@ -258,40 +258,76 @@ fn is_title_connector(word: &str) -> bool {
     )
 }
 
+fn is_english_language_hint(word: &str) -> bool {
+    matches!(
+        word,
+        "the" | "and" | "with" | "from" | "about" | "before" | "after" | "during" | "very"
+    )
+}
+
+fn has_supported_source_hint(text: &str) -> bool {
+    let mut words = text
+        .split(|character: char| !character.is_alphabetic())
+        .filter(|word| !word.is_empty())
+        .map(str::to_lowercase);
+    let Some(first) = words.next() else {
+        return false;
+    };
+    matches!(
+        first.as_str(),
+        "add"
+            | "build"
+            | "change"
+            | "check"
+            | "create"
+            | "explain"
+            | "fix"
+            | "improve"
+            | "implement"
+            | "please"
+            | "refactor"
+            | "remove"
+            | "rename"
+            | "update"
+            | "добавь"
+            | "исправь"
+            | "настрой"
+            | "обнови"
+            | "проверь"
+            | "сделай"
+            | "создай"
+            | "ускорь"
+    ) || is_english_language_hint(&first)
+        || words.any(|word| is_english_language_hint(&word))
+}
+
 fn has_supported_connector_language(word: &str) -> bool {
     let word = word.to_lowercase();
-    matches!(
-        word.as_str(),
-        "the"
-            | "and"
-            | "with"
-            | "from"
-            | "about"
-            | "before"
-            | "after"
-            | "during"
-            | "very"
-            | "au"
-            | "aux"
-            | "avec"
-            | "chez"
-            | "du"
-            | "pour"
-            | "sans"
-            | "sous"
-            | "или"
-            | "для"
-            | "через"
-            | "после"
-            | "перед"
-            | "между"
-    ) || (word.chars().all(|ch| matches!(ch, 'а'..='я' | 'ё'))
-        && (word.contains("ческих") || word.contains(['ё', 'ы', 'э'])))
+    is_english_language_hint(&word)
+        || matches!(
+            word.as_str(),
+            "au" | "aux"
+                | "avec"
+                | "chez"
+                | "du"
+                | "pour"
+                | "sans"
+                | "sous"
+                | "или"
+                | "для"
+                | "через"
+                | "после"
+                | "перед"
+                | "между"
+        )
+        || (word.chars().all(|ch| matches!(ch, 'а'..='я' | 'ё'))
+            && (word.contains("ческих") || word.contains(['ё', 'ы', 'э'])))
 }
 
 fn title_from_response(
     response: &SessionTitleLlmResponse,
     max_words: Option<NonZeroUsize>,
+    source: &str,
 ) -> Result<String, BoxError> {
     match &response.finish {
         SessionTitleLlmFinish::Stop(_) => {}
@@ -329,7 +365,8 @@ fn title_from_response(
         }
         let supported = title
             .split_whitespace()
-            .any(has_supported_connector_language);
+            .any(has_supported_connector_language)
+            || has_supported_source_hint(source);
         if supported
             && title
                 .split_whitespace()
@@ -386,7 +423,7 @@ impl SessionTitleProvider for FirstPromptProvider {
             )
             .await?;
             Ok(SessionTitleProviderResult {
-                title: title_from_response(&response, config.max_words)?,
+                title: title_from_response(&response, config.max_words, &first.text)?,
                 message_seqs: vec![first.seq],
                 model: Some(response.model),
             })

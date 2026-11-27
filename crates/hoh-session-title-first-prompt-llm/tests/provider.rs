@@ -619,6 +619,37 @@ async fn keeps_the_three_word_fallback_when_the_model_exceeds_the_configured_lim
 }
 
 #[tokio::test]
+async fn rejects_overlong_english_titles_without_connectors() {
+    let env = setup_with_route(
+        chunks([
+            json!({"type":"text-delta","index":0,"text":"Search Index Cache Updates"}),
+            json!({"type":"finish","reason":{"kind":"stop"}}),
+        ]),
+        &[],
+        Some(("title-route", "title-model")),
+        "title-route",
+        32,
+        Some(3),
+    )
+    .await;
+    let session = session(&env, "overlong-english-title");
+    append_human(&session, "Fix search indexing");
+
+    assert_eq!(
+        env.titles
+            .refresh(&session, None)
+            .await
+            .unwrap_err()
+            .to_string(),
+        "session-title-llm: title output exceeds 3 content words"
+    );
+    let title = env.titles.get(&session).unwrap();
+    assert_eq!(title.title, "Fix search indexing");
+    assert!(matches!(title.source, SessionTitleSource::Fallback));
+    env.shutdown().await;
+}
+
+#[tokio::test]
 async fn rejects_nontext_terminal_results_tool_blocks_and_empty_text() {
     let cases = [
         (
