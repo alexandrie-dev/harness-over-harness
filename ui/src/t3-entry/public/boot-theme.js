@@ -50,7 +50,7 @@
         chrome: "#141414",
       },
     },
-    "midnight-prism": {
+    "hoh.midnight-prism": {
       dark: {
         background: "#080809",
         foreground: "#f2f3f5",
@@ -140,7 +140,7 @@
     "light",
     "dark",
     "hoh",
-    "midnight-prism",
+    "hoh.midnight-prism",
     "t3-chat",
     "grove",
     "ocean",
@@ -256,7 +256,7 @@
       themeModes !== null;
     const theme = isKnownTheme && storedTheme ? storedTheme : "system";
     const isThemed = isKnownTheme && themeModes !== null;
-    const baseAppearance = customTheme ? customTheme.appearance : "light";
+    const baseAppearance = customTheme?.appearance ?? builtInModes?.[0] ?? "light";
     const systemMode = prefersDark ? "dark" : "light";
     const storedAppearanceMode = window.localStorage.getItem(
       THEME_APPEARANCE_MODE_STORAGE_KEY,
@@ -277,51 +277,39 @@
     // light vs dark even when the base theme cannot render that mode.
     // Mirrors the runtime's halves-aware resolveThemeAppearance.
     const wantedMode = appearanceMode === "system" ? systemMode : appearanceMode;
-    let halfThemeId = null;
-    let halfCustomTheme = null;
+    const themeMode = isThemed
+      ? (themeModes.includes(wantedMode) ? wantedMode : baseAppearance)
+      : null;
+    let themeHalf = null;
     try {
       const halvesRaw = JSON.parse(
         window.localStorage.getItem(THEME_HALVES_STORAGE_KEY) ?? "null",
       );
-      const candidate = isRecord(halvesRaw) ? halvesRaw[wantedMode] : null;
-      if (typeof candidate === "string") {
-        const halfId = LEGACY_THEME_IDS[candidate] ?? candidate;
-        const halfBuiltIn = BUILT_IN_THEME_MODES[halfId] ?? null;
-        const halfCustom = halfBuiltIn ? null : findCustomTheme(halfId);
-        const halfModes =
-          halfBuiltIn ??
-          (halfCustom
-            ? ["light", "dark"].filter(
-                (mode) => mode === halfCustom.appearance || halfCustom.variants?.[mode],
-              )
-            : null);
-        if (halfModes && halfModes.includes(wantedMode)) {
-          halfThemeId = halfId;
-          halfCustomTheme = halfCustom;
+      if (isRecord(halvesRaw)) {
+        const modes =
+          themeMode && themeMode !== wantedMode ? [wantedMode, themeMode] : [wantedMode];
+        for (const mode of modes) {
+          const candidate = halvesRaw[mode];
+          if (typeof candidate !== "string") continue;
+          const id = LEGACY_THEME_IDS[candidate] ?? candidate;
+          const halfBuiltInModes = BUILT_IN_THEME_MODES[id] ?? null;
+          const halfCustomTheme = halfBuiltInModes ? null : findCustomTheme(id);
+          if (
+            halfBuiltInModes?.includes(mode) ||
+            halfCustomTheme?.appearance === mode ||
+            halfCustomTheme?.variants?.[mode]
+          ) {
+            themeHalf = { id, customTheme: halfCustomTheme, mode };
+            break;
+          }
         }
       }
     } catch {}
-    const themeMode = !isThemed
-      ? null
-      : appearanceMode === "system"
-        ? themeModes.includes(systemMode)
-          ? systemMode
-          : baseAppearance
-        : themeModes.includes(appearanceMode)
-          ? appearanceMode
-          : baseAppearance;
-    const isDark =
-      halfThemeId !== null
-        ? wantedMode === "dark"
-        : isThemed
-          ? themeMode === "dark"
-          : appearanceMode === "system"
-            ? prefersDark
-            : appearanceMode === "dark";
-    const effectiveIsThemed = halfThemeId !== null || isThemed;
-    const effectiveThemeId = halfThemeId ?? themeId;
-    const effectiveCustomTheme = halfThemeId !== null ? halfCustomTheme : customTheme;
-    const effectiveThemeMode = halfThemeId !== null ? wantedMode : themeMode;
+    const effectiveThemeMode = themeHalf?.mode ?? themeMode;
+    const isDark = (effectiveThemeMode ?? wantedMode) === "dark";
+    const effectiveIsThemed = themeHalf !== null || isThemed;
+    const effectiveThemeId = themeHalf?.id ?? themeId;
+    const effectiveCustomTheme = themeHalf ? themeHalf.customTheme : customTheme;
     const customColors =
       effectiveIsThemed && effectiveCustomTheme
         ? effectiveThemeMode === effectiveCustomTheme.appearance
@@ -362,7 +350,7 @@
     }
     // A resolved half is a selection even when the base theme is gone
     // (deleting the base leaves the mix pointing at a real theme).
-    const hasSelection = halfThemeId !== null || (isKnownTheme && storedTheme !== null);
+    const hasSelection = themeHalf !== null || (isKnownTheme && storedTheme !== null);
     if (hasSelection) {
       document.documentElement.dataset.themeSelected = "true";
     } else {

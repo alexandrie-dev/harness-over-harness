@@ -208,11 +208,12 @@ function themeImportDialog(code: string): string {
   ]);
 }
 export function themePalettes(code: string): string {
+  const midnightPrismId = JSON.stringify('hoh.midnight-prism');
   const themes = `export const HOH_THEME: ThemeDefinition = { id: "hoh", label: "HoH", appearance: "dark", colors: ${JSON.stringify(HOH_THEME_COLORS)} };\n`
-    + `export const MIDNIGHT_PRISM_THEME: ThemeDefinition = { id: "midnight-prism", label: "Midnight Prism", appearance: "dark", colors: ${JSON.stringify(MIDNIGHT_PRISM_COLORS)} };\n`;
+    + `export const MIDNIGHT_PRISM_THEME: ThemeDefinition = { id: ${midnightPrismId}, label: "Midnight Prism", appearance: "dark", colors: ${JSON.stringify(MIDNIGHT_PRISM_COLORS)} };\n`;
   return anchorPatch('themePalettes.ts', code, [
     ['label: "T3 Chat",', 'label: "Chat",'],
-    ['export const BUILT_IN_THEME_IDS = ["t3-chat",', 'export const BUILT_IN_THEME_IDS = ["hoh", "midnight-prism", "t3-chat",'],
+    ['export const BUILT_IN_THEME_IDS = ["t3-chat",', `export const BUILT_IN_THEME_IDS = ["hoh", ${midnightPrismId}, "t3-chat",`],
     ['export const BUILT_IN_THEMES: ReadonlyArray<ThemeDefinition> = [\n', themes + 'export const BUILT_IN_THEMES: ReadonlyArray<ThemeDefinition> = [\n  HOH_THEME,\n  MIDNIGHT_PRISM_THEME,\n'],
   ]);
 }
