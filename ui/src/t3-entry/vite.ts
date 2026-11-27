@@ -333,6 +333,7 @@ function sidebarLayout(code: string): string {
 }
 
 export function sidebarChrome(code: string): string {
+  const update = resolve(import.meta.dirname, 'hoh-screens/SidebarUpdateButton.tsx');
   return anchorPatch('SidebarChrome.tsx', code, [
     ['  SidebarTrigger,\n', ''],
     ['aria-label={gt("T3 Code home")}', 'aria-label={gt("HoH home")}'],
@@ -381,6 +382,20 @@ export function sidebarChrome(code: string): string {
 }`],
     ['<SidebarMenuButton aria-label={label} onClick={onClick} size="icon">\n              {icon}\n            </SidebarMenuButton>', '<SidebarMenuButton className="hoh-side__action" aria-label={label} onClick={onClick}>\n              {icon}\n              <span data-hoh-rail-label="">{label}</span>\n            </SidebarMenuButton>'],
     ['<SidebarMenu className="flex-row items-center">', '<SidebarMenu className="hoh-sidebar-utilities flex-row flex-wrap items-center">'],
+    [`          <SidebarUtilityItem
+            icon={<SettingsIcon />}
+            label={gt("Settings")}
+            onClick={handleSettingsClick}
+          />`, `          <SidebarMenuItem className="w-full">
+            <SidebarMenu className="hoh-sidebar-settings-row flex-row items-center">
+              <SidebarUtilityItem
+                icon={<SettingsIcon />}
+                label={gt("Settings")}
+                onClick={handleSettingsClick}
+              />
+              <HohSidebarUpdateButton />
+            </SidebarMenu>
+          </SidebarMenuItem>`],
     ['<SidebarMenuButton onClick={handleBackClick}>', '<SidebarMenuButton className="hoh-side__action" aria-label={gt("Back")} tooltip={gt("Back")} onClick={handleBackClick}>'],
     ['            <span>\n              <T>Back</T>', '            <span data-hoh-rail-label="">\n              <T>Back</T>'],
     [`      <SidebarProviderUpdatePill />
@@ -390,6 +405,7 @@ export function sidebarChrome(code: string): string {
       </div>`],
   ], `import { SidebarToggle as HohSidebarToggle } from ${JSON.stringify(SIDEBAR_TOGGLE)};
 import { pages as hohSidebarPages } from ${JSON.stringify(SIDEBAR_PAGES)};
+import { SidebarUpdateButton as HohSidebarUpdateButton } from ${JSON.stringify(update)};
 `);
 }
 
@@ -434,14 +450,6 @@ function chatSettingsWhisper(code: string): string {
     '    <SettingsPageContainer>\n      <SettingsSection id="composer"',
     '    <SettingsPageContainer>\n      <HohWhisperSetting />\n      <SettingsSection id="composer"',
   ]], `import { WhisperSettingsLink as HohWhisperSetting } from ${JSON.stringify(setting)};\n`);
-}
-
-function aboutSettingsUpdate(code: string): string {
-  const row = resolve(import.meta.dirname, 'hoh-screens/UpdateVersionRow.tsx');
-  return anchorPatch('SettingsPanels.tsx', code, [[
-    '{isElectron || HOSTED_APP_CHANNEL ? (\n          <AboutVersionSection />',
-    '{isTauri() ? (\n          <UpdateVersionRow id={setting("app-version").id} />\n        ) : isElectron || HOSTED_APP_CHANNEL ? (\n          <AboutVersionSection />',
-  ]], TAURI_IMPORT + `import { UpdateVersionRow } from ${JSON.stringify(row)};\n`);
 }
 
 function localSettingsRoute(code: string, panel: string, original: string, replacement: string): string {
@@ -727,7 +735,7 @@ function hohT3(): Plugin {
         map: null,
       };
       if (id === resolve(T3_WEB, 'components/chat/ChatComposer.tsx')) return { code: composerSecret(composerWhisper(composerPaste(code))), map: null };
-      if (id === resolve(T3_WEB, 'components/settings/SettingsPanels.tsx')) return { code: aboutSettingsUpdate(chatSettingsWhisper(code)), map: null };
+      if (id === resolve(T3_WEB, 'components/settings/SettingsPanels.tsx')) return { code: chatSettingsWhisper(code), map: null };
       if (id === resolve(T3_WEB, 'components/ComposerPromptEditorTiptap.tsx')) return { code: editorPaste(code), map: null };
       if (id === resolve(T3_WEB, 'components/ChatMarkdown.tsx')) return { code: markdownHtml(code), map: null };
       if (id === resolve(T3_WEB, 'components/chat/MarkdownFileLink.tsx')) return { code: markdownHtmlFileLink(code), map: null };

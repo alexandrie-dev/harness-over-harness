@@ -17,7 +17,7 @@ export function updateInProgress(state: UpdateState): boolean {
     || state.kind === 'installing' || state.kind === 'restarting';
 }
 
-async function requestUpdate(install: boolean): Promise<void> {
+async function requestUpdate(install: boolean): Promise<UpdateState | undefined> {
   const current = desktopUpdate.getState();
   if (updateInProgress(current) || current.kind === 'unsupportedInstall') return;
   desktopUpdate.setState({ kind: 'checking' }, true);
@@ -28,13 +28,16 @@ async function requestUpdate(install: boolean): Promise<void> {
         })
       : await invoke<UpdateResult>('check_for_update');
     desktopUpdate.setState(result, true);
+    return result;
   } catch (error) {
     const message = typeof error === 'string' ? error : 'HoH could not check or install updates.';
-    desktopUpdate.setState({ kind: 'error', message }, true);
+    const result = { kind: 'error', message } as const;
+    desktopUpdate.setState(result, true);
+    return result;
   }
 }
 
-export function installUpdate(): Promise<void> {
+export function installUpdate() {
   return requestUpdate(true);
 }
 

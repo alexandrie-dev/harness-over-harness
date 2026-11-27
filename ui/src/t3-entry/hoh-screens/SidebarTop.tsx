@@ -36,7 +36,7 @@ export function SidebarTop(props: SidebarThreadHeaderProps) {
     toastManager.add({
       type: 'info',
       title: `HoH ${updateVersion} is available`,
-      description: 'Open Settings → About to update.',
+      description: 'Use Update next to Settings to install.',
     });
   }, [updateVersion]);
   return (
