@@ -76,4 +76,20 @@ test('startup uses the mix half for the resolved appearance', () => {
   assert.equal(darkHalf.id, prismId);
   assert.equal(darkHalf.dark, true);
   assert.equal(darkHalf['--boot-background'], '#080809');
+
+  const palette = {
+    id: 'constructor',
+    label: 'Constructor',
+    appearance: 'dark',
+    colors: { canvas: '#242830' },
+  };
+  const customDarkHalf = bootTheme({
+    't3code:theme': prismId,
+    't3code:theme-appearance-mode': 'light',
+    't3code:theme-halves:v1': JSON.stringify({ dark: palette.id }),
+    't3code:themes:v1': JSON.stringify([palette]),
+  });
+  assert.equal(customDarkHalf.id, palette.id);
+  assert.equal(customDarkHalf.dark, true);
+  assert.equal(customDarkHalf['--boot-background'], palette.colors.canvas);
 });

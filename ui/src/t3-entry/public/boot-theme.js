@@ -180,6 +180,7 @@
   };
   const isRecord = (value) =>
     typeof value === "object" && value !== null && !Array.isArray(value);
+  const getOwnThemeEntry = (table, id) => (Object.hasOwn(table, id) ? table[id] : undefined);
   const isThemeId = (value) =>
     typeof value === "string" && /^[a-z0-9](?:[a-z0-9-]{0,47})$/.test(value);
   const isThemeLabel = (value) =>
@@ -238,9 +239,9 @@
     };
     const isLegacyT3ChatDark = storedTheme === "t3-chat-dark";
     const themeId =
-      storedTheme === null ? "" : (LEGACY_THEME_IDS[storedTheme] ?? storedTheme);
+      storedTheme === null ? "" : (getOwnThemeEntry(LEGACY_THEME_IDS, storedTheme) ?? storedTheme);
     const legacyMode = isLegacyT3ChatDark ? "dark" : null;
-    const builtInModes = BUILT_IN_THEME_MODES[themeId] ?? null;
+    const builtInModes = getOwnThemeEntry(BUILT_IN_THEME_MODES, themeId) ?? null;
     const customTheme = builtInModes ? null : findCustomTheme(themeId);
     const themeModes =
       builtInModes ??
@@ -291,8 +292,8 @@
         for (const mode of modes) {
           const candidate = halvesRaw[mode];
           if (typeof candidate !== "string") continue;
-          const id = LEGACY_THEME_IDS[candidate] ?? candidate;
-          const halfBuiltInModes = BUILT_IN_THEME_MODES[id] ?? null;
+          const id = getOwnThemeEntry(LEGACY_THEME_IDS, candidate) ?? candidate;
+          const halfBuiltInModes = getOwnThemeEntry(BUILT_IN_THEME_MODES, id) ?? null;
           const halfCustomTheme = halfBuiltInModes ? null : findCustomTheme(id);
           if (
             halfBuiltInModes?.includes(mode) ||
@@ -325,7 +326,7 @@
     // per role rather than dropping the theme.
     const builtInSplash =
       effectiveIsThemed && !effectiveCustomTheme && effectiveThemeMode
-        ? (BUILT_IN_THEME_PALETTES[effectiveThemeId]?.[effectiveThemeMode] ?? null)
+        ? (getOwnThemeEntry(BUILT_IN_THEME_PALETTES, effectiveThemeId)?.[effectiveThemeMode] ?? null)
         : null;
     const fallbackSplash = isDark ? SPLASH_COLORS.dark : SPLASH_COLORS.light;
     const customSplash = customColors
