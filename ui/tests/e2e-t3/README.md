@@ -34,3 +34,24 @@ The command exits nonzero if any product scenario fails, but it continues after
 independent scenario failures where the remaining UI is still reachable. A
 human must inspect every generated PNG and write the final QA report; the runner
 does not infer visual overlap from pixels.
+
+## Native clipboard regression
+
+Run this test with the Linux desktop and engine binaries under test. It puts
+`text/html` and `image/png` on the same GTK clipboard, sends Ctrl+V to a fresh
+chat and asserts that the composer shows one PNG attachment. It uses an isolated
+Xvfb session and a local Codex stub. No prompt is sent.
+
+In addition to the tools above, install a C compiler, `pkg-config` and GTK 3
+development headers. Build the stub with
+`cargo build --locked --offline -p hoh-harness-codex --features stub --bin codex-stub`.
+
+```sh
+/usr/bin/python3 -B ui/tests/e2e-t3/clipboard.py \
+  --desktop /path/to/hoh-desktop \
+  --engine /path/to/hoh \
+  --codex-stub /path/to/codex-stub
+```
+
+Pass `--qa-dir` with a new directory to keep the window log and accessibility
+tree at a specific path. The test prints the path it used.

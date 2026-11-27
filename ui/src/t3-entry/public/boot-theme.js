@@ -44,10 +44,10 @@
     // HoH (HOH-41): тема только тёмная, см. src/t3-entry/hoh-theme.ts.
     hoh: {
       dark: {
-        background: "#080809",
-        foreground: "#f2f3f5",
-        accent: "#4dacf6",
-        chrome: "#080809",
+        background: "#111111",
+        foreground: "#f2f1ee",
+        accent: "#f25623",
+        chrome: "#141414",
       },
     },
     "t3-chat": {

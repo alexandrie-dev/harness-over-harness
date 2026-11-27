@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="ru" data-round="typography">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>HoH · Варианты каталога плагинов</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      font: 15px/1.5 system-ui, sans-serif;
+      background: #111215;
+      color: #f0f1f4;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; }
+    main { width: min(100% - 32px, 1280px); margin: 32px auto 48px; }
+    h1 { margin: 0 0 16px; font-size: clamp(1.5rem, 4vw, 2rem); font-weight: 650; letter-spacing: -0.035em; }
+    .variants { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+    button {
+      min-height: 32px;
+      padding: 5px 10px;
+      border: 1px solid transparent;
+      border-radius: 7px;
+      background: transparent;
+      color: #b5bac5;
+      font: inherit;
+      font-size: 0.875rem;
+      text-align: left;
+      cursor: pointer;
+    }
+    button:hover { background: #22252c; color: #f0f1f4; }
+    button[aria-pressed="true"] { border-color: #4e5b73; background: #272d39; color: #f5f7fc; }
+    button:focus-visible, a:focus-visible { outline: 2px solid #83b9ff; outline-offset: 3px; }
+    .variants button { display: grid; gap: 2px; padding: 10px 12px; border-color: #30333b; }
+    .variants button[aria-pressed="true"] { border-color: #6b88b6; }
+    .variants strong { color: #f0f1f4; font-size: 0.9375rem; font-weight: 610; }
+    .variants span { font-size: 0.8125rem; color: #b5bac5; }
+    .toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 20px; margin: 14px 0 10px; }
+    .toolbar > div { display: flex; flex-wrap: wrap; gap: 4px; }
+    .viewport { display: block; width: fit-content; max-width: 100%; margin: 0 auto; border-radius: 12px; }
+    .viewport img { display: block; max-width: 100%; height: auto; border: 1px solid #383b43; border-radius: inherit; }
+    .note { margin: 8px 0 0; color: #b5bac5; font-size: 0.8125rem; }
+    @media (max-width: 620px) {
+      main { margin-top: 20px; }
+      .variants { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Варианты каталога плагинов</h1>
+    <div class="variants" role="group" aria-label="Вариант оформления">
+      <button type="button" data-setting="variant" data-value="cards" aria-pressed="true">
+        <strong>Карточки</strong>
+        <span>Название заметнее, описание свободно, служебные данные внизу.</span>
+      </button>
+      <button type="button" data-setting="variant" data-value="list" aria-pressed="false">
+        <strong>Список</strong>
+        <span>Названия выровнены слева, статусы и версии собраны справа.</span>
+      </button>
+      <button type="button" data-setting="variant" data-value="services" aria-pressed="false">
+        <strong>Акцент на сервисах</strong>
+        <span>Логотип крупнее, названия сервисов выделены в тексте.</span>
+      </button>
+    </div>
+    <div class="toolbar">
+      <div role="group" aria-label="Экран">
+        <button type="button" data-setting="view" data-value="list" aria-pressed="true">Каталог</button>
+        <button type="button" data-setting="view" data-value="detail" aria-pressed="false">Страница плагина</button>
+        <button type="button" data-setting="view" data-value="session" aria-pressed="false">Данные разговора</button>
+      </div>
+      <div role="group" aria-label="Тема">
+        <button type="button" data-setting="theme" data-value="dark" aria-pressed="true">Тёмная</button>
+        <button type="button" data-setting="theme" data-value="light" aria-pressed="false">Светлая</button>
+      </div>
+      <div role="group" aria-label="Ширина окна">
+        <button type="button" data-setting="size" data-value="1440x900" aria-pressed="true">1440 px</button>
+        <button type="button" data-setting="size" data-value="800x550" aria-pressed="false">800 px</button>
+      </div>
+    </div>
+    <a class="viewport" aria-label="Открыть скриншот в полном размере">
+      <img alt="">
+    </a>
+    <p class="note">GitHub Review и «Заметки в Notion» добавлены в превью, чтобы показать логотипы и разные статусы.</p>
+  </main>
+  <script>
+    const shapeRound = document.documentElement.dataset.round === 'shapes';
+    const state = { variant: shapeRound ? 'folder' : 'cards', view: 'list', theme: 'dark', size: '1440x900' };
+    const link = document.querySelector('.viewport');
+    const image = link.querySelector('img');
+    const controls = [...document.querySelectorAll('button[data-setting]')];
+    if (shapeRound) {
+      document.title = document.querySelector('h1').textContent = 'Формы карточек плагинов';
+      const shapes = [
+        ['folder', 'Папка', 'Выступающая вкладка показывает категорию.'],
+        ['ticket', 'Билет', 'Боковые вырезы отделяют полосу статуса и версии.'],
+        ['inset', 'Двойной контур', 'Внутри рамки — логотип и текст, внизу — статус и версия.'],
+      ];
+      const options = controls.filter(control => control.dataset.setting === 'variant');
+      shapes.forEach(([value, name, description], index) => {
+        const control = options[index];
+        control.dataset.value = value;
+        control.querySelector('strong').textContent = name;
+        control.querySelector('span').textContent = description;
+      });
+    }
+    function render() {
+      const file = `plugins-${state.view}-${state.variant}-${state.theme}-${state.size}.png`;
+      link.href = file;
+      image.src = file;
+      const labels = [];
+      for (const control of controls) {
+        const active = state[control.dataset.setting] === control.dataset.value;
+        control.setAttribute('aria-pressed', String(active));
+        if (active) labels.push((control.querySelector('strong') ?? control).textContent.trim());
+      }
+      image.alt = labels.join(' · ');
+    }
+    render();
+    for (const control of controls) {
+      control.addEventListener('click', () => {
+        state[control.dataset.setting] = control.dataset.value;
+        render();
+      });
+    }
+  </script>
+</body>
+</html>

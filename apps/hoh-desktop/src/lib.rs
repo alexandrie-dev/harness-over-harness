@@ -1,7 +1,10 @@
 pub mod approval;
 pub mod bridge;
+pub mod chat_secrets;
 pub mod engine;
 pub mod errors;
+#[cfg(feature = "desktop")]
+pub mod external_ui;
 pub mod folders;
 pub mod image_asset;
 #[cfg(feature = "desktop")]

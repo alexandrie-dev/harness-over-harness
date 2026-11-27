@@ -1,0 +1,50 @@
+.hoh-external-ui {
+  display: grid;
+  gap: 0.75rem;
+  padding-block: 1rem;
+  border-top: 1px solid var(--border);
+  min-width: 0;
+}
+
+.hoh-external-ui__header,
+.hoh-external-ui li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.hoh-external-ui h2,
+.hoh-external-ui strong { font-weight: 600; }
+
+.hoh-external-ui p,
+.hoh-external-ui code {
+  color: var(--muted-foreground);
+  overflow-wrap: anywhere;
+}
+
+.hoh-external-ui ul {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.hoh-external-ui li {
+  padding: 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+}
+
+.hoh-external-ui button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  flex: none;
+  padding: 0.375rem 0.625rem;
+  border-radius: 0.375rem;
+  border: 1px solid var(--border);
+}
+
+.hoh-external-ui button:hover { background: var(--accent); }
+.hoh-external-ui button:focus-visible { outline: 2px solid var(--ring); }
+.hoh-external-ui button:disabled { opacity: 0.5; }
+.hoh-external-ui button svg { width: 1em; height: 1em; }

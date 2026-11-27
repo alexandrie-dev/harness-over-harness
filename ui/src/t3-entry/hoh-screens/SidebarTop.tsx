@@ -1,20 +1,21 @@
-// Верх боковой панели окна HoH (HOH-41, состав раунда 12: design/round12/shots/home.png), нарисованный компонентами и видом T3:
-// «New chat» с сочетанием клавиш T3, группа «Team» с «+» (строк нет: движка сотрудников нет), заголовок «Recent chats» над настоящим
-// списком разговоров T3. Под «New chat» находятся Learning и Plugins. Подставляется вместо SidebarThreadHeader при сборке (vite.ts, sidebarList);
-// получает те же свойства, что получал T3 (SidebarThreadHeaderProps).
-import { ChartNoAxesColumnIcon, GraduationCapIcon, PlusIcon, PuzzleIcon, SquarePenIcon, WrenchIcon } from 'lucide-react';
-import { useNavigate } from '@tanstack/react-router';
+import { ChartNoAxesColumnIcon, GraduationCapIcon, LayoutDashboardIcon, MessagesSquareIcon, PanelRightIcon, PlusIcon, PuzzleIcon, SquarePenIcon, WrenchIcon } from 'lucide-react';
+import { useLocation, useNavigate } from '@tanstack/react-router';
 import { useState, type MouseEvent } from 'react';
 
 import { SidebarHeaderIconButton } from '~/components/sidebar/SidebarThreadHeader';
-import { SidebarMenuButton } from '~/components/ui/sidebar';
-import { PAGE_TITLES, pages, type PageKey } from './pages';
+import { SidebarMenuButton, useSidebar } from '~/components/ui/sidebar';
+import { PAGE_TITLES, pages, workspacePage } from './pages';
 import { PageLayer, usePage } from './SidebarPages';
-import './sidebar.css';
+import { externalUiError, openExternalUiPanel, useExternalUiCatalog } from './external-ui-sdk';
+import { HOH_ENVIRONMENT_ID } from '../../hoh-host/config';
+import { toastManager } from '~/components/ui/toast';
 
-const PAGE_ICONS = {
-  learning: GraduationCapIcon, plugins: PuzzleIcon, 'plugin-creator': WrenchIcon, usage: ChartNoAxesColumnIcon,
-} as const;
+const WORKSPACE_PAGES = [
+  ['learning', GraduationCapIcon],
+  ['plugins', PuzzleIcon],
+  ['plugin-creator', WrenchIcon],
+  ['usage', ChartNoAxesColumnIcon],
+] as const satisfies ReadonlyArray<readonly [keyof typeof PAGE_TITLES, typeof PuzzleIcon]>;
 
 interface Props {
   onNewThread: (event: MouseEvent) => void;
@@ -24,37 +25,131 @@ interface Props {
 
 export function SidebarTop({ onNewThread, newThreadDisabled, newThreadShortcutLabel }: Props) {
   const page = usePage();
+  const { catalog } = useExternalUiCatalog();
   const navigate = useNavigate();
+  const onUsage = useLocation({ select: (location) => location.pathname === '/usage' });
+  const { isMobile, setOpen, setOpenMobile } = useSidebar();
   const [teamComingSoon, setTeamComingSoon] = useState(false);
   return (
     <div className="hoh-side" data-hoh-sidebar-top="">
-      <PageLayer />
-      <SidebarMenuButton type="button" className="hoh-side__new" disabled={newThreadDisabled} onClick={(event) => { pages.close(); onNewThread(event); }}>
+      <PageLayer workspace={catalog?.packages.find(item => item.workspaceLabel && page === workspacePage(item.id))} />
+      <SidebarMenuButton
+        type="button"
+        className="hoh-side__action hoh-side__new"
+        aria-label="New chat"
+        tooltip="New chat"
+        disabled={newThreadDisabled}
+        onClick={(event) => { pages.close(); onNewThread(event); }}
+      >
         <SquarePenIcon aria-hidden />
-        <span>New chat</span>
-        {newThreadShortcutLabel ? <kbd className="hoh-side__kbd">{newThreadShortcutLabel}</kbd> : null}
+        <span data-hoh-rail-label="">New chat</span>
+        {newThreadShortcutLabel ? <kbd className="hoh-side__kbd" data-hoh-rail-label="">{newThreadShortcutLabel}</kbd> : null}
       </SidebarMenuButton>
-      {(['learning', 'plugins', 'plugin-creator', 'usage'] as PageKey[]).map((key) => {
-        const Icon = PAGE_ICONS[key];
-        return (
-          <SidebarMenuButton key={key} type="button" className="hoh-side__new" isActive={page === key} aria-current={page === key ? 'page' : undefined} data-hoh-page-item={key} onClick={() => {
-            if (key === 'usage') { pages.close(); void navigate({ to: '/usage' }); }
-            else pages.open(key);
-          }}>
-            <Icon aria-hidden />
-            <span>{PAGE_TITLES[key]}</span>
-          </SidebarMenuButton>
-        );
-      })}
-      <div className="hoh-side__group">
-        <span>Team</span>
-        {/* Движка сотрудников у HoH нет: «+» ничего не создаёт и выключена, пока он не появится. */}
-        <SidebarHeaderIconButton label="Add to team" tooltip="Coming Soon" onClick={() => setTeamComingSoon((visible) => !visible)}>
-          <PlusIcon />
-        </SidebarHeaderIconButton>
+      <div className="hoh-side__section">
+        <div className="hoh-side__group" data-hoh-hide-in-rail="">Workspace</div>
+        <div className="hoh-side__tray">
+          {WORKSPACE_PAGES.map(([key, Icon]) => {
+            const label = PAGE_TITLES[key];
+            const active = key === 'usage' ? !page && onUsage : page === key;
+            return (
+              <SidebarMenuButton
+                key={key}
+                type="button"
+                className="hoh-side__action"
+                aria-label={label}
+                tooltip={label}
+                isActive={active}
+                aria-current={active ? 'page' : undefined}
+                data-hoh-page-item={key}
+                onClick={() => {
+                  if (isMobile) setOpenMobile(false);
+                  if (key === 'usage') {
+                    pages.close();
+                    void navigate({ to: '/usage' });
+                  } else {
+                    pages.open(key);
+                  }
+                }}
+              >
+                <span className="hoh-side__glyph" aria-hidden><Icon size={16} /></span>
+                <span data-hoh-rail-label="">{label}</span>
+              </SidebarMenuButton>
+            );
+          })}
+          {catalog?.packages.map((item) => {
+            const key = workspacePage(item.id);
+            const active = page === key;
+            if (item.workspaceLabel) return (
+              <SidebarMenuButton
+                key={item.id}
+                type="button"
+                className="hoh-side__action"
+                aria-label={item.workspaceLabel}
+                tooltip={item.workspaceLabel}
+                isActive={active}
+                aria-current={active ? 'page' : undefined}
+                data-hoh-page-item={key}
+                onClick={() => {
+                  if (isMobile) setOpenMobile(false);
+                  pages.open(key);
+                }}
+              >
+                <span className="hoh-side__glyph" aria-hidden><LayoutDashboardIcon size={16} /></span>
+                <span data-hoh-rail-label="">{item.workspaceLabel}</span>
+              </SidebarMenuButton>
+            );
+            const panel = item.chatPanel;
+            if (!panel) return null;
+            return (
+              <SidebarMenuButton
+                key={item.id}
+                type="button"
+                className="hoh-side__action"
+                aria-label={panel.sidebarLabel}
+                tooltip={panel.sidebarLabel}
+                onClick={() => {
+                  if (isMobile) setOpenMobile(false);
+                  pages.close();
+                  void openExternalUiPanel(item, (threadId) => {
+                    void navigate({ to: '/$environmentId/$threadId',
+                      params: { environmentId: HOH_ENVIRONMENT_ID, threadId } });
+                  }).catch(error => toastManager.add({
+                    type: 'error', title: externalUiError(error, 'The plugin panel could not be opened.'),
+                  }));
+                }}
+              >
+                <span className="hoh-side__glyph" aria-hidden><PanelRightIcon size={16} /></span>
+                <span data-hoh-rail-label="">{panel.sidebarLabel}</span>
+              </SidebarMenuButton>
+            );
+          })}
+        </div>
       </div>
-      {teamComingSoon ? <p className="hoh-side__coming-soon" role="status">Coming Soon</p> : null}
-      <div className="hoh-side__group hoh-side__group--list"><span>Recent chats</span></div>
+      <div className="hoh-side__section hoh-side__team" data-hoh-hide-in-rail="">
+        <div className="hoh-side__group">
+          <span>Team</span>
+          <SidebarHeaderIconButton label="Add to team" tooltip="Coming Soon" onClick={() => setTeamComingSoon((visible) => !visible)}>
+            <PlusIcon />
+          </SidebarHeaderIconButton>
+        </div>
+        {teamComingSoon ? <p className="hoh-side__coming-soon" role="status">Coming Soon</p> : null}
+      </div>
+      <div className="hoh-side__section hoh-side__recent">
+        <div className="hoh-side__group" data-hoh-hide-in-rail="">Recent chats</div>
+        <SidebarMenuButton
+          type="button"
+          className="hoh-side__action hoh-side__recent-trigger"
+          aria-label="Show recent chats"
+          tooltip="Recent chats"
+          onClick={(event) => {
+            const sidebar = event.currentTarget.closest('[data-app-sidebar]');
+            setOpen(true);
+            sidebar?.querySelector<HTMLButtonElement>('[data-hoh-sidebar-toggle]')?.focus();
+          }}
+        >
+          <MessagesSquareIcon aria-hidden />
+        </SidebarMenuButton>
+      </div>
     </div>
   );
 }

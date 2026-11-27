@@ -2,7 +2,7 @@
 // ui/src/screens/chat/projection.mjs) are folded into T3's `OrchestrationV2ThreadProjection` and
 // `OrchestrationV2ThreadShell` (packages/contracts/src/orchestrationV2.ts), in their encoded JSON form.
 // One user message is one run; answers, tool steps, permission requests and questions are turn items.
-import { CLAUDE_INSTANCE_ID, CODEX_INSTANCE_ID, runtimeModeOf, type HohAccessMode, type HohExecutor, type T3InteractionMode } from './config.ts';
+import { EXECUTOR_INSTANCES, runtimeModeOf, type HohAccessMode, type HohExecutor, type T3InteractionMode } from './config.ts';
 import type { EngineQuestion } from './engine.ts';
 import { providerFailure } from './errors.ts';
 
@@ -218,6 +218,7 @@ export class ThreadModel {
   /** Messages T3 sent that the engine has not echoed yet: T3's id is kept for the echo. */
   private readonly outgoing: { text: string; messageId: string; at: number }[] = [];
   private readonly echoed = new Map<string, string>();
+  private readonly editableMessages = new Map<string, { engineId: string; authoringPrefix?: string }>();
   private peakContextTokens?: number;
   private reportedCostUsd?: number;
   private reportedCostChanged = false;
@@ -245,7 +246,7 @@ export class ThreadModel {
     this.mode = seed.mode;
     this.executor = seed.executor ?? 'claude';
     this.bindingKnown = seed.bindingKnown ?? true;
-    this.interactionMode = seed.executor === 'codex' ? 'default' : seed.interactionMode ?? 'default';
+    this.interactionMode = this.executor !== 'claude' ? 'default' : seed.interactionMode ?? 'default';
     this.projectId = seed.projectId ?? HOH_PROJECT_ID;
   }
 
@@ -351,13 +352,17 @@ export class ThreadModel {
   }
 
   /** A user message from the engine: a new run starts with it, unless it is the echo of one sent from T3. */
-  private userMessage(engineId: string, value: string, at: number) {
+  private userMessage(engineId: string, value: string, at: number, startsTurn = false) {
     const start = this.pendingTurnStart;
     this.pendingTurnStart = null;
     const known = this.echoed.get(engineId);
     const pending = this.outgoing.findIndex(entry => entry.text === value);
     const messageId = known ?? (pending >= 0 ? this.outgoing.splice(pending, 1)[0].messageId : 'msg-' + engineId);
     this.echoed.set(engineId, messageId);
+    if (startsTurn) {
+      const authoringPrefix = this.pluginAuthoringPrefixes.find(prefix => value.startsWith(prefix));
+      this.editableMessages.set(messageId, { engineId, authoringPrefix });
+    }
     if (known || pending >= 0) {
       const run = this.runsById.get('run-' + messageId);
       if (this.pendingStartJournal?.run === run) this.pendingStartJournal = null;
@@ -745,7 +750,7 @@ export class ThreadModel {
         break;
       case 'user/message':
         if (data.source?.kind !== 'user' || !text(data.id)) return false;
-        this.userMessage(text(data.id), contentText(data.content), at);
+        this.userMessage(text(data.id), contentText(data.content), at, this.pendingTurnStart !== null);
         break;
       case 'turn/start': {
         this.pendingTurnStart = at;
@@ -984,10 +989,15 @@ export class ThreadModel {
   pendingRequest(id: string) { return this.requests.find(request => request.id === id && request.status === 'pending'); }
   activeRunId() { const run = this.currentRun(); return run && (run.status === 'running' || run.status === 'waiting') ? run.id : null; }
   userMessageCount() { return this.userMessages; }
+  editableUserMessage(id: string) {
+    const source = this.editableMessages.get(id);
+    const message = this.messagesById.get(id);
+    return source && message?.role === 'user' ? { ...source, attachments: message.attachments ?? [] } : undefined;
+  }
   setInteractionMode(mode: T3InteractionMode) { this.interactionMode = mode; }
   setRunningInteractionMode(mode: T3InteractionMode | null) { this.runningInteractionMode = mode; }
   private projectedInteractionMode(): T3InteractionMode {
-    if (this.executor === 'codex') return 'default';
+    if (this.executor !== 'claude') return 'default';
     return (this.running || this.engineRunning || this.activeRunId() !== null) && this.runningInteractionMode !== null
       ? this.runningInteractionMode : this.interactionMode;
   }
@@ -999,7 +1009,7 @@ export class ThreadModel {
     return runtimeModeOf(this.mode);
   }
 
-  private instanceId() { return !this.bindingKnown ? 'unknown' : this.executor === 'codex' ? CODEX_INSTANCE_ID : CLAUDE_INSTANCE_ID; }
+  private instanceId() { return !this.bindingKnown ? 'unknown' : EXECUTOR_INSTANCES[this.executor]; }
   private modelSelection() { return { instanceId: this.instanceId(), model: this.bindingKnown ? this.model : 'unknown', ...(this.options?.length ? { options: this.options } : {}) }; }
   titleText() { return nonBlank(this.title, 'New chat'); }
 

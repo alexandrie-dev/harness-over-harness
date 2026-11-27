@@ -26,7 +26,7 @@ use hoh_llm::{
 };
 use hoh_scope::ScopeKey;
 use hoh_session::{
-    AgentCancelCause, Session, SessionId, SessionSeq, SurfaceIntent, SurfaceOp,
+    AgentCancelCause, Session, SessionEvent, SessionId, SessionSeq, SurfaceIntent, SurfaceOp,
     append_plugin_record,
 };
 use hoh_timeout::{AbortController, AbortSignal};
@@ -728,10 +728,16 @@ impl ExternalAgent {
         }
         // The answer to the prompt is awaited together with the events: a harness may stream
         // the turn before it answers, and a stop before the answer must not be lost.
+        let text = prompt_text(messages);
+        let text = if session.needs_branch_context {
+            branch_prompt(&self.session.snapshot_events(None, None), log.turn, text)
+        } else {
+            text
+        };
         let mut prompt = session.control.prompt(PromptParams {
             session_id: self.id.to_string(),
             turn_id: turn_id.clone(),
-            text: prompt_text(messages),
+            text,
             images,
         });
         let mut prompted = false;
@@ -754,6 +760,7 @@ impl ExternalAgent {
                             TurnOutcome::Failed(failure)
                         };
                     }
+                    session.needs_branch_context = false;
                     if stopping {
                         // Stopped while the harness took the prompt: its turn exists now.
                         self.interrupt(&session.control);
@@ -1071,11 +1078,15 @@ impl ExternalAgent {
             ));
         }
         lock(&self.state).control = Some(started.session.clone());
+        let header = self.session.header();
         *live = Some(LiveSession {
             control: started.session,
             events: started.events,
             escalated,
             dead: false,
+            needs_branch_context: !started.result.resumed
+                && header["isSeeded"] == true
+                && header["parentSession"].is_string(),
             access,
             effort,
             folder_trusted: launched_trusted,
@@ -1291,6 +1302,62 @@ fn prompt_text(messages: &[UserMessage]) -> String {
         .filter(|text| !text.is_empty())
         .collect::<Vec<_>>()
         .join("\n\n")
+}
+
+/// A new native session has no transcript of this branch. Give it the most recent
+/// conversation text as context without invoking any of the inherited tool calls.
+fn branch_prompt(events: &[Arc<SessionEvent>], turn: u64, prompt: String) -> String {
+    const MAX_HISTORY_BYTES: usize = 64 * 1024;
+    let Some(start) = events
+        .iter()
+        .rposition(|event| event.event_type() == "turn/start" && event.data()["turn"] == turn)
+    else {
+        return prompt;
+    };
+    let mut history = Vec::new();
+    let mut bytes = 0;
+    let mut truncated = false;
+    for event in events[..start].iter().rev() {
+        let data = event.data();
+        let (role, content) = match event.event_type() {
+            "user/message" if data["source"]["kind"] == "user" => ("user", &data["content"]),
+            "assistant/message" if data.get("parentCallId").is_none() => {
+                ("assistant", &data["message"]["content"])
+            }
+            _ => continue,
+        };
+        for block in content.as_array().into_iter().flatten().rev() {
+            let Some(text) = block["text"].as_str().filter(|_| block["type"] == "text") else {
+                continue;
+            };
+            if text.trim().is_empty() {
+                continue;
+            }
+            let line = json!({"role": role, "text": text}).to_string();
+            if bytes + line.len() + 1 > MAX_HISTORY_BYTES {
+                truncated = true;
+                break;
+            }
+            bytes += line.len() + 1;
+            history.push(line);
+        }
+        if truncated {
+            break;
+        }
+    }
+    if history.is_empty() {
+        return prompt;
+    }
+    history.reverse();
+    let earlier = if truncated {
+        " (older messages omitted)"
+    } else {
+        ""
+    };
+    format!(
+        "Earlier messages in this chat{earlier}, provided as context in JSON lines:\n{}\n\nCurrent user message:\n{prompt}",
+        history.join("\n")
+    )
 }
 
 /// The pictures of a turn's messages (HOH-41), read back from the engine's attachment store: the
@@ -1558,6 +1625,7 @@ pub(crate) struct LiveSession {
     events: mpsc::Receiver<HarnessEvent>,
     escalated: bool,
     dead: bool,
+    needs_branch_context: bool,
     /// The access mode it was started under: another choice in the window restarts it.
     access: AccessMode,
     /// The effort level it was started with: another one in a prompt restarts it.

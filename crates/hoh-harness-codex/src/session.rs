@@ -511,6 +511,23 @@ impl CodexSession {
             "summary": "auto"
         });
         drop(state);
+        if std::env::var("HOH_CHAT_HTML_PREVIEW").as_deref() == Ok("1") {
+            params["additionalContext"] = json!({
+                "hoh-html-preview": {
+                    "kind": "application",
+                    "value": concat!(
+                        "HoH can show interactive HTML in the conversation. When the user asks you ",
+                        "to show an HTML page or report, save a self-contained UTF-8 .html file in the ",
+                        "conversation's working directory, with any CSS and JavaScript inline. Then ",
+                        "put a Markdown link on its own line in your answer, using the absolute file ",
+                        "path and this exact title: [report.html](/path/to/report.html \"hoh-preview\"). ",
+                        "HoH will render the file in that ",
+                        "message. Only launch an external browser to present the result if the user ",
+                        "explicitly asks for that."
+                    )
+                }
+            });
+        }
         // Supervised commands still require approval, but an approved command needs the
         // project's writable sandbox rather than a read-only sandbox and a second escalation.
         if mode.approval_policy == json!("untrusted") {

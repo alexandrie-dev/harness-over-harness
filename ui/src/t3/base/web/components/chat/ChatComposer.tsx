@@ -933,11 +933,16 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   // Called before the derivation below: a hook between it and its uses stops React Compiler
   // from caching the mode options, and the footer then re-renders on every keystroke.
   const managedPolicy = useManagedPolicy(environmentId);
-  const { modes: compatibleRuntimeModes, mode: compatibleRuntimeMode } =
+  const { modes: compatibleRuntimeModes, mode: resolvedRuntimeMode } =
     resolveCompatibleRuntimeMode(
       runtimeMode,
       selectedProviderEntry?.snapshot.supportedRuntimeModes,
     );
+  // Pi requires an explicit choice of Full access, even when it is the only supported mode.
+  const piNeedsFullAccess = selectedProviderEntry?.snapshot.driver === "pi" &&
+    selectedProviderEntry.snapshot.supportedRuntimeModes?.includes("full-access") === true &&
+    (routeKind === "draft" ? composerDraft.runtimeMode !== "full-access" : runtimeMode !== "full-access");
+  const compatibleRuntimeMode = piNeedsFullAccess ? "approval-required" : resolvedRuntimeMode;
   // Modes above an administrator's ceiling stay listed, disabled with the reason.
   const compatibleRuntimeModeOptions = resolveRuntimeModeOptions(
     compatibleRuntimeModes,
@@ -962,6 +967,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     (activePendingProgress
       ? attachmentBlockReason
       : (attachmentBlockReason ??
+        (piNeedsFullAccess ? gt("Choose Full access in the composer to use Pi Agent.") : null) ??
         runtimeModeCeilingDenial ??
         (multipleModelSelections === null ? providerSendBlockReason : null)));
   const isSendDisabled = sendDisabledReason !== null;
@@ -2532,6 +2538,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       defaultRuntimeMode={props.defaultRuntimeMode}
       compatibleRuntimeModeOptions={compatibleRuntimeModeOptions}
       handleRuntimeModeChange={(mode) => {
+        if (piNeedsFullAccess && routeKind === "draft" && mode === "full-access") {
+          // The default may already be Full, in which case the parent sees no mode change.
+          useComposerDraftStore.getState().setRuntimeMode(composerDraftTarget, mode);
+        }
         setComposerDraftInteractionMode(composerDraftTarget, "default");
         handleRuntimeModeChange(mode);
       }}

@@ -25,6 +25,39 @@ function connect(engine, options = {}) {
 const lastSnapshot = stream => stream.values.filter(value => value.kind === 'snapshot').at(-1);
 const itemsOf = snapshot => snapshot.projection.turnItems;
 
+test('editing sends the replacement and retained attachment to a separate branch with the earlier history', async () => {
+  const engine = new FakeEngine();
+  const user = (id, text, attachments = []) => ['user/message', {
+    id, source: { kind: 'user' }, content: [...attachments, { type: 'text', text }],
+  }];
+  const assistant = (id, text) => ['assistant/message', { message: { id, content: [{ type: 'text', text }] } }];
+  const end = turn => ['turn/end', { turn, reason: { kind: 'completed' } }];
+  const picture = { type: 'image', attachment: { sha256: 'test' } };
+  const source = engine.seed('original-edit', 'Original chat', [
+    ['turn/start', { turn: 1 }], user('first', 'First prompt'), assistant('first-a', 'First answer'), end(1),
+    ['turn/start', { turn: 2 }], user('second', 'Old prompt', [picture]), assistant('second-a', 'Old answer'), end(2),
+    ['turn/start', { turn: 3 }], user('third', 'Later prompt'), end(3),
+  ]);
+  source.model = 'claude-sonnet';
+  const { host, client } = connect(engine);
+  try {
+    const original = await client.stream('orchestration.subscribeThread', { threadId: 'original-edit' });
+    await original.until(value => value.kind === 'snapshot' && value.projection.messages.some(message => message.id === 'msg-third'));
+    assert(host.canEditUserMessage('original-edit', 'msg-second'));
+    const branchId = await host.editUserMessage('original-edit', 'msg-second', 'Changed prompt');
+    assert.notEqual(branchId, 'original-edit');
+    const branch = await client.stream('orchestration.subscribeThread', { threadId: branchId });
+    await branch.until(value => value.kind === 'snapshot' && value.projection.messages.some(message => message.text === 'Changed prompt'));
+    assert.deepEqual(lastSnapshot(branch).projection.messages.map(message => message.text), ['First prompt', 'First answer', 'Changed prompt']);
+    assert.deepEqual(lastSnapshot(original).projection.messages.map(message => message.text), ['First prompt', 'First answer', 'Old prompt', 'Old answer', 'Later prompt']);
+    const prompt = engine.requests.find(entry => entry.method === 'session/prompt' && entry.params.sessionId === branchId);
+    assert.deepEqual(prompt.params.contentBlocks, [picture, { type: 'text', text: 'Changed prompt' }]);
+  } finally {
+    host.stop();
+    client.close();
+  }
+});
+
 test('changed-folder refusal is explained without exposing an engine error', () => {
   const failure = mod.errors.providerFailure({ code: 'folder-changed', message: 'internal error -32603' }, 'transport_error', 'Failed');
   assert.match(failure.message, /folder for this chat has changed/i);
@@ -47,7 +80,7 @@ test('handshake: config snapshot, probe, settings, ping; Claude and Codex are of
   assert.equal(first.version, 1);
   assert.equal(first.config.environment.environmentId, 'hoh-local');
   assert.equal(first.config.environment.orchestrationProtocolVersion, 2);
-  assert.deepEqual(first.config.providers.map(provider => provider.instanceId), ['claudeAgent', 'codex']);
+  assert.deepEqual(first.config.providers.map(provider => provider.instanceId), ['claudeAgent', 'codex', 'pi']);
   assert.deepEqual(first.config.providers[0].models.map(model => model.slug), ['claude-sonnet', 'claude-opus']);
   assert.equal(first.config.providers[0].status, 'ready');
   assert.deepEqual(first.config.providers[0].supportedRuntimeModes, ['approval-required', 'auto-accept-edits', 'auto', 'full-access']);
@@ -1474,6 +1507,53 @@ test('a restored global Codex selection remains the default provider and model',
   const { client } = connect(engine);
   const config = await client.call('server.getConfig', {});
   assert.deepEqual(config.settings.defaultModelSelection, { instanceId: 'codex', model: 'gpt-6-sol' });
+});
+
+test('Pi advertises its models and binds a thread only with explicit Full access', async () => {
+  const piDiscovery = {
+    executor: 'pi', installed: true, version: '1.6.1', versionStatus: 'supported', auth: 'unknown',
+    models: [{ id: 'local/demo', displayName: 'Demo', isDefault: true }],
+  };
+  const engine = new FakeEngine({ piDiscovery });
+  const { host, client } = connect(engine);
+  const args = {
+    commandId: 'launch-pi', threadId: 'pi-conversation', projectId: 'hoh-project',
+    modelSelection: { instanceId: 'pi', model: 'local/demo' },
+    interactionMode: 'default', workspaceStrategy: { type: 'root' },
+    initialMessage: { messageId: 'msg-pi', text: 'Hello Pi', attachments: [] },
+  };
+  try {
+    const config = await client.call('server.refreshProviders', { instanceId: 'pi' });
+    const pi = config.providers.find(provider => provider.instanceId === 'pi');
+    assert.equal(pi.status, 'ready');
+    assert.deepEqual(pi.supportedRuntimeModes, ['full-access']);
+    assert.equal(pi.models[0].slug, 'local/demo');
+
+    await assert.rejects(client.call('orchestration.launchThread', { ...args, runtimeMode: 'approval-required' }), /Choose Full access/);
+    assert.equal(engine.store.has(args.threadId), false);
+    const launched = await client.call('orchestration.launchThread', { ...args, runtimeMode: 'full-access' });
+    assert.equal(launched.projection.thread.providerInstanceId, 'pi');
+    assert.equal(engine.store.get(args.threadId).executor, 'pi');
+    assert.equal(engine.store.get(args.threadId).runtimeMode, 'full');
+    const live = await client.stream('orchestration.subscribeThread', { threadId: args.threadId });
+    await live.until(value => value.kind === 'snapshot' && value.projection.thread.runtimeMode === 'full-access');
+    const access = engine.requests.findIndex(r => r.method === 'hoh/executor/access/set' && r.params.executor === 'pi');
+    const prompt = engine.requests.findIndex(r => r.method === 'session/prompt' && r.params.sessionId === args.threadId);
+    assert(access >= 0 && prompt > access);
+
+    const restarted = connect(new FakeEngine({ piDiscovery, store: engine.store, access: engine.access }));
+    try {
+      const config = await restarted.client.call('server.getConfig', {});
+      assert.deepEqual(config.settings.defaultModelSelection, { instanceId: 'pi', model: 'local/demo' });
+      const snapshot = await restarted.client.call('orchestration.getThreadProjection', { threadId: args.threadId });
+      assert.equal(snapshot.thread.providerInstanceId, 'pi');
+      assert.equal(snapshot.thread.runtimeMode, 'full-access');
+    } finally {
+      restarted.host.stop();
+    }
+  } finally {
+    host.stop();
+  }
 });
 
 test('Codex: two conversations keep independent modes instead of racing through a provider global', async () => {

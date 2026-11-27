@@ -4,5 +4,6 @@
   "version": "0.1.0",
   "entry": "AuthorPlugin",
   "description": "Распознаёт запись из поля ввода через настроенный whisper-daemon и возвращает текст в HoH.",
+  "repository": "https://github.com/alexandrie-dev/harness-over-harness/tree/main/plugins/whisper-dictation",
   "permissions": {}
 }

@@ -9,13 +9,13 @@ import { chromium } from 'playwright-core';
 import { FakeEngine } from '../tests/chat/fake-engine.mjs';
 
 const UI = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const DIST = join(UI, 'dist');
+const DIST = process.env.HOH_T3_DIST ? resolve(process.env.HOH_T3_DIST) : join(UI, 'dist');
 const QA = process.env.QA_DIR ? resolve(process.env.QA_DIR) : null;
 const ORIGIN = 'http://hoh-align.test';
 const TOL = 1;
 const SIZES = [[2000, 1137], [1920, 1080], [1440, 900], [800, 550]].filter(([width, height]) => !process.env.ALIGN_SIZE || process.env.ALIGN_SIZE === `${width}x${height}`);
 const SIDEBARS = ['expanded', 'collapsed'].filter(sidebar => !process.env.ALIGN_SIDEBAR || process.env.ALIGN_SIDEBAR === sidebar);
-const TYPES = { '.js': 'text/javascript', '.css': 'text/css', '.html': 'text/html', '.png': 'image/png', '.svg': 'image/svg+xml', '.woff2': 'font/woff2', '.woff': 'font/woff', '.json': 'application/json', '.wasm': 'application/wasm' };
+const TYPES = { '.js': 'text/javascript', '.css': 'text/css', '.html': 'text/html', '.png': 'image/png', '.webp': 'image/webp', '.svg': 'image/svg+xml', '.woff2': 'font/woff2', '.woff': 'font/woff', '.json': 'application/json', '.wasm': 'application/wasm' };
 const CLAUDE = { installed: true, version: '2.1.0', auth: 'authenticated', models: [{ id: 'opus', displayName: 'Claude Opus', isDefault: true }] };
 const CHAT = { id: 'chat-1', title: 'Align the release window' };
 const rows = [];
@@ -141,7 +141,7 @@ async function setSidebar(page, wanted) {
   await wrapper.waitFor();
   const current = await wrapper.getAttribute('data-sidebar-state');
   if (current !== wanted) {
-    await page.locator('[data-sidebar="trigger"]').last().click();
+    await page.locator('[data-hoh-sidebar-toggle]').click();
     await page.waitForFunction(state => document.querySelector('[data-slot="sidebar-wrapper"]')?.getAttribute('data-sidebar-state') === state, wanted);
   }
   await page.waitForTimeout(100);
@@ -236,14 +236,15 @@ const scenarios = [
       await page.getByRole('button', { name: 'Start without a project', exact: true }).waitFor();
       await setSidebar(page, sidebar);
       assert.equal(await page.locator('#hoh-notch').count(), 0, 'the top notch must be absent');
+      const logo = page.getByRole('link', { name: 'HoH home' });
+      await logo.locator('img').waitFor({ state: 'visible' });
       if (sidebar === 'expanded') {
-        const logo = page.getByRole('link', { name: 'HoH home' });
-        await logo.locator('img').waitFor({ state: 'visible' });
-        assert.equal((await logo.innerText()).trim(), '', 'the sidebar logo has no visible wordmark');
-        await page.getByRole('button', { name: /^New chat/ }).first().click();
+        assert.equal(await logo.innerText(), 'Alexandrie');
       } else {
-        await page.keyboard.press('Control+Shift+O');
+        assert.equal((await page.getByRole('navigation', { name: 'Chats' }).boundingBox()).width, 72);
+        assert.equal(await page.getByRole('button', { name: 'Show recent chats' }).isVisible(), true);
       }
+      await page.getByRole('button', { name: 'New chat', exact: true }).first().click();
       await page.locator('[data-chat-composer-stack]').waitFor({ state: 'visible' });
       const headline = page.locator('[data-chat-composer-stack] h1').first();
       const before = await headline.innerText();

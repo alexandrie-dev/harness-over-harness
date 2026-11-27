@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-list-external-ui-plugins"
+description = "Enables the list_external_ui_plugins command without any pre-configured scope."
+commands.allow = ["list_external_ui_plugins"]
+
+[[permission]]
+identifier = "deny-list-external-ui-plugins"
+description = "Denies the list_external_ui_plugins command without any pre-configured scope."
+commands.deny = ["list_external_ui_plugins"]

@@ -34,3 +34,7 @@ SOFTWARE.
 ### Значки поставщиков моделей
 
 Рисунки значков OpenAI, Claude, OpenRouter и Ollama в `src/screens/shared/providerIcons.tsx` взяты из `apps/web/src/components/Icons.tsx` проекта T3 Code (MIT, полный текст лицензии выше). Рисунок не менялся; вместо вспомогательной функции классов подставлена строка.
+
+### Логотипы в каталоге плагинов
+
+В `src/assets/plugin-logos/` знаки Anthropic, ElevenLabs, Gemini, Notion, Stripe и YouTube взяты из [Simple Icons](https://github.com/simple-icons/simple-icons/tree/58dfff8e6ef8e23902e6ecb9bb163c971949e26a) (CC0-1.0). Знак Rust от Rust Project Developers взят из того же набора ([CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/)). Цвет монохромных знаков задаётся темой HoH. [Знак Postmark](https://postmarkapp.com/images/logo-stamp-simple.svg) взят из [копии оригинала в Statussy](https://github.com/SmartScaleAI/statussy/blob/main/public/logos/postmark.svg).

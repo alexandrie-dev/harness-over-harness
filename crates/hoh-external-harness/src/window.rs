@@ -55,6 +55,10 @@ const SESSION_ACCESS_PAIRS_FILE: &str = "external-harness-session-access-pairs.j
 /// Codex selection for new conversations. Kept in a versioned sidecar so an older HoH ignores
 /// an executor it does not know instead of rejecting or restoring it from the legacy file.
 pub const CODEX_SELECTION_FILE: &str = "external-harness-codex-selection.json";
+const EXECUTOR_SELECTION_FILES: [(&str, &str); 2] = [
+    ("codex", CODEX_SELECTION_FILE),
+    ("pi", "external-harness-pi-selection.json"),
+];
 /// The file in the engine's profile folder that keeps the project folders the person added.
 pub const FOLDERS_FILE: &str = "workspace-folders.json";
 
@@ -158,7 +162,7 @@ fn build_15_mode(mode: AccessMode) -> AccessMode {
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct SavedCodexSelection {
+struct SavedExecutorSelection {
     version: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     selected: Option<SavedSelection>,
@@ -206,7 +210,6 @@ impl Plugin for ExternalHarnessWindowPlugin {
             agents: deps.agents,
             path: deps.profile.dir.join(CHOICES_FILE),
             session_access_path: deps.profile.dir.join(SESSION_ACCESS_FILE),
-            codex_selection_path: deps.profile.dir.join(CODEX_SELECTION_FILE),
             folders_path,
             folders: std::sync::Mutex::new(folders.into_iter().collect()),
             engine_home: deps.profile.home.clone(),
@@ -280,7 +283,6 @@ struct Window {
     agents: Service<Agents>,
     path: PathBuf,
     session_access_path: PathBuf,
-    codex_selection_path: PathBuf,
     folders_path: PathBuf,
     /// The project folders the person added, resolved (HOH-41).
     folders: std::sync::Mutex<std::collections::BTreeSet<PathBuf>>,
@@ -832,7 +834,7 @@ impl Window {
                 // An unavailable external plugin is not evidence that the agent is built-in.
                 // Preserve an unknown binding for both the standard routes and a recorded
                 // channel plugin whose registration is currently absent.
-                if matches!(chosen.provider.as_str(), "claude" | "codex")
+                if matches!(chosen.provider.as_str(), "claude" | "codex" | "pi")
                     || stored_executor_binding(&self.ctx, &id).await?.is_some()
                 {
                     (None, None, None)
@@ -1082,73 +1084,41 @@ impl Window {
             }
             Change::SessionAccess { .. } => unreachable!("handled above"),
         }
+        let sidecar_executor = selected.as_ref().and_then(|chosen| {
+            EXECUTOR_SELECTION_FILES
+                .iter()
+                .find(|(name, _)| *name == chosen.executor)
+        });
+        let saved_selection = selected.as_ref().map(|chosen| SavedSelection {
+            executor: chosen.executor.clone(),
+            model: chosen.model.clone(),
+        });
+        let profile = self.path.parent().ok_or("missing profile")?;
+        // Clear inactive sidecars, publish the downgrade-safe legacy file, then publish the
+        // active sidecar. An interrupted switch falls back without restoring a stale executor.
+        for (executor, file) in EXECUTOR_SELECTION_FILES {
+            if sidecar_executor.is_none_or(|(active, _)| *active != executor) {
+                write_selection(&profile.join(file), None).await?;
+            }
+        }
         let saved = Saved {
             access,
-            // Codex did not exist in the legacy choices format. Keeping its global selection in
-            // that file makes an older HoH restore an executor it cannot register; the versioned
-            // sidecar below is ignored by old versions and restored by this one.
-            selected: selected
-                .as_ref()
-                .filter(|chosen| chosen.executor != "codex")
-                .map(|chosen| SavedSelection {
-                    executor: chosen.executor.clone(),
-                    model: chosen.model.clone(),
-                }),
+            selected: if sidecar_executor.is_none() {
+                saved_selection.clone()
+            } else {
+                None
+            },
         };
-        let codex = SavedCodexSelection {
-            version: 1,
-            selected: selected
-                .as_ref()
-                .filter(|chosen| chosen.executor == "codex")
-                .map(|chosen| SavedSelection {
-                    executor: chosen.executor.clone(),
-                    model: chosen.model.clone(),
-                }),
-        };
-        let legacy_bytes = serde_json::to_vec_pretty(&saved)?;
-        let codex_bytes = serde_json::to_vec_pretty(&codex)?;
-        // Selecting Codex clears it from the downgrade-safe legacy file before publishing the
-        // sidecar. Leaving Codex clears the sidecar before publishing the legacy selection. A
-        // crash between the two writes therefore falls back safely instead of restoring Codex
-        // with an older engine or claiming a newer choice that was not fully committed.
-        if codex.selected.is_some() {
-            write(&self.path, &legacy_bytes)
-                .await
-                .map_err(|error| -> BoxError {
-                    format!(
-                        "the choice could not be saved to {}: {error}",
-                        self.path.display()
-                    )
-                    .into()
-                })?;
-            write(&self.codex_selection_path, &codex_bytes)
-                .await
-                .map_err(|error| -> BoxError {
-                    format!(
-                        "the Codex choice could not be saved to {}: {error}",
-                        self.codex_selection_path.display()
-                    )
-                    .into()
-                })?;
-        } else {
-            write(&self.codex_selection_path, &codex_bytes)
-                .await
-                .map_err(|error| -> BoxError {
-                    format!(
-                        "the Codex choice could not be saved to {}: {error}",
-                        self.codex_selection_path.display()
-                    )
-                    .into()
-                })?;
-            write(&self.path, &legacy_bytes)
-                .await
-                .map_err(|error| -> BoxError {
-                    format!(
-                        "the choice could not be saved to {}: {error}",
-                        self.path.display()
-                    )
-                    .into()
-                })?;
+        write(&self.path, &serde_json::to_vec_pretty(&saved)?)
+            .await
+            .map_err(|error| {
+                format!(
+                    "the choice could not be saved to {}: {error}",
+                    self.path.display()
+                )
+            })?;
+        if let Some((_, file)) = sidecar_executor {
+            write_selection(&profile.join(file), saved_selection).await?;
         }
         match change {
             Change::Select(selection) => self.agents.select_executor(selection),
@@ -1157,6 +1127,22 @@ impl Window {
         }
         Ok(())
     }
+}
+
+async fn write_selection(path: &Path, selected: Option<SavedSelection>) -> Result<(), BoxError> {
+    let saved = SavedExecutorSelection {
+        version: 1,
+        selected,
+    };
+    write(path, &serde_json::to_vec_pretty(&saved)?)
+        .await
+        .map_err(|error| {
+            format!(
+                "the executor choice could not be saved to {}: {error}",
+                path.display()
+            )
+            .into()
+        })
 }
 
 /// Apply the choices saved next to the active profile, when the launcher named one; a missing or
@@ -1205,55 +1191,57 @@ pub(crate) async fn restore_choices(ctx: &Context, choices: &Choices, agents: &A
         )),
     }
 
-    let codex_path = profile.dir.join(CODEX_SELECTION_FILE);
-    let codex_modified = tokio::fs::metadata(&codex_path)
-        .await
-        .and_then(|metadata| metadata.modified())
-        .ok();
-    let codex_is_current = match (codex_modified, legacy_modified) {
-        (Some(codex), Some(legacy)) => codex >= legacy,
-        (Some(_), None) => true,
-        _ => false,
-    };
-    match tokio::fs::read(&codex_path).await {
-        Ok(bytes) => match serde_json::from_slice::<SavedCodexSelection>(&bytes) {
-            Ok(saved) if saved.version == 1 => {
-                if let Some(chosen) = saved.selected.as_ref()
-                    && codex_is_current
-                {
-                    if chosen.executor == "codex" {
-                        agents.select_executor(Some(ExecutorSelection {
-                            executor: chosen.executor.clone(),
-                            model: chosen.model.clone(),
-                        }));
-                    } else {
+    for (executor, file) in EXECUTOR_SELECTION_FILES {
+        let selection_path = profile.dir.join(file);
+        let modified = tokio::fs::metadata(&selection_path)
+            .await
+            .and_then(|metadata| metadata.modified())
+            .ok();
+        let is_current = match (modified, legacy_modified) {
+            (Some(sidecar), Some(legacy)) => sidecar >= legacy,
+            (Some(_), None) => true,
+            _ => false,
+        };
+        match tokio::fs::read(&selection_path).await {
+            Ok(bytes) => match serde_json::from_slice::<SavedExecutorSelection>(&bytes) {
+                Ok(saved) if saved.version == 1 => {
+                    if let Some(chosen) = saved.selected.as_ref()
+                        && is_current
+                    {
+                        if chosen.executor == executor {
+                            agents.select_executor(Some(ExecutorSelection {
+                                executor: chosen.executor.clone(),
+                                model: chosen.model.clone(),
+                            }));
+                        } else {
+                            logger.warn(format_args!(
+                                "saved executor choice {} names an unexpected executor",
+                                selection_path.display()
+                            ));
+                        }
+                    } else if saved.selected.is_some() && !is_current {
                         logger.warn(format_args!(
-                            "saved Codex choice {} names an unexpected executor",
-                            codex_path.display()
+                            "saved executor choice {} is older than the legacy choice and was ignored",
+                            selection_path.display()
                         ));
                     }
-                } else if saved.selected.is_some() && !codex_is_current {
-                    logger.warn(format_args!(
-                        "saved Codex choice {} is older than the legacy choice and was ignored",
-                        codex_path.display()
-                    ));
                 }
-            }
-            Ok(saved) => logger.warn(format_args!(
-                "saved Codex choice {} has unsupported version {}",
-                codex_path.display(),
-                saved.version
-            )),
+                Ok(saved) => logger.warn(format_args!(
+                    "saved executor choice {} has unsupported version {}",
+                    selection_path.display(),
+                    saved.version
+                )),
+                Err(error) => logger.warn(format_args!(
+                    "saved executor choice {} is unusable: {error}",
+                    selection_path.display()
+                )),
+            },
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
             Err(error) => logger.warn(format_args!(
-                "saved Codex choice {} is unusable: {error}",
-                codex_path.display()
+                "saved executor choice {} could not be read: {error}",
+                selection_path.display()
             )),
-        },
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(error) => logger.warn(format_args!(
-            "saved Codex choice {} could not be read: {error}",
-            codex_path.display()
-        )),
+        }
     }
 
     let session_path = profile.dir.join(SESSION_ACCESS_FILE);

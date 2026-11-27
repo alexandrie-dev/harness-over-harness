@@ -3,14 +3,25 @@
 // Это не отдельный экран: vite.ts подставляет <HomeBody/> в пустой разговор T3 (ChatView, DraftHeroHeadline), так что поле ввода,
 // чип модели с уровнями, Permissions, выбор проекта и отправка — настоящие, их. Здесь только содержимое над ними.
 // Данные — то, что хост знает о разговорах (window.__HOH_HOME__, ui/src/hoh-host: host.home); блоков без данных нет.
-import { CheckIcon, ChevronDownIcon, CoinsIcon, LayersIcon, ListTodoIcon, PlusIcon, XIcon } from 'lucide-react';
+import { scopeThreadRef } from '@t3tools/client-runtime/environment';
+import { isAtomCommandInterrupted, squashAtomCommandFailure } from '@t3tools/client-runtime/state/runtime';
+import { ArchiveIcon, CheckIcon, ChevronDownIcon, CoinsIcon, LayersIcon, ListTodoIcon, PlusIcon, XIcon } from 'lucide-react';
 import { useEffect, useId, useLayoutEffect, useRef, useState, useSyncExternalStore, type CSSProperties, type MouseEvent } from 'react';
 import { formatCount, formatTokens, formatUsd } from '@t3tools/shared/usageFormat';
 
+import { ProviderDriverKind } from '@t3tools/contracts';
 import { ClaudeAI, OpenAI } from '~/components/Icons';
+import { ProviderInstanceIcon } from '~/components/chat/ProviderInstanceIcon';
+import type { HohExecutor } from '../../hoh-host/config';
 import { T3AppIcon } from '~/components/T3AppIcon';
 import { Button } from '~/components/ui/button';
+import { stackedThreadToast, toastManager } from '~/components/ui/toast';
 import { openCommandPalette } from '~/commandPaletteBus';
+import { isConfirmDialogActive } from '~/confirmDialog';
+import { useClientSettings } from '~/hooks/useSettings';
+import { useThreadActions } from '~/hooks/useThreadActions';
+import { ensureLocalApi } from '~/localApi';
+import { HOH_ENVIRONMENT_ID } from '../../hoh-host/config';
 import type { HomeAgent as Agent, HomeEntry } from '../../hoh-host/threads';
 import { openQuickView, QuickViewDialog } from './QuickViewDialog';
 import {
@@ -22,7 +33,7 @@ import {
 } from './grouping';
 import './home.css';
 
-type Entry = HomeEntry & { runner: 'claude' | 'codex' };
+type Entry = HomeEntry & { runner: HohExecutor };
 interface Home {
   version(): number; subscribe(listener: () => void): () => void; entries(): HomeEntry[]; projectEntries(): HomeEntry[]; projectTitle(id: string): string; projectKey(id: string): string;
   answer(threadId: string, requestId: string, decision: 'accept' | 'decline'): Promise<void>;
@@ -64,16 +75,23 @@ interface View {
   host: Home | undefined; now: number; open(threadId: string): void; where(entry: Entry): string; projectKey(projectId: string): string;
   collapsedDone: ReadonlySet<string | null>;
   toggleDone(projectId: string | null): void;
+  archiveDone(entries: Entry[], beforeArchive: (count: number) => void): Promise<void>;
 }
 
 /** The executor's mark from T3's own provider set. */
-const Mark = ({ entry }: { entry: Entry }) => entry.providerInstanceId === 'codex'
-  ? <OpenAI className="hoh-mark" role="img" aria-label="Codex" />
-  : <ClaudeAI className="hoh-mark" role="img" aria-label="Claude" />;
+const runnerName: Record<HohExecutor, string> = { claude: 'Claude', codex: 'Codex', pi: 'Pi Agent' };
+const runnerFor = (instance: unknown): HohExecutor => instance === 'pi' ? 'pi' : instance === 'codex' ? 'codex' : 'claude';
+
+const PiMark = () => <ProviderInstanceIcon driverKind={ProviderDriverKind.make('pi')} displayName="Pi Agent" showBadge={false} iconClassName="hoh-mark" />;
+const Mark = ({ entry }: { entry: Entry }) => entry.runner === 'pi'
+  ? <PiMark />
+  : entry.runner === 'codex'
+    ? <OpenAI className="hoh-mark" role="img" aria-label="Codex" />
+    : <ClaudeAI className="hoh-mark" role="img" aria-label="Claude" />;
 
 function PluginCreatorMark({ entry }: { entry: Entry }) {
   return (
-    <span className="hoh-card__partnership" role="img" aria-label={`Alexandrie + ${entry.runner === 'codex' ? 'Codex' : 'Claude'}`}>
+    <span className="hoh-card__partnership" role="img" aria-label={`Alexandrie + ${runnerName[entry.runner]}`}>
       <span className="hoh-card__emblem" aria-hidden><T3AppIcon /></span>
       <span className="hoh-card__union" aria-hidden><PlusIcon strokeWidth={2.5} /></span>
       <span className="hoh-card__worker" aria-hidden><Mark entry={entry} /></span>
@@ -145,7 +163,10 @@ export function waitingLabel(entry: Pick<Entry, 'stopped' | 'interrupted' | 'can
 type Complete = (entry: Entry, event: MouseEvent<HTMLButtonElement>) => void;
 const CREATOR_STATES = { working: 'Working', ended: 'Inactive' };
 
-function EntryCard({ entry, view, complete, grouped }: { entry: Entry; view: View; complete: Complete; grouped: boolean }) {
+function EntryCard({ entry, view, complete, grouped, archive, archiving }: {
+  entry: Entry; view: View; complete: Complete; grouped: boolean;
+  archive?(entries: Entry[], event: MouseEvent<HTMLButtonElement>): void; archiving?: boolean;
+}) {
   const waiting = entry.state === 'waiting';
   const project = waiting && !grouped && !entry.pluginCreator ? projectLabel(entry.projectId, view.where(entry)) : null;
   const label = waiting ? waitingLabel(entry) : entry.pluginCreator && entry.state !== 'done' && CREATOR_STATES[entry.state];
@@ -165,6 +186,13 @@ function EntryCard({ entry, view, complete, grouped }: { entry: Entry; view: Vie
       ) : null}
       {waiting || (entry.pluginCreator && entry.state === 'working') ? <Steps entry={entry} /> : null}
       {!entry.pluginCreator && entry.state === 'done' && entry.doneAt !== null ? <span className="hoh-card__time">{clock(entry.doneAt)}</span> : null}
+      {archive ? (
+        <Button className="hoh-card__archive" variant="ghost-muted" size="icon-xs"
+          aria-label={`Archive ${entry.title}`} title="Archive chat" aria-disabled={archiving || undefined}
+          onClick={(event) => archive([entry], event)}>
+          <ArchiveIcon aria-hidden />
+        </Button>
+      ) : null}
     </article>
   );
 }
@@ -185,13 +213,33 @@ function AgentClusters({ entries, view, projectId = null, pluginCreator = false 
   const doneToggle = useRef<HTMLButtonElement>(null);
   const pending = useRef(new Map<string, Completion>());
   const doneId = useId();
+  const [archiving, setArchiving] = useState(false);
   const expanded = pluginCreator || !view.collapsedDone.has(projectId);
+  const done = entries.filter((entry) => entry.state === 'done').sort((a, b) => (b.doneAt ?? 0) - (a.doneAt ?? 0));
   const sections = [
     { state: 'waiting', label: 'Waiting for you', items: entries.filter((entry) => entry.state === 'waiting') },
     { state: 'working', label: 'Working', items: entries.filter((entry) => entry.state === 'working') },
     { state: 'ended', label: 'Inactive', items: entries.filter((entry) => entry.state === 'ended') },
-    { state: 'done', label: 'Done', items: entries.filter((entry) => entry.state === 'done').sort((a, b) => (b.doneAt ?? 0) - (a.doneAt ?? 0)) },
+    { state: 'done', label: 'Done', items: done },
   ];
+
+  const archive = async (selected: Entry[], event: MouseEvent<HTMLButtonElement>) => {
+    if (archiving) return;
+    const source = event.currentTarget;
+    const homeRoot = source.closest<HTMLElement>('.hoh-home');
+    setArchiving(true);
+    try {
+      await view.archiveDone(selected, (count) => {
+        if (document.activeElement !== source) return;
+        const fallback = count < done.length ? doneToggle.current ?? homeRoot : homeRoot;
+        fallback?.focus({ preventScroll: true });
+      });
+    } catch (error) {
+      toastManager.add({ type: 'error', title: 'Could not archive chats', description: error instanceof Error ? error.message : undefined });
+    } finally {
+      setArchiving(false);
+    }
+  };
 
   const complete: Complete = (entry, event) => {
     const source = event.currentTarget;
@@ -281,19 +329,30 @@ function AgentClusters({ entries, view, projectId = null, pluginCreator = false 
         </div>
       ) : sections.filter(({ items }) => items.length > 0).map(({ state, label, items }) => (
         <section key={state} className="hoh-agent-cluster" data-cluster={state}>
-          <h2 className="hoh-home__label">
+          <header className="hoh-agent-cluster__heading">
+            <h2 className="hoh-home__label">
+              {state === 'done' ? (
+                <button ref={doneToggle} type="button" className="hoh-agent-cluster__toggle" aria-expanded={expanded} aria-controls={doneId} onClick={() => view.toggleDone(projectId)}>
+                  <ChevronDownIcon aria-hidden />{label} <span className="hoh-home__count">{items.length}</span>
+                </button>
+              ) : <>{label} <span className="hoh-home__count">{items.length}</span></>}
+            </h2>
             {state === 'done' ? (
-              <button ref={doneToggle} type="button" className="hoh-agent-cluster__toggle" aria-expanded={expanded} aria-controls={doneId} onClick={() => view.toggleDone(projectId)}>
-                <ChevronDownIcon aria-hidden />{label} <span className="hoh-home__count">{items.length}</span>
-              </button>
-            ) : <>{label} <span className="hoh-home__count">{items.length}</span></>}
-          </h2>
+              <Button variant="ghost-muted" size="compact" aria-disabled={archiving || undefined}
+                title="Archive all chats in this Done section" onClick={(event) => void archive(items, event)}>
+                <ArchiveIcon aria-hidden />Archive all
+              </Button>
+            ) : null}
+          </header>
           <div
             id={state === 'done' ? doneId : undefined}
             hidden={state === 'done' && !expanded}
             className={`hoh-home__cards${state === 'waiting' ? '' : ' hoh-home__cards--compact'}`}
           >
-            {items.map((entry) => <EntryCard key={entry.id} entry={entry} view={view} complete={complete} grouped={projectId !== null} />)}
+            {items.map((entry) => (
+              <EntryCard key={entry.id} entry={entry} view={view} complete={complete} grouped={projectId !== null}
+                archive={state === 'done' ? archive : undefined} archiving={archiving} />
+            ))}
           </div>
         </section>
       ))}
@@ -340,8 +399,8 @@ function Runners({ runners }: { runners: ProjectGroup<Entry>['runners'] }) {
   return (
     <span className="hoh-project__runners" aria-label={`Runners: ${runners.join(', ')}`}>
       {visible.map((runner, index) => (
-        <span key={`${runner}-${index}`} className="hoh-project__runner" title={runner === 'codex' ? 'Codex' : 'Claude'}>
-          {runner === 'codex' ? <OpenAI aria-hidden /> : <ClaudeAI aria-hidden />}
+        <span key={`${runner}-${index}`} className="hoh-project__runner" title={runnerName[runner]}>
+          {runner === 'pi' ? <PiMark /> : runner === 'codex' ? <OpenAI aria-hidden /> : <ClaudeAI aria-hidden />}
         </span>
       ))}
       {runners.length > visible.length ? <span className="hoh-project__runner-more">+{runners.length - visible.length}</span> : null}
@@ -459,6 +518,7 @@ function ProjectFolders({ groups, view }: { groups: ProjectGroup<Entry>[]; view:
   const enter = (id: string) => { cancelClose(); setDisclosure((state) => updateProjectDisclosure(state, { type: 'hover', id })); };
   const leave = () => {
     cancelClose();
+    if (isConfirmDialogActive()) return;
     if (disclosure.pinned === null) closeTimer.current = setTimeout(() => setDisclosure((state) => updateProjectDisclosure(state, { type: 'leave' })), 180);
   };
 
@@ -495,11 +555,13 @@ function ProjectFolders({ groups, view }: { groups: ProjectGroup<Entry>[]; view:
   useEffect(() => {
     if (!openId) return;
     const close = (event: PointerEvent) => {
+      if (isConfirmDialogActive()) return;
       const target = event.target;
       if (!(target instanceof Node) || panel.current?.contains(target) || [...buttons.current.values()].some((button) => button.contains(target))) return;
       setDisclosure((state) => updateProjectDisclosure(state, { type: 'close' }));
     };
     const escape = (event: KeyboardEvent) => {
+      if (isConfirmDialogActive()) return;
       if (event.key !== 'Escape') return;
       const trigger = buttons.current.get(openId);
       setDisclosure((state) => updateProjectDisclosure(state, { type: 'close' })); trigger?.focus();
@@ -597,6 +659,8 @@ function Head({ now, busy }: { now: number; busy: boolean }) {
 
 export function HomeBody() {
   const host = home();
+  const { archiveThread } = useThreadActions();
+  const confirmThreadArchive = useClientSettings((settings) => settings.confirmThreadArchive);
   // One snapshot per change of any chat; entries are read after it.
   useSyncExternalStore(host?.subscribe ?? (() => () => {}), host?.version ?? (() => 0));
   const grouped = useSyncExternalStore(subscribeGroupAgentsByProject, getGroupAgentsByProject, () => false);
@@ -606,7 +670,7 @@ export function HomeBody() {
   const now = Date.now();
   const withRunner = (entry: HomeEntry): Entry => ({
     ...entry,
-    runner: entry.providerInstanceId === 'codex' ? 'codex' as const : 'claude' as const,
+    runner: runnerFor(entry.providerInstanceId),
   });
   const entries = (host?.entries() ?? []).map(withRunner);
   const visible = entries.filter((entry) =>
@@ -619,6 +683,32 @@ export function HomeBody() {
     open: openQuickView,
     where: (entry) => host?.projectTitle(entry.projectId) ?? '',
     projectKey: (projectId) => host?.projectKey(projectId) ?? projectId,
+    archiveDone: async (selected, beforeArchive) => {
+      if (!host) return;
+      if (confirmThreadArchive) {
+        const prompt = selected.length === 1
+          ? `Archive chat "${selected[0].title}"?`
+          : `Archive all ${selected.length} chats in this Done section?`;
+        if (!(await ensureLocalApi().dialogs.confirm(prompt))) return;
+      }
+      const currentDone = new Map(host.entries().filter((entry) => entry.state === 'done').map((entry) => [entry.id, entry]));
+      const eligible = selected.filter((entry) => {
+        const current = currentDone.get(entry.id);
+        return current?.turnOrdinal === entry.turnOrdinal && current.projectId === entry.projectId;
+      });
+      if (eligible.length === 0) return;
+      beforeArchive(eligible.length);
+      await Promise.all(eligible.map(async (entry) => {
+        const result = await archiveThread(scopeThreadRef(HOH_ENVIRONMENT_ID, entry.id));
+        if (result._tag === 'Failure' && !isAtomCommandInterrupted(result)) {
+          const error = squashAtomCommandFailure(result);
+          toastManager.add(stackedThreadToast({
+            type: 'error', title: `Could not archive ${entry.title}`,
+            description: error instanceof Error ? error.message : undefined,
+          }));
+        }
+      }));
+    },
     toggleDone: (projectId) => setCollapsedDone((previous) => {
       const next = new Set(previous);
       if (next.has(projectId)) next.delete(projectId); else next.add(projectId);

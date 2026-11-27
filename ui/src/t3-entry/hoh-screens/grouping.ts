@@ -1,3 +1,4 @@
+import type { HohExecutor } from '../../hoh-host/config';
 export const GROUP_AGENTS_STORAGE_KEY = 'hoh-home.group-agents-by-project.v1';
 export const PROJECT_COLOR_COUNT = 8;
 
@@ -14,7 +15,7 @@ export interface GroupableEntry {
   interrupted?: boolean;
   stopped?: boolean;
   agents: GroupableAgent[];
-  runner?: 'claude' | 'codex';
+  runner?: HohExecutor;
 }
 
 export interface ProjectGroup<Entry extends GroupableEntry = GroupableEntry> {
@@ -26,7 +27,7 @@ export interface ProjectGroup<Entry extends GroupableEntry = GroupableEntry> {
   waiting: number;
   ready: number;
   states: { working: number; waiting: number; ready: number; stopped: number; interrupted: number; done: number; inactive: number };
-  runners: Array<'claude' | 'codex'>;
+  runners: Array<HohExecutor>;
 }
 
 export interface ProjectDisclosureState { hovered: string | null; pinned: string | null }
@@ -85,9 +86,8 @@ export function projectColor(path: string, paletteSize = PROJECT_COLOR_COUNT): n
   return (hash >>> 0) % Math.max(1, paletteSize);
 }
 
-export function runnerKinds(entries: readonly GroupableEntry[]): Array<'claude' | 'codex'> {
+export function runnerKinds(entries: readonly GroupableEntry[]): Array<HohExecutor> {
   // Agent.kind is a subagent role (explore, plan, ...), not its provider.
-  // Today the HoH window runs Claude; the optional field keeps the view model ready for Codex cards.
   return entries.map((entry) => entry.runner ?? 'claude');
 }
 

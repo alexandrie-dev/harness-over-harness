@@ -32,10 +32,15 @@ fn main() {
             hoh_desktop::native::read_image_asset,
             hoh_desktop::native::confirm_external_image,
             hoh_desktop::native::preview_html,
+            hoh_desktop::external_ui::list_external_ui_plugins,
+            hoh_desktop::external_ui::open_external_ui_plugin,
+            hoh_desktop::external_ui::layout_external_ui_workspace,
+            hoh_desktop::external_ui::update_external_ui_panel,
             #[cfg(target_os = "linux")]
             hoh_desktop::clipboard_image::read_pasted_image,
             hoh_desktop::native::open_link,
             hoh_desktop::native::question_answer,
+            hoh_desktop::native::store_chat_secret,
             hoh_desktop::native::approval_history,
             hoh_desktop::native::approval_current,
             hoh_desktop::native::approval_decide

@@ -4,6 +4,7 @@
   "version": "0.1.0",
   "entry": "AuthorPlugin",
   "description": "Краткий итог последнего завершённого хода",
+  "repository": "https://github.com/alexandrie-dev/harness-over-harness/tree/main/plugins/turn-note",
   "permissions": {"observe": ["turn/finished"], "tools": ["last_turn"], "journal": ["turn-ended"]},
   "panel": {"title": "Последний ход", "record": "turn-ended", "fields": [{"key": "turn", "label": "Ход"}, {"key": "engine", "label": "Исполнитель"}, {"key": "outcome", "label": "Результат"}]}
 }

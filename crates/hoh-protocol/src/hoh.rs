@@ -33,6 +33,15 @@ optional!(SessionEventsParams {
     limit: u32,
 });
 object!(SessionEventsResult { events: Vec<SessionEvent>, next_seq: i64 });
+object!(SessionForkForEditParams {
+    session_id: String,
+    message_id: String,
+    target_session_id: String
+});
+object!(SessionForkForEditResult {
+    session_id: String,
+    attachments: Vec<Value>
+});
 choices!(EmployeeStatus { Working => "working", Waiting => "waiting", Sleeping => "sleeping" });
 choices!(InternetMode { Ask => "ask", Public => "public", Deny => "deny" });
 object!(Permissions { internet: InternetMode, domains: Vec<String>, folders: Vec<String>, write_files: bool, programs: bool, program_network: Vec<String>, act_as_user: bool });

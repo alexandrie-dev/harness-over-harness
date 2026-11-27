@@ -1,32 +1,30 @@
 import { invoke } from '@tauri-apps/api/core';
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import './html-document.css';
 
 interface Props {
   sessionId: string;
   path: string;
   title: string;
-  file: ReactNode;
+  autoOpen: boolean;
+  file: (open: () => void) => ReactNode;
 }
 
-export function HtmlDocument({ sessionId, path, title, file }: Props) {
+export function HtmlDocument({ sessionId, path, title, autoOpen, file }: Props) {
   const [url, setUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [expanded, setExpanded] = useState(false);
+  const card = useRef<HTMLSpanElement>(null);
   const request = useRef(0);
+  const openAutomatically = useRef(true);
 
   useEffect(() => () => { request.current++; }, []);
-  useEffect(() => {
-    if (!expanded) return;
-    const close = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setExpanded(false);
-    };
-    window.addEventListener('keydown', close);
-    return () => window.removeEventListener('keydown', close);
+  useLayoutEffect(() => {
+    if (expanded) card.current?.showPopover();
   }, [expanded]);
 
-  const load = async () => {
+  const load = useCallback(async () => {
     const current = ++request.current;
     setBusy(true);
     setError(null);
@@ -42,25 +40,40 @@ export function HtmlDocument({ sessionId, path, title, file }: Props) {
     } finally {
       if (request.current === current) setBusy(false);
     }
+  }, [sessionId, path]);
+
+  useEffect(() => {
+    if (autoOpen && openAutomatically.current) void load();
+  }, [autoOpen, load]);
+
+  const open = () => {
+    openAutomatically.current = false;
+    if (!url && !busy) void load();
   };
 
   return (
     <span className="hoh-html-document">
-      {file}
-      {!url && (
-        <button type="button" className="hoh-html-action" disabled={busy} onClick={() => void load()}>
-          {busy ? 'Loading HTML…' : 'Preview HTML'}
-        </button>
-      )}
+      {file(open)}
+      {!url && busy && <span className="hoh-html-loading" role="status">Loading HTML…</span>}
       {url && (
-        <span className="hoh-html-card" data-expanded={expanded || undefined}>
+        <span
+          ref={card}
+          className="hoh-html-card"
+          popover={expanded ? 'auto' : undefined}
+          onToggle={(event) => {
+            if (event.newState === 'closed') setExpanded(false);
+          }}
+        >
           <span className="hoh-html-bar">
             <span className="hoh-html-title" title={title}>{title}</span>
             <button type="button" className="hoh-html-action" disabled={busy} onClick={() => void load()}>Reload</button>
-            <button type="button" className="hoh-html-action" aria-expanded={expanded} onClick={() => setExpanded(!expanded)}>
-              {expanded ? 'Shrink' : 'Expand'}
-            </button>
+            {typeof HTMLElement.prototype.showPopover === 'function' && (
+              <button type="button" className="hoh-html-action" aria-expanded={expanded} onClick={() => setExpanded(!expanded)}>
+                {expanded ? 'Shrink' : 'Expand'}
+              </button>
+            )}
             <button type="button" className="hoh-html-action" onClick={() => {
+              openAutomatically.current = false;
               request.current++;
               setUrl(null);
               setBusy(false);

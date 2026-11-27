@@ -9,8 +9,5 @@
       storage.setItem('t3code:theme', 'hoh');
       storage.setItem('t3code:theme-appearance-mode', 'dark');
     }
-    // Боковая панель 208 px, как в образце T3 0.1.10: у них начальная ширина — min(256, max(208, ширина окна − 640))
-    // при запуске, у нашей основы T3 — всегда 256. Перетаскивание и сброс двойным нажатием — их (AppSidebarLayout.tsx).
-    if (storage.getItem('chat_thread_sidebar_width') === null) storage.setItem('chat_thread_sidebar_width', '208');
   } catch {}
 })();

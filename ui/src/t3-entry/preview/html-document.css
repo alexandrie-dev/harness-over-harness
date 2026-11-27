@@ -11,6 +11,7 @@
 .hoh-html-action:hover { background: var(--accent); }
 .hoh-html-action:disabled { opacity: .5; }
 .hoh-html-action:focus-visible { outline: 2px solid var(--ring); }
+.hoh-html-loading { margin-inline-start: .4rem; color: var(--muted-foreground); font-size: .75rem; }
 .hoh-html-card {
   display: flex;
   flex-direction: column;
@@ -21,13 +22,16 @@
   border: 1px solid var(--border);
   border-radius: .65rem;
 }
-.hoh-html-card[data-expanded] {
+.hoh-html-card:popover-open {
   position: fixed;
   inset: clamp(.75rem, 4vw, 3rem);
+  width: auto;
+  height: auto;
   margin: 0;
-  z-index: 80;
-  box-shadow: 0 0 0 100vmax rgb(0 0 0 / 58%);
+  padding: 0;
+  color: var(--foreground);
 }
+.hoh-html-card::backdrop { background: rgb(0 0 0 / 58%); }
 .hoh-html-bar {
   display: flex;
   align-items: center;
@@ -50,5 +54,5 @@
   height: clamp(280px, 58vh, 640px);
   border: 0;
 }
-.hoh-html-card[data-expanded] .hoh-html-frame { flex: 1; min-height: 0; }
+.hoh-html-card:popover-open .hoh-html-frame { flex: 1; min-height: 0; }
 .hoh-html-error { display: block; padding: .35rem 0; color: var(--destructive); }

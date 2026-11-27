@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-update-external-ui-panel"
+description = "Enables the update_external_ui_panel command without any pre-configured scope."
+commands.allow = ["update_external_ui_panel"]
+
+[[permission]]
+identifier = "deny-update-external-ui-panel"
+description = "Denies the update_external_ui_panel command without any pre-configured scope."
+commands.deny = ["update_external_ui_panel"]

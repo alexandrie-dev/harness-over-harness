@@ -34,4 +34,6 @@ Use the [Plugin Creator workflow](plugin-creator.md) for scaffolding, metadata c
 
 `hoh-plugin.json` supplies `id`, `entry` (a public Rust type implementing `hoh_kernel::Plugin`), version, name, and optional `panel`. A panel specifies a record suffix and labeled fields; the window reads the latest matching `plugin:<id>/<record>` from the selected loaded session and renders those values without plugin JavaScript. A plugin uses `append_plugin_record` to append such records; the session layer marks them ignorable.
 
+An optional `repository` string in `hoh-plugin.json` links the plugin’s details to its source. Use an HTTPS URL for the repository or the plugin directory in a monorepo.
+
 The Plugins page lists the linked manifests and loader status. It reports when the selected conversation is not loaded. Activation and configuration diagnostics are deliberately generic and do not expose arbitrary error text. In-process Rust code has the privileges of the engine; this kit does not implement a process sandbox, signatures, snapshot approval, or a session-permission broker.

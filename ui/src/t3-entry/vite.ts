@@ -116,6 +116,9 @@ export function themePalettes(code: string): string {
  */
 const HOME_BODY = resolve(UI, 'src/t3-entry/hoh-screens/HomeBody.tsx');
 const SIDEBAR_TOP = resolve(UI, 'src/t3-entry/hoh-screens/SidebarTop.tsx');
+const SIDEBAR_TOGGLE = resolve(UI, 'src/t3-entry/hoh-screens/SidebarToggle.tsx');
+const SIDEBAR_PAGES = resolve(UI, 'src/t3-entry/hoh-screens/pages.ts');
+const STEEL_BACKDROP = resolve(UI, 'src/t3-entry/hoh-screens/SteelBackdrop.tsx');
 function chatIndexHome(code: string): string {
   return anchorPatch('_chat.index.tsx', code, [[
     '    void handleNewThread(projectRef, { replace: true })',
@@ -131,6 +134,26 @@ export function chatViewHome(code: string): string {
     ['"pointer-events-none absolute inset-0 z-20 flex items-center [@media(max-height:34rem)]:items-end"', '"hoh-draft-hero pointer-events-none absolute inset-0 z-20 flex flex-col justify-end"'],
     ['              <div ref={draftHeroTransitionGroupRef} className="chat-composer-lane w-full">', '              {isDraftHeroState ? <HohHomeBody /> : null}\n              <div ref={draftHeroTransitionGroupRef} className="chat-composer-lane w-full">'],
   ], `import { HomeBody as HohHomeBody } from ${JSON.stringify(HOME_BODY)};\n`);
+}
+
+function timelineMessageEdit(code: string): string {
+  const editAction = resolve(UI, 'src/t3-entry/hoh-screens/EditUserMessageAction.tsx');
+  return anchorPatch('TimelineUserMessageRow.tsx', code, [[
+    '        {copyText && (',
+    `        {ctx.threadRef && ctx.canOperateThread && userMessage.attribution === null && (
+          <HohEditUserMessageAction
+            threadId={ctx.threadRef.threadId}
+            messageId={row.message.id}
+            text={plainText}
+            disabled={busy}
+            onOpenChat={ctx.onOpenThread}
+          />
+        )}
+        {copyText && (`,
+  ], [
+    '  const revertTurnCount = row.revertTurnCount;\n  const attachmentReferences',
+    '  const activity = use(TimelineRowActivityCtx);\n  const busy = activity.isWorking || activity.isRevertingCheckpoint;\n  const attachmentReferences',
+  ]], `import { EditUserMessageAction as HohEditUserMessageAction } from ${JSON.stringify(editAction)};\n`);
 }
 /** Боковая панель (HOH-41, состав раунда 12): верх — SidebarTop (New chat, Team с «+», Recent chats) вместо шапки T3 с поиском и значками;
  *  все разговоры — строки в один ряд без строки проекта («slim»), без полки Working. Полки Snoozed/Settled и кнопки Settle/Snooze скрыты (features.ts). */
@@ -148,16 +171,49 @@ export function sidebarList(code: string): string {
         if (scratchId === null) openCommandPalette({ open: "new-thread-in" });
         else void scratch.startScratchThread(scratchId);
       }`],
+    ['        ref={sidebarContentRef}', '        ref={sidebarContentRef}\n        data-hoh-hide-in-rail=""'],
     ['newThreadDisabled={projects.length === 0}', 'newThreadDisabled={projects.length === 0 && scratchId === null}'],
   ], 'import { useMemo as useHohMemo } from "react";\nimport { useScratchProject as useHohScratchProject } from "~/hooks/useScratchProject";\n');
 }
-/** «Settings» внизу панели — со значком и подписью (как в раунде 12), а не только значком. */
+function sidebarLayout(code: string): string {
+  return anchorPatch('AppSidebarLayout.tsx', code, [
+    ['      <SidebarProvider\n', '      <SidebarProvider\n        data-hoh-shell={showSidebar ? "" : undefined}\n'],
+    ['    "--sidebar-width":', '    "--sidebar-width-icon": "72px",\n    "--sidebar-width":'],
+    ['collapsible="offcanvas"', 'collapsible="icon"'],
+    ['  const { toggleSidebar } = useSidebar();', '  const { isMobile, toggleSidebar } = useSidebar();'],
+    ['      {showSidebar ? (\n        <Tooltip>', '      {showSidebar && isMobile ? (\n        <Tooltip>'],
+    ['        {children}\n        <BackgroundThreadAnnouncer />', '        {showSidebar ? <HohSteelBackdrop /> : null}\n        {children}\n        <BackgroundThreadAnnouncer />'],
+  ], `import { SteelBackdrop as HohSteelBackdrop } from ${JSON.stringify(STEEL_BACKDROP)};\n`);
+}
+
 export function sidebarChrome(code: string): string {
   return anchorPatch('SidebarChrome.tsx', code, [
+    ['  SidebarTrigger,\n', ''],
     ['aria-label={gt("T3 Code home")}', 'aria-label={gt("HoH home")}'],
-    ['flex h-8 min-w-0 flex-1 flex-wrap content-start items-center gap-x-2 overflow-hidden py-0.5', 'flex h-9 min-w-0 flex-1 flex-wrap content-start items-center gap-x-2 overflow-hidden'],
-    ['hidden h-7 w-fit min-w-0', 'hidden h-9 w-fit min-w-0'],
-    ['<SidebarBrandMark onBackdrop={onBackdrop} />', '<SidebarBrandMark />'],
+    ['"relative flex h-[var(--workspace-topbar-height)] shrink-0 flex-row items-center gap-2 pr-3"', '"hoh-sidebar-header relative flex shrink-0 items-center"'],
+    ['        isElectron && "drag-region",\n      )}\n    >', '        isElectron && "drag-region",\n      )}\n      data-hoh-sidebar-header=""\n    >'],
+    [`      <div className="relative top-[calc(var(--workspace-controls-top)-env(safe-area-inset-top))] z-10 ml-[calc(var(--workspace-controls-left)+1px-env(safe-area-inset-left))] flex shrink-0 items-center md:hidden">
+        <SidebarTrigger
+          variant={backdropVariant ? "media-navigation" : "ghost"}
+          className="relative top-auto translate-y-0"
+          aria-label={gt("Toggle main sidebar")}
+        />
+      </div>
+`, ''],
+    ['className="relative z-10 flex h-8 min-w-0 flex-1 flex-wrap content-start items-center gap-x-2 overflow-hidden py-0.5"', 'className="hoh-sidebar-identity relative z-10 min-w-0 flex-1"'],
+    ['<div className="hidden items-center md:flex">', '<div className="hidden items-center md:flex" data-hoh-hide-in-rail="">'],
+    ['<div className="ml-1 flex h-7 items-center">', '<div className="mt-1 flex items-center" data-hoh-hide-in-rail="">'],
+    ['      </div>\n    </div>\n  );\n});\n\nexport function SidebarBrandWidthProbe', '      </div>\n      <HohSidebarToggle />\n    </div>\n  );\n});\n\nexport function SidebarBrandWidthProbe'],
+    ['function SidebarBrand({ onBackdrop }: { onBackdrop: boolean }) {\n  const gt = useGT();', 'function SidebarBrand({ onBackdrop }: { onBackdrop: boolean }) {\n  const gt = useGT();\n  const { isMobile, setOpenMobile } = useSidebar();'],
+    ['"relative z-10 ml-[var(--workspace-titlebar-content-left)] hidden h-7 w-fit min-w-0 shrink-0 items-center overflow-hidden rounded-md outline-hidden ring-ring focus-visible:ring-2 focus-visible:ring-inset md:flex"', '"hoh-sidebar-brand relative z-10 flex min-w-0 items-center outline-hidden ring-ring focus-visible:ring-2 focus-visible:ring-inset"'],
+    ['      to="/"\n    >\n      <SidebarBrandMark onBackdrop={onBackdrop} />', `      to="/"
+      onClick={() => {
+        hohSidebarPages.close();
+        if (isMobile) setOpenMobile(false);
+      }}
+    >
+      <span className="hoh-sidebar-avatar"><SidebarBrandMark /></span>
+      <span className="hoh-sidebar-brand__name" data-hoh-rail-label="">Alexandrie</span>`],
     ['<SidebarBrandMark onBackdrop={false} />', '<SidebarBrandMark />'],
     [`function SidebarBrandMark({ onBackdrop }: { onBackdrop: boolean }) {
   return (
@@ -177,9 +233,20 @@ export function sidebarChrome(code: string): string {
 }`, `function SidebarBrandMark() {
   return <T3Wordmark className="block shrink-0" />;
 }`],
-    ['<SidebarMenuButton aria-label={label} onClick={onClick} size="icon">\n              {icon}\n            </SidebarMenuButton>', '<SidebarMenuButton aria-label={label} onClick={onClick}>\n              {icon}\n              <span>{label}</span>\n            </SidebarMenuButton>'],
-  ]);
+    ['<SidebarMenuButton aria-label={label} onClick={onClick} size="icon">\n              {icon}\n            </SidebarMenuButton>', '<SidebarMenuButton className="hoh-side__action" aria-label={label} onClick={onClick}>\n              {icon}\n              <span data-hoh-rail-label="">{label}</span>\n            </SidebarMenuButton>'],
+    ['<SidebarMenu className="flex-row items-center">', '<SidebarMenu className="hoh-sidebar-utilities flex-row flex-wrap items-center">'],
+    ['<SidebarMenuButton onClick={handleBackClick}>', '<SidebarMenuButton className="hoh-side__action" aria-label={gt("Back")} tooltip={gt("Back")} onClick={handleBackClick}>'],
+    ['            <span>\n              <T>Back</T>', '            <span data-hoh-rail-label="">\n              <T>Back</T>'],
+    [`      <SidebarProviderUpdatePill />
+      <SidebarUpdateArchitectureWarning />`, `      <div className="contents" data-hoh-hide-in-rail="">
+        <SidebarProviderUpdatePill />
+        <SidebarUpdateArchitectureWarning />
+      </div>`],
+  ], `import { SidebarToggle as HohSidebarToggle } from ${JSON.stringify(SIDEBAR_TOGGLE)};
+import { pages as hohSidebarPages } from ${JSON.stringify(SIDEBAR_PAGES)};
+`);
 }
+
 function composerWhisper(code: string): string {
   const hook = resolve(import.meta.dirname, 'hoh-screens/whisper/useComposerSpeechInput.ts');
   return anchorPatch('ChatComposer.tsx', code, [[
@@ -194,6 +261,27 @@ function composerWhisper(code: string): string {
             {speechInput.preview ? (`,
   ]]);
 }
+
+function composerSecret(code: string): string {
+  const action = resolve(import.meta.dirname, 'hoh-screens/ChatSecretAction.tsx');
+  return anchorPatch('ChatComposer.tsx', code, [[
+    '                    {speechInput.available ? (',
+    `                    {canOperateThread && !projectSelectionRequired && !noProviderAvailable &&
+                      pendingUserInputs.length === 0 && !isEditingQueuedMessage && !dictationTakesFooter ? (
+                      <HohChatSecretAction
+                        key={attachmentTargetKey}
+                        onInsert={(path) => {
+                          if (!composerMountedRef.current || attachmentTargetKeyRef.current !== attachmentTargetKey) return false;
+                          const prefix = promptRef.current.trim() ? "\\n\\n" : "";
+                          return insertComposerTextAtEndStable(prefix +
+                            "Use the temporary secret file at " + JSON.stringify(path) +
+                            " for this task. Keep its contents out of command output and chat.");
+                        }}
+                      />
+                    ) : null}
+                    {speechInput.available ? (`,
+  ]], `import { ChatSecretAction as HohChatSecretAction } from ${JSON.stringify(action)};\n`);
+}
 function chatSettingsWhisper(code: string): string {
   const setting = resolve(import.meta.dirname, 'hoh-screens/whisper/WhisperSetting.tsx');
   return anchorPatch('SettingsPanels.tsx', code, [[
@@ -207,9 +295,9 @@ function composerPaste(code: string): string {
   const pastedImage = resolve(UI, 'src/t3-entry/pastedImage.ts');
   return anchorPatch('ChatComposer.tsx', code, [
     ['    if (pastedContext) return;', `    if (pastedContext) return;
-    // WebKitGTK can dispatch a real paste without exposing the image offered by the OS.
+    // WebKitGTK can expose HTML or other formats while hiding the clipboard image itself.
     if (window.__TAURI_INTERNALS__ && event.nativeEvent.isTrusted && activeThreadId &&
-        !bypassAutoAttachment && event.clipboardData.types.length === 0) {
+        !bypassAutoAttachment && files.length === 0 && !plainText) {
       const draftKey = attachmentTargetKeyRef.current;
       pendingDraftWork.begin(draftKey);
       void readHohPastedImage().then((file) => {
@@ -253,22 +341,57 @@ function editorPaste(code: string): string {
   ]);
 }
 
-/** Local HTML links keep their file action and expose an isolated in-chat preview. */
+/** Local HTML links open in chat. An assistant can explicitly request an inline card. */
 function markdownHtml(code: string): string {
   const preview = resolve(UI, 'src/t3-entry/preview/HtmlDocument.tsx');
+  const config = resolve(HOST, 'config.ts');
   return anchorPatch('ChatMarkdown.tsx', code, [
-    ['    return (\n      <MarkdownFileLink\n        environmentId={environmentId}', '    const chip = (\n      <MarkdownFileLink\n        environmentId={environmentId}'],
+    ['    useChatMarkdownState({ text, inline, ...props });', '    useChatMarkdownState({ text, inline, renderInsights, ...props });'],
+    ['  isStreaming = false,\n  skills', '  isStreaming = false,\n  renderInsights = false,\n  skills'],
+    ['    mediaSource?: string,\n  ) => {', '    mediaSource?: string,\n    showHtmlPreview = false,\n  ) => {'],
+    ['    return (\n      <MarkdownFileLink\n        environmentId={environmentId}', `    const renderChip = (onPreviewHtml?: () => void) => (
+      <MarkdownFileLink
+        onPreviewHtml={onPreviewHtml}
+        environmentId={environmentId}`],
     ['      />\n    );\n  };\n\n  const componentState = {', `      />
     );
-    if (threadRef && window.__TAURI_INTERNALS__ && /[.]html?$/i.test(fileLinkMeta.filePath)) {
+    if (!inline && fileLinkMeta.line === undefined && threadRef?.environmentId === HOH_ENVIRONMENT_ID && isTauri() &&
+        navigator.platform.startsWith("Linux") && /[.]html?$/i.test(fileLinkMeta.filePath)) {
       return <HohHtmlDocument key={threadRef.threadId + ":" + fileLinkMeta.filePath} sessionId={threadRef.threadId}
-        path={fileLinkMeta.filePath} title={fileLinkMeta.basename} file={chip} />;
+        path={fileLinkMeta.filePath} title={fileLinkMeta.basename}
+        autoOpen={showHtmlPreview && renderInsights && !isStreaming} file={renderChip} />;
     }
-    return chip;
+    return renderChip();
   };
 
   const componentState = {`],
-  ], `import { HtmlDocument as HohHtmlDocument } from ${JSON.stringify(preview)};\n`);
+    ['    const chip = fileLinkChip(fileLinkMeta, copyMarkdown, normalizedHref);',
+      '    const chip = fileLinkChip(fileLinkMeta, copyMarkdown, normalizedHref, _title === "hoh-preview");'],
+  ], 'import { isTauri } from "@tauri-apps/api/core";\n'
+    + `import { HtmlDocument as HohHtmlDocument } from ${JSON.stringify(preview)};\n`
+    + `import { HOH_ENVIRONMENT_ID } from ${JSON.stringify(config)};\n`);
+}
+
+function markdownHtmlFileLink(code: string): string {
+  return anchorPatch('MarkdownFileLink.tsx', code, [
+    ['  onOpenInPanel:', '  onPreviewHtml?: (() => void) | undefined;\n  onOpenInPanel:'],
+    ['  onOpenInPanel,', '  onPreviewHtml,\n  onOpenInPanel,'],
+    ['          hasPrimaryAction ? (', '          hasPrimaryAction || onPreviewHtml ? ('],
+    ['                if (useBrowserPrimaryAction) {', `                if (onPreviewHtml) {
+                  onPreviewHtml();
+                  return;
+                }
+                if (useBrowserPrimaryAction) {`],
+    ['    previous.onOpenInPanel === next.onOpenInPanel &&',
+      '    previous.onPreviewHtml === next.onPreviewHtml &&\n    previous.onOpenInPanel === next.onOpenInPanel &&'],
+  ]);
+}
+
+function markdownHtmlMarker(code: string): string {
+  return anchorPatch('markdownPipeline.ts', code, [
+    ['    a: [...(defaultSchema.attributes?.a ?? []), "dataPullRequestAutolink"],',
+      '    a: [...(defaultSchema.attributes?.a ?? []), "dataPullRequestAutolink", ["title", "hoh-preview"]],'],
+  ]);
 }
 
 /** From a clean profile, New chat invokes the same scratch action as Home. */
@@ -402,14 +525,28 @@ function hohT3(): Plugin {
       if (id === resolve(T3_WEB, 'components/settings/ThemePreviewCircles.tsx')) return { code: themeCards(code), map: null };
       if (id === resolve(T3_WEB, 'components/settings/ThemeSettings.tsx')) return { code: themeSettings(code), map: null };
       if (id === resolve(T3_BASE, 'shared/themePalettes.ts')) return { code: themePalettes(code), map: null };
-      if (id === resolve(T3_WEB, 'components/chat/ChatComposer.tsx')) return { code: composerWhisper(composerPaste(code)), map: null };
+      if (id === resolve(T3_WEB, 'components/chat/ChatComposer.tsx')) return { code: composerSecret(composerWhisper(composerPaste(code))), map: null };
       if (id === resolve(T3_WEB, 'components/settings/SettingsPanels.tsx')) return { code: chatSettingsWhisper(code), map: null };
       if (id === resolve(T3_WEB, 'components/ComposerPromptEditorTiptap.tsx')) return { code: editorPaste(code), map: null };
       if (id === resolve(T3_WEB, 'components/ChatMarkdown.tsx')) return { code: markdownHtml(code), map: null };
+      if (id === resolve(T3_WEB, 'components/chat/MarkdownFileLink.tsx')) return { code: markdownHtmlFileLink(code), map: null };
+      if (id === resolve(T3_BASE, 'shared/markdownPipeline.ts')) return { code: markdownHtmlMarker(code), map: null };
       if (id === resolve(T3_WEB, 'routes/_chat.index.tsx')) return { code: chatIndexHome(code), map: null };
       if (id === resolve(T3_WEB, 'components/ChatView.tsx')) return { code: chatViewHome(code), map: null };
+      if (id === resolve(T3_WEB, 'components/chat/TimelineUserMessageRow.tsx')) return { code: timelineMessageEdit(code), map: null };
       if (id === resolve(T3_WEB, 'components/Sidebar.tsx')) return { code: sidebarList(code), map: null };
+      if (id === resolve(T3_WEB, 'components/AppSidebarLayout.tsx')) return { code: sidebarLayout(code), map: null };
       if (id === resolve(T3_WEB, 'components/sidebar/SidebarChrome.tsx')) return { code: sidebarChrome(code), map: null };
+      if (id === resolve(T3_WEB, 'components/sidebar/SidebarThreadUndoNotice.tsx')) return {
+        code: anchorPatch('SidebarThreadUndoNotice.tsx', code, [
+          ['    <SidebarMenuItem\n', '    <SidebarMenuItem data-hoh-hide-in-rail=""\n'],
+        ]), map: null,
+      };
+      if (id === resolve(T3_WEB, 'components/sidebar/SidebarUpdatePill.tsx')) return {
+        code: anchorPatch('SidebarUpdatePill.tsx', code, [
+          ['<SidebarMenuItem className="ml-auto flex flex-1">', '<SidebarMenuItem className="ml-auto flex flex-1" data-hoh-hide-in-rail="">'],
+        ]), map: null,
+      };
       if (id === resolve(T3_WEB, 'shortcuts/chatRouteCommands.ts')) return { code: chatRouteCommands(code), map: null };
       if (id === resolve(T3_WEB, 'components/NoProjectsHero.tsx')) return { code: noProjectsHero(code), map: null };
       if (id === resolve(T3_WEB, 'components/settings/ProviderInstanceCard.tsx')) return { code: providerInstanceCard(code), map: null };

@@ -49,6 +49,14 @@ for (const executor of ['claude', 'codex']) {
     assert.match(text, /ask exactly one design question per turn/);
     assert.match(text, /Wait for approval before scaffolding/);
     assert.match(text, /SKILL\.md and hoh-package\.json/);
+    assert.match(text, /dist\/ui\.js/);
+    assert.match(text, /export a synchronous mount\(root\) function/);
+    assert.match(text, /"sidebarLabel": "Your Workspace label" to its entry in contributes\.ui\.pages/);
+    assert.match(text, /"protocolVersions": \[2\]/);
+    assert.match(text, /sdk\.reviewQueue\.subscribe\(listener\)/);
+    assert.match(text, /sdk\.openChat\(threadId\)/);
+    assert.match(text, /Only suggest a browser app if the user asks for one/);
+    assert.doesNotMatch(text, /This release does not include the external package loader/);
     assert.doesNotMatch(text, /cargo run --offline -p hoh/);
     assert(!engine.requests.some(call => call.method === 'hoh/workspace/entries'));
     assert(text.endsWith(brief));
@@ -68,7 +76,14 @@ test('replays old Plugin Creator chats with the brief visible and leaves later m
   const previousInstructions = skill.slice(skill.indexOf('Work in the selected HoH checkout.')).trim();
   const original = `# HoH plugin authoring\n\n${previousInstructions}`;
   const previous = skill.slice(skill.indexOf('# HoH plugin authoring')).trim();
-  for (const instructions of [original, previous]) {
+  const oldStandalone = pluginAuthoringPrefixes(skill, guide)
+    .find(prefix => prefix.includes('This release does not include the external package loader.'));
+  assert.ok(oldStandalone);
+  const panelStandalone = pluginAuthoringPrefixes(skill, guide)
+    .find(prefix => prefix.includes('sdk.reviewQueue.subscribe') && !prefix.includes('Your Workspace label'));
+  assert.ok(panelStandalone);
+  for (const instructions of [original, previous, ...[oldStandalone, panelStandalone].map(prefix =>
+    prefix.split('\n\n## Plugin request\n\n')[0])]) {
     const thread = new ThreadModel({ id: 'legacy', title: 'Renamed plugin chat', createdAt: 1, model: 'model', mode: 'confirm' });
     thread.pluginAuthoringPrefixes = pluginAuthoringPrefixes(skill, guide);
     const savedPrompt = instructions + `\n\n## Plugin request\n\n${brief}`;

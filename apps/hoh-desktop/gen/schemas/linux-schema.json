@@ -213,6 +213,24 @@
           "markdownDescription": "Enables the engine_request command without any pre-configured scope."
         },
         {
+          "description": "Enables the layout_external_ui_workspace command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-layout-external-ui-workspace",
+          "markdownDescription": "Enables the layout_external_ui_workspace command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the list_external_ui_plugins command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-list-external-ui-plugins",
+          "markdownDescription": "Enables the list_external_ui_plugins command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the open_external_ui_plugin command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-open-external-ui-plugin",
+          "markdownDescription": "Enables the open_external_ui_plugin command without any pre-configured scope."
+        },
+        {
           "description": "Enables the open_link command without any pre-configured scope.",
           "type": "string",
           "const": "allow-open-link",
@@ -249,10 +267,22 @@
           "markdownDescription": "Enables the read_pasted_image command without any pre-configured scope."
         },
         {
+          "description": "Enables the store_chat_secret command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-store-chat-secret",
+          "markdownDescription": "Enables the store_chat_secret command without any pre-configured scope."
+        },
+        {
           "description": "Enables the subscribe_engine_notifications command without any pre-configured scope.",
           "type": "string",
           "const": "allow-subscribe-engine-notifications",
           "markdownDescription": "Enables the subscribe_engine_notifications command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the update_external_ui_panel command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-update-external-ui-panel",
+          "markdownDescription": "Enables the update_external_ui_panel command without any pre-configured scope."
         },
         {
           "description": "Denies the approval_current command without any pre-configured scope.",
@@ -291,6 +321,24 @@
           "markdownDescription": "Denies the engine_request command without any pre-configured scope."
         },
         {
+          "description": "Denies the layout_external_ui_workspace command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-layout-external-ui-workspace",
+          "markdownDescription": "Denies the layout_external_ui_workspace command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the list_external_ui_plugins command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-list-external-ui-plugins",
+          "markdownDescription": "Denies the list_external_ui_plugins command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the open_external_ui_plugin command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-open-external-ui-plugin",
+          "markdownDescription": "Denies the open_external_ui_plugin command without any pre-configured scope."
+        },
+        {
           "description": "Denies the open_link command without any pre-configured scope.",
           "type": "string",
           "const": "deny-open-link",
@@ -327,10 +375,22 @@
           "markdownDescription": "Denies the read_pasted_image command without any pre-configured scope."
         },
         {
+          "description": "Denies the store_chat_secret command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-store-chat-secret",
+          "markdownDescription": "Denies the store_chat_secret command without any pre-configured scope."
+        },
+        {
           "description": "Denies the subscribe_engine_notifications command without any pre-configured scope.",
           "type": "string",
           "const": "deny-subscribe-engine-notifications",
           "markdownDescription": "Denies the subscribe_engine_notifications command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the update_external_ui_panel command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-update-external-ui-panel",
+          "markdownDescription": "Denies the update_external_ui_panel command without any pre-configured scope."
         },
         {
           "description": "Default core plugins set.\n#### This default permission set includes:\n\n- `core:path:default`\n- `core:event:default`\n- `core:window:default`\n- `core:webview:default`\n- `core:app:default`\n- `core:image:default`\n- `core:resources:default`\n- `core:menu:default`\n- `core:tray:default`",

@@ -8,37 +8,52 @@
 +  const setComposerDraftInteractionMode = useComposerDraftStore(
 +    (store) => store.setInteractionMode,
 +  );
-@@ -1205 +1210,2 @@
+@@ -931 +936 @@
+-  const { modes: compatibleRuntimeModes, mode: compatibleRuntimeMode } =
++  const { modes: compatibleRuntimeModes, mode: resolvedRuntimeMode } =
+@@ -935,0 +941,5 @@
++  // Pi requires an explicit choice of Full access, even when it is the only supported mode.
++  const piNeedsFullAccess = selectedProviderEntry?.snapshot.driver === "pi" &&
++    selectedProviderEntry.snapshot.supportedRuntimeModes?.includes("full-access") === true &&
++    (routeKind === "draft" ? composerDraft.runtimeMode !== "full-access" : runtimeMode !== "full-access");
++  const compatibleRuntimeMode = piNeedsFullAccess ? "approval-required" : resolvedRuntimeMode;
+@@ -959,0 +970 @@
++        (piNeedsFullAccess ? gt("Choose Full access in the composer to use Pi Agent.") : null) ??
+@@ -1205 +1216,2 @@
 -    fileStagingLimit !== null &&
 +    // HoH (ui/T3-MAP.md): Claude accepts image uploads even though generic file staging is absent.
 +    supportsAttachmentUploads &&
-@@ -1267 +1273 @@
+@@ -1267 +1279 @@
 -    ? gt("Resume thread")
 +    ? gt("Resume chat")
-@@ -2520,0 +2527,5 @@
+@@ -2520,0 +2533,5 @@
 +      currentRuntimeMode={props.currentRuntimeMode}
 +      planAvailable={selectedProviderEntry?.snapshot.showInteractionModeToggle === true}
 +      planActive={(composerDraft.interactionMode ?? activeThread?.interactionMode ?? "default") === "plan"}
 +      currentPlanActive={props.currentRuntimeMode !== undefined && activeThread?.interactionMode === "plan"}
 +      onPlanToggle={() => setComposerDraftInteractionMode(composerDraftTarget, (composerDraft.interactionMode ?? activeThread?.interactionMode ?? "default") === "plan" ? "default" : "plan")}
-@@ -2523 +2534,4 @@
+@@ -2523 +2540,8 @@
 -      handleRuntimeModeChange={handleRuntimeModeChange}
 +      handleRuntimeModeChange={(mode) => {
++        if (piNeedsFullAccess && routeKind === "draft" && mode === "full-access") {
++          // The default may already be Full, in which case the parent sees no mode change.
++          useComposerDraftStore.getState().setRuntimeMode(composerDraftTarget, mode);
++        }
 +        setComposerDraftInteractionMode(composerDraftTarget, "default");
 +        handleRuntimeModeChange(mode);
 +      }}
-@@ -2909 +2923 @@
+@@ -2909 +2933 @@
 -        title: gt("Loading thread context…"),
 +        title: gt("Loading chat context…"),
-@@ -2949 +2963 @@
+@@ -2949 +2973 @@
 -          title: gt("Unable to read the dropped thread"),
 +          title: gt("Unable to read the dropped chat"),
-@@ -2953 +2967 @@
+@@ -2953 +2977 @@
 -              ? gt("This thread exceeds the attachment size limit. Try a shorter thread.")
 +              ? gt("This chat exceeds the attachment size limit. Try a shorter chat.")
-@@ -2998 +3012 @@
+@@ -2998 +3022 @@
 -          title: gt("Unable to add thread"),
 +          title: gt("Unable to add chat"),
-@@ -3742 +3756 @@
+@@ -3742 +3766 @@
 -                            ? gt("Choose a project above to start a thread")
 +                            ? gt("Choose a project above to start a chat")

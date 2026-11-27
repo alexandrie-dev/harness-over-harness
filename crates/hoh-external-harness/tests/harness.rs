@@ -2690,6 +2690,122 @@ const CONFIRM_TEXT: &str =
 const FULL_TEXT: &str = "Full access: Stub runs commands without asking";
 
 #[tokio::test]
+async fn editing_branches_at_the_selected_turn_and_starts_a_fresh_native_session() {
+    let dirs = dirs();
+    let window = window(&dirs, quick(), Host::Allows, full_access_args).await;
+    let ctx = &window.base.ctx;
+    let _claude = window
+        .base
+        .harnesses
+        .register(
+            ctx,
+            "claude",
+            Arc::new(StdioHarness::new(StdioHarnessConfig::new(ProcessSpec {
+                program: PathBuf::from(STUB),
+                args: vec!["--state".into(), dirs.state.to_str().unwrap().into()],
+                ..ProcessSpec::default()
+            }))),
+        )
+        .unwrap();
+    mount::<hoh_fs_local::FsLocalPlugin>(ctx, json!({"cwd": dirs.work})).await;
+    mount::<hoh_system_prompt::SystemPrompt>(ctx, json!({"includeRuntimeContext": false})).await;
+    mount::<hoh_working_directory::WorkingDirectory>(ctx, json!({"defaultDirectory": dirs.work}))
+        .await;
+    window
+        .call(
+            "hoh/executor/select",
+            json!({"executor":"claude","model":"stub-small"}),
+        )
+        .await
+        .unwrap();
+
+    let prompt = |id: &'static str, text: &'static str| {
+        let window = &window;
+        async move {
+            let receipt = window
+                .call(
+                    "session/prompt",
+                    json!({"sessionId": id, "contentBlocks":[{"type":"text","text":text}]}),
+                )
+                .await
+                .unwrap();
+            window
+                .call("session/wait", json!({"sessionId": id}))
+                .await
+                .unwrap();
+            receipt
+        }
+    };
+    prompt("original", "echo earlier context").await;
+    let edited = prompt("original", "echo replaced prompt").await;
+    prompt("original", "echo later prompt").await;
+    let fork = window
+        .call(
+            "session/fork-for-edit",
+            json!({
+                "sessionId":"original", "messageId": edited["messageId"], "targetSessionId":"edited"
+            }),
+        )
+        .await
+        .unwrap();
+    assert_eq!(fork, json!({"sessionId":"edited","attachments":[]}));
+    prompt("edited", "echo new prompt").await;
+
+    let original = window
+        .call(
+            "session/events",
+            json!({"sessionId":"original","limit":1000}),
+        )
+        .await
+        .unwrap();
+    let branch = window
+        .call("session/events", json!({"sessionId":"edited","limit":1000}))
+        .await
+        .unwrap();
+    let native = |events: &Value| {
+        events["events"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .rev()
+            .find(|entry| entry["type"] == BINDING_RECORD)
+            .unwrap()["data"]["nativeSessionId"]
+            .clone()
+    };
+    assert!(native(&branch).is_string());
+    assert_ne!(native(&original), native(&branch));
+    assert!(original.to_string().contains("echo replaced prompt"));
+    assert!(original.to_string().contains("echo later prompt"));
+    assert!(!branch.to_string().contains("echo replaced prompt"));
+    assert!(!branch.to_string().contains("echo later prompt"));
+    let reply = branch["events"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .rev()
+        .find(|entry| entry["type"] == "assistant/message")
+        .unwrap()["data"]["message"]["content"][0]["text"]
+        .as_str()
+        .unwrap();
+    assert!(reply.contains("echo earlier context"));
+    assert!(reply.contains("Current user message:\necho new prompt"));
+    let persistence = ctx.get::<SessionPersistenceService>().unwrap();
+    persistence.flush().await.unwrap();
+    let stored = persistence
+        .open(&"edited".into(), SessionAccess::Read, None)
+        .await
+        .unwrap();
+    assert_eq!(stored.header().parent_session, Some("original".into()));
+    let events = stored.read(None, None, None).await.unwrap().events;
+    assert!(events.iter().any(|event| {
+        event.event_type() == "user/message"
+            && event.data()["content"][0]["text"] == "echo new prompt"
+    }));
+    stored.close().await.unwrap();
+    window.close().await;
+}
+
+#[tokio::test]
 async fn a_retry_after_failed_turn_open_keeps_the_accepted_messages_access() {
     let dirs = dirs();
     let window = window(&dirs, quick(), Host::Allows, full_access_args).await;

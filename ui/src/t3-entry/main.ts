@@ -7,6 +7,7 @@ import pluginAuthoringSkill from './skills/hoh-plugin-authoring/SKILL.md?raw';
 import type { HohEngineLike } from './host';
 import { HIDDEN_SELECTORS } from './features';
 import './brand.css';
+import './hoh-screens/sidebar.css';
 import './grid/tokens.css';
 import './grid/frame.css';
 import { installGridCheck } from './grid/check';

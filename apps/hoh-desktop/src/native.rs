@@ -2,11 +2,12 @@
 use crate::{
     approval::{ApprovalView, Begun, Broker, OpenApproval, Resolution, now_ms},
     bridge,
+    chat_secrets::ChatSecrets,
     engine::{Engine, HostEvent, ProcessConfig},
     questions::QuestionBroker,
     workspace,
 };
-use hoh_protocol::ApprovalOutcome;
+use hoh_protocol::{ApprovalOutcome, SecretString};
 use serde_json::{Value, json};
 use std::{
     ffi::OsString,
@@ -35,6 +36,7 @@ pub struct Host {
     pub engine: Arc<Engine>,
     pub approvals: Arc<Broker>,
     pub questions: Arc<QuestionBroker>,
+    chat_secrets: Arc<ChatSecrets>,
     workspace: Workspace,
     ready: Arc<AtomicBool>,
     notifications: EngineNotifications,
@@ -148,16 +150,20 @@ pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     // The T3 client answers the engine's permission requests in its conversation; the previous
     // shell keeps the separate approval window.
     let in_chat = !legacy;
+    let data_dir = app.path().app_data_dir()?;
     let mut key = [0_u8; 32];
     use std::io::Read;
     std::fs::File::open("/dev/urandom")?.read_exact(&mut key)?;
-    let approvals = Arc::new(
-        Broker::new(key)?.with_audit_file(app.path().app_data_dir()?.join("approvals.log")),
-    );
+    let approvals = Arc::new(Broker::new(key)?.with_audit_file(data_dir.join("approvals.log")));
     let questions = Arc::new(QuestionBroker::default());
     let ready = Arc::new(AtomicBool::new(false));
-    let engine_home = app.path().app_data_dir()?.join("engine");
+    let engine_home = data_dir.join("engine");
     create_private_dir(&engine_home)?;
+    let secret_directory = app.path().runtime_dir().map_or_else(
+        |_| data_dir.join("chat-secrets"),
+        |runtime| runtime.join(format!("{}-chat-secrets", app.config().identifier)),
+    );
+    let chat_secrets = Arc::new(ChatSecrets::new(secret_directory));
     let launch = engine_launch(&engine_home)?;
     let config_dir = app.path().app_config_dir()?;
     // Without XDG user dirs (a fresh account, a container) there is no Documents entry: use ~/Documents.
@@ -190,6 +196,11 @@ pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     config.path = launch.path;
     config.args = launch.args;
     config.env = launch.env;
+    if cfg!(target_os = "linux") && in_chat {
+        config
+            .env
+            .push(("HOH_CHAT_HTML_PREVIEW".into(), "1".into()));
+    }
     config.stderr_file = None;
     config.provider = launch.provider.into();
     config.model = launch.model.into();
@@ -221,6 +232,7 @@ pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         engine,
         approvals,
         questions,
+        chat_secrets: chat_secrets.clone(),
         workspace: Workspace {
             default: default_folder,
             config_dir,
@@ -228,6 +240,16 @@ pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         ready,
         notifications,
     });
+    if in_chat {
+        let secrets = Arc::downgrade(&chat_secrets);
+        thread::spawn(move || {
+            while let Some(store) = secrets.upgrade() {
+                store.clean_expired();
+                drop(store);
+                thread::sleep(Duration::from_secs(60));
+            }
+        });
+    }
     #[cfg(feature = "probe")]
     crate::probe::trace("native:setup:complete");
     Ok(())
@@ -965,6 +987,22 @@ pub fn question_answer(
         .map_err(|_| "Помощник недоступен".to_owned())
 }
 
+/// Save a value entered in the composer's private dialog. Only the path is returned to the page.
+#[tauri::command]
+pub async fn store_chat_secret(
+    window: tauri::WebviewWindow,
+    state: tauri::State<'_, Host>,
+    secret: SecretString,
+) -> Result<String, String> {
+    if window.label() != "main" {
+        return Err("This command is only available in the main window.".into());
+    }
+    let store = state.chat_secrets.clone();
+    tauri::async_runtime::spawn_blocking(move || store.store(&secret))
+        .await
+        .map_err(|_| "Could not save the temporary secret.".to_owned())?
+}
+
 /// The decisions of the person, for the «Подтверждения» section. Only the main window may read them.
 #[tauri::command]
 pub fn approval_history(
@@ -1021,6 +1059,7 @@ pub fn shutdown(handle: &tauri::AppHandle, host: &Host) {
         destroy_window(handle, &label);
     }
     host.engine.stop();
+    host.chat_secrets.close();
 }
 
 /// The executor that runs a conversation, as the engine reports it (`hoh/executor/access/get`):

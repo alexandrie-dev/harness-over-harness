@@ -208,6 +208,22 @@
       "properties": {
         "method": {
           "type": "string",
+          "const": "session/fork-for-edit"
+        },
+        "params": {
+          "$ref": "#/$defs/SessionForkForEditParams"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "type": "string",
           "const": "session/cancel"
         },
         "params": {
@@ -1552,6 +1568,25 @@
       "required": [
         "sessionId",
         "limit"
+      ]
+    },
+    "SessionForkForEditParams": {
+      "type": "object",
+      "properties": {
+        "sessionId": {
+          "type": "string"
+        },
+        "messageId": {
+          "type": "string"
+        },
+        "targetSessionId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "sessionId",
+        "messageId",
+        "targetSessionId"
       ]
     },
     "Empty": {

@@ -1,0 +1,1 @@
+{"jsonrpc":"2.0","id":"session/fork-for-edit","method":"session/fork-for-edit","params":{"sessionId":"session-1","messageId":"message-1","targetSessionId":"session-edit-1"}}

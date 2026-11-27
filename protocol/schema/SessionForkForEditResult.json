@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "SessionForkForEditResult",
+  "type": "object",
+  "properties": {
+    "sessionId": {
+      "type": "string"
+    },
+    "attachments": {
+      "type": "array",
+      "items": true
+    }
+  },
+  "required": [
+    "sessionId",
+    "attachments"
+  ],
+  "x-method": "session/fork-for-edit"
+}

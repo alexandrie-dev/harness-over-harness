@@ -71,6 +71,7 @@ hoh-destructive-classifier = { path = "../../crates/hoh-destructive-classifier" 
 hoh-external-harness = { path = "../../crates/hoh-external-harness" }
 hoh-harness-claude = { path = "../../crates/hoh-harness-claude" }
 hoh-harness-codex = { path = "../../crates/hoh-harness-codex" }
+hoh-harness-pi = { path = "../../crates/hoh-harness-pi" }
 hoh-working-directory = { path = "../../crates/hoh-working-directory" }
 hoh-agent-default-model = { path = "../../crates/hoh-agent-default-model" }
 hoh-agent-instructions = { path = "../../crates/hoh-agent-instructions" }

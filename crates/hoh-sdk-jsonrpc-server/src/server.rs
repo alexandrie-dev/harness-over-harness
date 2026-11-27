@@ -50,6 +50,7 @@ use hoh_working_directory::WorkingDirectoryKey;
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use std::future::Future;
 use std::sync::{Arc, Mutex};
 
 mod session_rpc;
@@ -1046,14 +1047,22 @@ impl HarnessSdkJsonRpcServer {
         pending.await.map_err(Into::into)
     }
     fn open_session_locked(&self, state: &mut State, id: SessionId, resume: bool) -> Creation {
-        let this = self.clone();
         let route = state.route.clone();
+        let this = self.clone();
+        self.reserve_session_creation(state, id.clone(), async move {
+            this.create_session(id, resume, route).await
+        })
+    }
+    fn reserve_session_creation(
+        &self,
+        state: &mut State,
+        id: SessionId,
+        create: impl Future<Output = Result<Arc<SessionRecord>, BoxError>> + Send + 'static,
+    ) -> Creation {
+        let this = self.clone();
         let key = id.clone();
         let pending = async move {
-            let result = this
-                .create_session(id.clone(), resume, route)
-                .await
-                .map_err(SharedError::new);
+            let result = create.await.map_err(SharedError::new);
             lock(&this.inner.state).creations.shift_remove(&id);
             result
         }
@@ -1484,6 +1493,7 @@ impl HarnessSdkJsonRpcServer {
             "session/delete" => self.session_delete(params).await,
             "session/list" => self.session_list(params).await,
             "session/events" => self.session_events(params).await,
+            "session/fork-for-edit" => self.session_fork_for_edit(params).await,
             "session/cancel" => self.session_cancel(params),
             "shutdown" => self.shutdown().await,
             method if method.starts_with("hoh/") => self.hoh_method(method, params).await,

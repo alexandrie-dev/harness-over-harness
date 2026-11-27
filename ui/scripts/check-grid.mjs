@@ -14,7 +14,7 @@ import { FakeEngine } from '../tests/chat/fake-engine.mjs';
 
 const UI = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const ENTRY = join(UI, 'src/t3-entry');
-const DIST = join(UI, 'dist');
+const DIST = process.env.HOH_T3_DIST ? resolve(process.env.HOH_T3_DIST) : join(UI, 'dist');
 const errors = [];
 const fail = (message) => errors.push(message);
 const fixtureDate = new Date();
@@ -280,8 +280,12 @@ try {
           await page.locator('[data-plugin-id="turn-note"]').waitFor({ state: 'visible' });
           if (await page.locator('[data-hoh-page-item="plugins"][aria-current="page"]').count() !== 1) fail(`${label}: пункт Plugins не подсвечен`);
           if (await page.locator('[data-plugin-list] [data-plugin-id]').count() !== 1) fail(`${label}: неверное число установленных плагинов`);
-          if (await page.locator('[data-plugin-id="turn-note"]').getByText('mounted', { exact: true }).count() !== 1) fail(`${label}: нет состояния плагина`);
-          if (await page.locator('[data-plugin-id="turn-note"]').getByText('Select a conversation to see its data.', { exact: true }).count() !== 1) fail(`${label}: нет состояния панели без выбранного разговора`);
+          if (await page.locator('[data-plugin-id="turn-note"]').getByText('Active', { exact: true }).count() !== 1) fail(`${label}: нет состояния плагина`);
+          await page.locator('[data-plugin-id="turn-note"]').click();
+          const detail = page.locator('[data-plugin-detail="turn-note"]');
+          await detail.getByRole('tab', { name: 'Session data' }).click();
+          await detail.getByText('Select a conversation to see its data.', { exact: true }).waitFor();
+          await detail.getByRole('button', { name: 'All plugins' }).click();
           const pluginText = (await page.locator('.hoh-plugins').innerText()).replace(/\s+/g, ' ');
           if (/Sample data|Variant [ABC]/.test(pluginText)) fail(`${label}: на Plugins остались заглушка или переключатель варианта`);
           const overflow = await page.locator('.hoh-plugins').evaluate((node) => node.scrollWidth > node.clientWidth + 1);

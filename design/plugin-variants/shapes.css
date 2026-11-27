@@ -1,0 +1,201 @@
+/* The outline changes between variants. Card content uses the same measurements. */
+[data-plugin-shape] .hoh-plugin-grid { gap: 20px; }
+
+[data-plugin-shape] .hoh-plugin-tile {
+  position: relative;
+  display: grid;
+  align-items: stretch;
+}
+
+[data-plugin-shape] .hoh-plugin-card {
+  --card-gutter: 19px;
+  --card-footer: 46px;
+  --card-edge: color-mix(in srgb, var(--plugin-kind) 19%, var(--border));
+  --card-face: color-mix(in srgb, var(--plugin-kind) 5%, var(--card));
+  --card-base: color-mix(in srgb, var(--plugin-kind) 10%, var(--card));
+  position: relative;
+  isolation: isolate;
+  display: grid;
+  grid-template-rows: 94px 1fr var(--card-footer);
+  gap: 0;
+  height: 211px;
+  padding: 0 var(--card-gutter);
+  border: 0;
+  border-radius: 14px;
+  background: none;
+  box-shadow: none;
+}
+
+[data-plugin-shape] .hoh-plugin-card:hover {
+  --card-edge: color-mix(in srgb, var(--plugin-kind) 48%, var(--border));
+  --card-face: color-mix(in srgb, var(--plugin-kind) 9%, var(--card));
+}
+
+[data-plugin-shape] .hoh-plugin-card::before {
+  content: "";
+  position: absolute;
+  z-index: -2;
+  inset: 0;
+  border: 1px solid var(--card-edge);
+  border-radius: inherit;
+  background: var(--card-face);
+  pointer-events: none;
+}
+
+[data-plugin-shape] .hoh-plugin-card__header {
+  grid-row: 1;
+  display: grid;
+  grid-template:
+    "art ." 39px
+    "title arrow" 25px
+    / minmax(0, 1fr) 15px;
+  align-items: center;
+  gap: 10px;
+  padding-top: 16px;
+}
+
+[data-plugin-shape] .hoh-plugin-card__header .hoh-plugin-artwork {
+  grid-area: art;
+  width: 39px;
+  height: 39px;
+  border-radius: 11px;
+}
+
+[data-plugin-shape] .hoh-plugin-card__header .hoh-plugin-artwork > :is(svg, .hoh-plugin-logo) {
+  width: 21px;
+  height: 21px;
+}
+
+[data-plugin-shape] .hoh-plugin-card__header strong {
+  grid-area: title;
+  overflow: hidden;
+  font-size: 1.075rem;
+  font-weight: 650;
+  letter-spacing: -0.015em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+[data-plugin-shape] .hoh-plugin-card__arrow { grid-area: arrow; }
+
+[data-plugin-shape] .hoh-plugin-card__summary {
+  grid-row: 2;
+  min-width: 0;
+  align-self: start;
+}
+
+[data-plugin-shape] .hoh-plugin-card__summary .hoh-plugin-entity { font-weight: 565; }
+
+[data-plugin-shape] .hoh-plugin-card__footer {
+  grid-row: 3;
+  flex-wrap: nowrap;
+  gap: 8px;
+  margin: 0;
+}
+
+[data-plugin-shape] .hoh-plugin-version {
+  margin-left: auto;
+  flex: none;
+}
+
+[data-plugin-shape] .hoh-plugin-card__language { display: none; }
+
+[data-plugin-shape] .hoh-plugin-category {
+  position: absolute;
+  z-index: 1;
+  top: 22px;
+  right: 19px;
+  color: color-mix(in srgb, var(--plugin-kind) 50%, var(--foreground));
+  font-size: 0.75rem;
+  line-height: 1.4;
+  pointer-events: none;
+}
+
+[data-plugin-shape] .hoh-plugin-category svg { width: 12px; height: 12px; }
+
+/* The label and body share an edge, like the tab on a file folder. */
+[data-plugin-shape="folder"] .hoh-plugin-tile { padding-top: 27px; }
+
+[data-plugin-shape="folder"] .hoh-plugin-category {
+  inset: 0 auto auto 0;
+  min-height: 28px;
+  padding: 4px 15px 4px 13px;
+  border: 1px solid color-mix(in srgb, var(--plugin-kind) 27%, var(--border));
+  border-bottom: 0;
+  border-radius: 10px 16px 0 0;
+  background: color-mix(in srgb, var(--plugin-kind) 14%, var(--card));
+  font-weight: 595;
+}
+
+[data-plugin-shape="folder"] .hoh-plugin-card { border-top-left-radius: 0; }
+
+[data-plugin-shape="folder"] .hoh-plugin-card::before {
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--plugin-kind) 11%, var(--card)),
+    var(--card-face) 48%
+  );
+}
+
+[data-plugin-shape="folder"] .hoh-plugin-card::after {
+  content: "";
+  position: absolute;
+  inset: auto var(--card-gutter) var(--card-footer);
+  border-top: 1px solid color-mix(in srgb, var(--card-edge) 65%, transparent);
+  pointer-events: none;
+}
+
+/* Two cutouts separate the card body from the status stub. */
+[data-plugin-shape="ticket"] .hoh-plugin-card {
+  --cut: 9px;
+  --seam: calc(100% - var(--card-footer));
+}
+
+[data-plugin-shape="ticket"] .hoh-plugin-card::before {
+  background: linear-gradient(var(--card-face) 0 var(--seam), var(--card-base) var(--seam) 100%);
+  mask:
+    radial-gradient(circle at left var(--seam), transparent var(--cut), black calc(var(--cut) + 0.7px)) left / 51% 100% no-repeat,
+    radial-gradient(circle at right var(--seam), transparent var(--cut), black calc(var(--cut) + 0.7px)) right / 51% 100% no-repeat;
+}
+
+[data-plugin-shape="ticket"] .hoh-plugin-card::after {
+  content: "";
+  position: absolute;
+  inset: auto calc(var(--cut) + 2px) var(--card-footer);
+  border-top: 1px dashed color-mix(in srgb, var(--plugin-kind) 29%, var(--border));
+  pointer-events: none;
+}
+
+[data-plugin-shape="ticket"] .hoh-plugin-card__footer .hoh-plugin-status[data-status="configuration-error"] {
+  font-weight: 620;
+}
+
+/* The inset holds the content. The outer frame holds the status and version. */
+[data-plugin-shape="inset"] .hoh-plugin-card {
+  --card-gutter: 24px;
+  border-radius: 17px;
+}
+
+[data-plugin-shape="inset"] .hoh-plugin-card::before {
+  background: var(--card-base);
+}
+
+[data-plugin-shape="inset"] .hoh-plugin-card::after {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  inset: 6px 6px var(--card-footer);
+  border: 1px solid color-mix(in srgb, var(--card-edge) 76%, transparent);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--card-face) 82%, var(--background));
+  pointer-events: none;
+}
+
+[data-plugin-shape="inset"] .hoh-plugin-category { right: 24px; }
+
+@container (max-width: 320px) {
+  [data-plugin-shape] .hoh-plugin-card { --card-gutter: 14px; }
+  [data-plugin-shape="inset"] .hoh-plugin-card { --card-gutter: 18px; }
+  [data-plugin-shape] .hoh-plugin-category { right: 14px; }
+  [data-plugin-shape="inset"] .hoh-plugin-category { right: 18px; }
+}

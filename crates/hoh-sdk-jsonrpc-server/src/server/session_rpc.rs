@@ -1,18 +1,24 @@
 //! Window-facing methods that the SDK protocol lacks: `session/list`, `session/events`,
 //! `session/cancel`, plus dispatch of `hoh/*` methods registered by sibling plugins.
-use super::{HarnessSdkJsonRpcServer, lock};
+use super::{HarnessSdkJsonRpcServer, SessionRecord, lock};
 use crate::{
     HohPrivilegedApprover, HohRpcMethods,
     error::{HohMethodNotFound, error, type_error},
 };
-use hoh_agent::{Agent, AgentStatus, CancelOptions};
+use hoh_agent::{
+    Agent, AgentOptions, AgentSessionMeta, AgentStatus, Agents, CancelOptions, CreateAgentOptions,
+    EXECUTOR_BINDING_RECORD, Live,
+};
 use hoh_error::BoxError;
 use hoh_protocol::{
-    SessionEventsParams, SessionEventsResult, SessionListParams, SessionListResult, SessionSummary,
-    SessionWaitParams,
+    SessionEventsParams, SessionEventsResult, SessionForkForEditParams, SessionForkForEditResult,
+    SessionListParams, SessionListResult, SessionSummary, SessionWaitParams,
 };
-use hoh_session::{AgentCancelCause, MAX_SAFE_INTEGER, SessionEvent, SessionId};
+use hoh_session::{
+    AgentCancelCause, MAX_SAFE_INTEGER, SessionEvent, SessionId, SessionLogOffset, build_fork_seed,
+};
 use hoh_session_persistence::{SessionAccess, SessionPersistenceService};
+use hoh_working_directory::{WORKING_DIRECTORY_CHANGE, WorkingDirectoryKey};
 use serde_json::{Value, json};
 use std::{collections::HashSet, sync::Arc};
 
@@ -77,10 +83,151 @@ fn summary_of(id: &SessionId, header: &Value, events: &[Arc<SessionEvent>]) -> S
     }
 }
 
+fn edit_boundary<'a>(
+    events: &'a [Arc<SessionEvent>],
+    message_id: &str,
+) -> Result<(&'a SessionEvent, Vec<Value>), BoxError> {
+    let user_message = |event: &Arc<SessionEvent>| {
+        event.event_type() == "user/message" && event.data()["source"]["kind"] == "user"
+    };
+    let index = events
+        .iter()
+        .position(|event| user_message(event) && event.data()["id"] == message_id)
+        .ok_or_else(|| error("This message is no longer available to edit."))?;
+    let start = events[..index]
+        .iter()
+        .rposition(|event| matches!(event.event_type(), "turn/start" | "turn/end"))
+        .filter(|start| {
+            events[*start].event_type() == "turn/start"
+                && !events[*start + 1..index].iter().any(user_message)
+        })
+        .ok_or_else(|| error("This message does not start a turn."))?;
+    let prefix = start
+        .checked_sub(1)
+        .and_then(|index| events.get(index))
+        .ok_or_else(|| error("The history before this message is unavailable."))?;
+    let attachments = events[index].data()["content"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|block| block["type"] == "image")
+        .cloned()
+        .collect();
+    Ok((prefix, attachments))
+}
+
 impl HarnessSdkJsonRpcServer {
     fn live_agent(&self, id: &SessionId) -> Option<Arc<dyn Agent>> {
         let record = lock(&self.inner.state).sessions.get(id).cloned()?;
         Some(record.handle.agent.clone())
+    }
+
+    pub(super) async fn session_fork_for_edit(&self, params: Value) -> Result<Value, BoxError> {
+        self.assert_initialized()?;
+        let params: SessionForkForEditParams = params_of("session/fork-for-edit", params)?;
+        let source_id = SessionId::from(params.session_id);
+        let source = self
+            .live_agent(&source_id)
+            .ok_or_else(|| error("Open the source chat before editing a message."))?;
+        if source.status() != AgentStatus::Idle {
+            return Err(error("Stop the current turn before editing a message."));
+        }
+        let selection = source
+            .model()
+            .current()
+            .filter(|selection| matches!(selection.provider.as_str(), "claude" | "codex" | "pi"))
+            .ok_or_else(|| error("Message editing requires a Claude or Codex chat."))?;
+        let session = source.session();
+        let events = session.snapshot_events(None, None);
+        let (prefix, attachments) = edit_boundary(&events, &params.message_id)?;
+        let inherited_event_count = SessionLogOffset::new(u64::from(prefix.seq()) + 1)?;
+        let mut seed = build_fork_seed(&events, prefix.seq())?;
+        // Even if creation is interrupted before the new binding is written, this log
+        // must never resume a native session belonging to the original conversation.
+        for event in &mut seed {
+            if event.event_type() == EXECUTOR_BINDING_RECORD {
+                let mut value = event.as_value().clone();
+                value["data"]["nativeSessionId"] = Value::Null;
+                if let Some(data) = value["data"].as_object_mut() {
+                    data.remove("replaces");
+                }
+                *event = Arc::new(SessionEvent::from_value(value));
+            }
+        }
+        let directory = self
+            .inner
+            .ctx
+            .get::<WorkingDirectoryKey>()
+            .ok_or_else(|| error("workingDirectory service is unavailable"))?;
+        let (cwd, [dev, ino]) = directory.verify_for_read(session)?;
+        let agents = self
+            .inner
+            .ctx
+            .get::<Agents>()
+            .ok_or_else(|| error("agents service is unavailable"))?;
+        let id = SessionId::from(params.target_session_id);
+        if id.as_ref().is_empty() || id == source_id {
+            return Err(type_error(
+                "The edit requires a distinct target session id.",
+            ));
+        }
+        let options = CreateAgentOptions {
+            session_id: Some(id.clone()),
+            meta: Some(AgentSessionMeta {
+                cwd: Some(cwd.clone()),
+                parent_session: Some(source_id.clone()),
+                is_seeded: Some(true),
+                ..Default::default()
+            }),
+            inherited_event_count: Some(inherited_event_count),
+            seed: Some(seed),
+            agent_options: Some(AgentOptions {
+                provider: Some(Live::Value(selection.provider)),
+                model: Some(Live::Value(selection.model)),
+                ..Default::default()
+            }),
+            setup: Some(Arc::new(move |_ctx, agent| {
+                let data = json!({"cwd": cwd, "identity": {"path": cwd, "dev": dev, "ino": ino}});
+                Box::pin(async move {
+                    agent
+                        .session()
+                        .append(WORKING_DIRECTORY_CHANGE, data, None)?;
+                    Ok(None)
+                })
+            })),
+            ..Default::default()
+        };
+        let creation = {
+            let mut state = lock(&self.inner.state);
+            if state.shutting_down || state.deleting.contains(&source_id) {
+                return Err(error("The source chat is closing."));
+            }
+            if state.sessions.contains_key(&id)
+                || state.creations.contains_key(&id)
+                || state.deleting.contains(&id)
+                || state.deleted.contains(&id)
+            {
+                return Err(error("The target chat already exists."));
+            }
+            let this = self.clone();
+            let target_id = id.clone();
+            self.reserve_session_creation(&mut state, id.clone(), async move {
+                let handle = agents.create(&this.inner.ctx, options).await?;
+                let record = Arc::new(SessionRecord {
+                    handle,
+                    failure: Default::default(),
+                });
+                lock(&this.inner.state)
+                    .sessions
+                    .insert(target_id, record.clone());
+                Ok(record)
+            })
+        };
+        creation.await?;
+        Ok(serde_json::to_value(SessionForkForEditResult {
+            session_id: id.to_string(),
+            attachments,
+        })?)
     }
 
     pub(super) async fn session_events(&self, params: Value) -> Result<Value, BoxError> {

@@ -1,0 +1,35 @@
+{
+  "formatVersion": 2,
+  "id": "hello-workspace",
+  "version": "1.0.0",
+  "digest": "sha256:7f3d2b1dbb391ac3c8aef535112653f7fb30258313f87e61cac5560fc8fa9f49",
+  "ui": {
+    "entry": "ui.js"
+  },
+  "requestedPermissions": {
+    "ui": [
+      "page"
+    ]
+  },
+  "contributes": {
+    "ui": {
+      "pages": [
+        {
+          "id": "main",
+          "name": "Hello Workspace",
+          "handler": "mount",
+          "sidebarLabel": "Hello Workspace"
+        }
+      ]
+    }
+  },
+  "requires": {
+    "services": {
+      "ui": {
+        "protocolVersions": [
+          1
+        ]
+      }
+    }
+  }
+}

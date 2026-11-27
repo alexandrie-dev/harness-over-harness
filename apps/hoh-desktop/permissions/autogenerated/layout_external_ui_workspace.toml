@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-layout-external-ui-workspace"
+description = "Enables the layout_external_ui_workspace command without any pre-configured scope."
+commands.allow = ["layout_external_ui_workspace"]
+
+[[permission]]
+identifier = "deny-layout-external-ui-workspace"
+description = "Denies the layout_external_ui_workspace command without any pre-configured scope."
+commands.deny = ["layout_external_ui_workspace"]

@@ -312,8 +312,9 @@ test('T3 first run: an engine without chats is a fresh workspace, Claude and Cod
   assert.deepEqual([snapshot.projects.length, snapshot.threads.length], [0, 0]);
   assert.equal(isFreshFirstRunWorkspace(workspace), true);
   const agents = await welcomeAgents(config);
-  assert.deepEqual({ ready: agents.readyCount, checking: agents.checking, found: agents.found.map(p => p.instanceId), available: agents.available.length }, { ready: 2, checking: false, found: ['claudeAgent', 'codex'], available: 0 });
-  // No ACP registry and no other agent to add; no T3 Connect; T3's usage-data notice says it is off.
+  assert.deepEqual({ ready: agents.readyCount, checking: agents.checking, found: agents.found.map(p => p.instanceId), available: agents.available.length }, { ready: 2, checking: false, found: ['claudeAgent', 'codex'], available: 1 });
+  // Pi is offered for setup. The managed policy disables the ACP registry and T3 Connect.
+  assert.deepEqual(agents.available.map(provider => provider.instanceId), ['pi']);
   assert.equal(isManagedDriverAllowed(config.managedPolicy, 'acpRegistry'), false);
   assert.equal(isManagedDriverAllowed(config.managedPolicy, 'codex'), true);
   assert.deepEqual({ connect: config.managedPolicy.limits.connect, telemetry: config.managedPolicy.limits.telemetry }, { connect: false, telemetry: false });

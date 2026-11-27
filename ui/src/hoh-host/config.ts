@@ -1,7 +1,6 @@
 // The handshake answers of the HoH host, in the encoded (JSON) form of T3's contracts
 // (packages/contracts/src/server.ts `ServerConfig`, `ServerProvider`; settings.ts `ServerSettings`).
-// Only Claude is offered; every optional server capability is left out, which is how a T3 server
-// tells the client to hide a feature. The chats' folder is T3's own "No project" (its scratch project,
+// The capability flags tell the T3 client which features HoH supports. The chats' folder is T3's own "No project" (its scratch project,
 // `scratchWorkspaceRoot`): T3 offers no git, branch or worktree there. What has no capability flag is
 // limited by the server's managed policy, which T3 reads the same way (`managedPolicy`).
 
@@ -11,12 +10,18 @@ export const HOH_ENVIRONMENT_ID = 'hoh-local';
 export const HOH_LABEL = 'HoH';
 export const CLAUDE_INSTANCE_ID = 'claudeAgent';
 export const CODEX_INSTANCE_ID = 'codex';
+export const PI_INSTANCE_ID = 'pi';
+export const EXECUTOR_INSTANCES = { claude: CLAUDE_INSTANCE_ID, codex: CODEX_INSTANCE_ID, pi: PI_INSTANCE_ID } as const;
+export const HOH_EXECUTORS = ['claude', 'codex', 'pi'] as const;
 /** T3's orchestration protocol (packages/contracts/src/environment.ts `ORCHESTRATION_PROTOCOL_VERSION`). */
 export const ORCHESTRATION_PROTOCOL_VERSION = 2;
 
 export type T3RuntimeMode = 'approval-required' | 'auto-accept-edits' | 'auto' | 'full-access';
 export type HohAccessMode = 'confirm' | 'auto-accept-edits' | 'auto' | 'full';
-export type HohExecutor = 'claude' | 'codex';
+export type HohExecutor = typeof HOH_EXECUTORS[number];
+export function isHohExecutor(value: unknown): value is HohExecutor {
+  return HOH_EXECUTORS.some(executor => executor === value);
+}
 export type T3InteractionMode = 'default' | 'plan';
 
 /**
@@ -185,9 +190,9 @@ const CODEX_EFFORT_LABELS: Readonly<Record<string, string>> = {
 };
 
 /** Codex's catalog is not copied into HoH: app-server's ordered `model/list` is the catalog. */
-export function codexModels(discovery: CodexDiscovery | null) {
+function nativeModels(discovery: HarnessDiscovery | null, label: string) {
   const models = (discovery?.models ?? []).filter(model => typeof model.id === 'string' && model.id.trim());
-  if (!models.length) return [{ slug: 'default', name: 'Codex', isCustom: false, capabilities: null }];
+  if (!models.length) return [{ slug: 'default', name: label, isCustom: false, capabilities: null }];
   return models.map(model => {
     const options = (model.effortLevels ?? []).map(effort => ({
       id: effort.id,
@@ -203,6 +208,15 @@ export function codexModels(discovery: CodexDiscovery | null) {
       capabilities: options.length ? { optionDescriptors: [{ id: 'reasoningEffort', label: 'Reasoning', type: 'select', options, ...(model.defaultEffort ? { currentValue: model.defaultEffort } : {}) }] } : null,
     };
   });
+}
+
+export function codexModels(discovery: CodexDiscovery | null) {
+  return nativeModels(discovery, 'Codex');
+}
+
+export function piModel(discovery: HarnessDiscovery | null, preferred?: unknown): string {
+  const models = nativeModels(discovery, 'Pi Agent');
+  return (models.find(model => model.slug === preferred) ?? models.find(model => model.isDefault) ?? models[0]).slug;
 }
 
 export function defaultCodexModel(discovery: CodexDiscovery | null): string {
@@ -256,6 +270,31 @@ export function codexProvider(discovery: CodexDiscovery | null, now: string, req
   };
 }
 
+export function piProvider(discovery: HarnessDiscovery | null, now: string, accessKnown = true) {
+  const ready = discovery?.installed === true && discovery.versionStatus === 'supported'
+    && discovery.models.length > 0 && !discovery.detail;
+  const message = discovery?.detail ?? (discovery === null ? 'Pi Agent discovery is unavailable.' : undefined);
+  return {
+    instanceId: PI_INSTANCE_ID,
+    driver: PI_INSTANCE_ID,
+    displayName: 'Pi Agent',
+    showInteractionModeToggle: false,
+    supportedRuntimeModes: accessKnown ? ['full-access'] : [],
+    supportsConversationRollback: false,
+    supportsTextGeneration: false,
+    enabled: true,
+    installed: discovery?.installed ?? false,
+    version: discovery?.version ?? null,
+    status: ready ? 'ready' : 'error',
+    auth: { status: discovery?.auth ?? 'unknown' },
+    checkedAt: now,
+    ...(message ? { message } : {}),
+    models: nativeModels(discovery, 'Pi Agent'),
+    slashCommands: [],
+    skills: [],
+  };
+}
+
 /** What T3's welcome page and provider settings show: found or not, signed in or not, as the engine says. */
 export function claudeProvider(discovery: ClaudeDiscovery | null, now: string, accessKnown = true, requestFailure?: unknown) {
   const healthReady = discovery === null
@@ -297,6 +336,8 @@ export function serverSettings(model: string, defaultMode: HohAccessMode, overri
     // client-runtime/src/operations/projects.ts `isSourceControlProviderOffered`). HoH adds local folders.
     offeredSourceControlProviders: { github: false },
     defaultModelSelection: { instanceId, model },
+    // HoH manages the built-in Pi instance. T3 leaves unconfigured Pi instances disabled.
+    providerInstances: { [PI_INSTANCE_ID]: { driver: PI_INSTANCE_ID, enabled: true, config: { enabled: true } } },
     // The native T3 context-window component lives in Thread details and is opt-in by default.
     // HoH reports Claude usage, so keep that row visible without requiring a hidden Labs setting.
     threadDetailsItems: { context: true },
@@ -313,6 +354,7 @@ export interface ConfigInput {
   readonly cwd: string;
   readonly claudeDiscovery: ClaudeDiscovery | null;
   readonly codexDiscovery: CodexDiscovery | null;
+  readonly piDiscovery?: HarnessDiscovery | null;
   readonly discoveryFailure?: unknown;
   readonly codexDiscoveryFailure?: unknown;
   readonly defaultMode: HohAccessMode;
@@ -324,8 +366,8 @@ export interface ConfigInput {
 }
 
 /**
- * Limits T3 reads from a managed server (packages/contracts/src/managedPolicy.ts): only Claude runs, so
- * the welcome page and the add-provider dialog offer no other agent and no ACP registry; no T3 Connect
+ * The managed policy limits the welcome page and add-provider dialog to HoH's registered agents,
+ * and disables the ACP registry and T3 Connect
  * (phone, guest links); no usage data is collected, which the welcome page says instead of T3's notice.
  */
 export const HOH_MANAGED_POLICY = {
@@ -334,13 +376,17 @@ export const HOH_MANAGED_POLICY = {
   limits: {
     connect: false,
     telemetry: false,
-    providers: { allowedDrivers: [CLAUDE_INSTANCE_ID, CODEX_INSTANCE_ID] },
+    providers: { allowedDrivers: Object.values(EXECUTOR_INSTANCES) },
   },
 };
 
 export function serverConfig(input: ConfigInput) {
-  const instanceId = input.defaultInstanceId === CODEX_INSTANCE_ID ? CODEX_INSTANCE_ID : CLAUDE_INSTANCE_ID;
-  const model = input.defaultModel ?? (instanceId === CODEX_INSTANCE_ID ? defaultCodexModel(input.codexDiscovery) : defaultClaudeModel(input.claudeDiscovery));
+  const instanceId = Object.values(EXECUTOR_INSTANCES).find(id => id === input.defaultInstanceId) ?? CLAUDE_INSTANCE_ID;
+  const model = input.defaultModel ?? ({
+    [CLAUDE_INSTANCE_ID]: () => defaultClaudeModel(input.claudeDiscovery),
+    [CODEX_INSTANCE_ID]: () => defaultCodexModel(input.codexDiscovery),
+    [PI_INSTANCE_ID]: () => piModel(input.piDiscovery ?? null),
+  })[instanceId]();
   return {
     environment: {
       environmentId: HOH_ENVIRONMENT_ID,
@@ -367,6 +413,7 @@ export function serverConfig(input: ConfigInput) {
     providers: [
       claudeProvider(input.claudeDiscovery, input.now, input.accessKnown !== false, input.discoveryFailure),
       codexProvider(input.codexDiscovery, input.now, input.codexDiscoveryFailure),
+      piProvider(input.piDiscovery ?? null, input.now, input.accessKnown !== false),
     ],
     availableEditors: [],
     observability: {

@@ -7,7 +7,7 @@ export const DEFAULT_FOLDER = '/home/person/Documents/HoH';
 const FOLDERS = [HOME, '/home/person/Documents', DEFAULT_FOLDER, '/home/person/Projects', '/home/person/Projects/site', '/home/person/Projects/tools', '/home/person/.config'];
 
 export class FakeEngine {
-  constructor({ store = new Map(), discovery, codexDiscovery, access = { mode: 'confirm', selected: { executor: 'claude', model: 'claude-sonnet' } }, folders = FOLDERS } = {}) {
+  constructor({ store = new Map(), discovery, codexDiscovery, piDiscovery, access = { mode: 'confirm', selected: { executor: 'claude', model: 'claude-sonnet' } }, folders = FOLDERS } = {}) {
     /** Folders on the fake disk; `refuseFolder` makes the person press «Отклонить» in the protection window. */
     this.folders = new Set(folders); this.refuseFolder = false;
     /** Folders added as projects (`hoh/workspace/add`). */
@@ -20,6 +20,7 @@ export class FakeEngine {
       models: [{ id: 'claude-sonnet', displayName: 'Claude Sonnet', isDefault: true }, { id: 'claude-opus', displayName: 'Claude Opus' }], detail: null };
     this.codexDiscovery = codexDiscovery ?? { executor: 'codex', installed: true, version: '0.166.0', versionStatus: 'supported', auth: 'authenticated',
       models: [{ id: 'gpt-6-sol', displayName: 'GPT-6 Sol', isDefault: true, defaultEffort: 'medium', effortLevels: [{ id: 'low' }, { id: 'medium' }, { id: 'high' }] }], detail: null };
+    this.piDiscovery = piDiscovery ?? { executor: 'pi', installed: false, version: null, versionStatus: 'unknown', auth: 'unknown', models: [], detail: 'Pi CLI (pi) was not found on PATH.' };
     this.access = access;
     this.sessionAccess = new Map();
   }
@@ -76,7 +77,7 @@ export class FakeEngine {
   async request(method, params) {
     this.requests.push({ method, params });
     switch (method) {
-      case 'hoh/executor/discover': return params.executor === 'codex' ? this.codexDiscovery : this.discovery;
+      case 'hoh/executor/discover': return params.executor === 'pi' ? this.piDiscovery : params.executor === 'codex' ? this.codexDiscovery : this.discovery;
       case 'hoh/executor/access/get': {
         const answer = { executor: params.executor, mode: this.access.mode, runtimeMode: this.access.mode, effective: { mode: this.access.mode, flags: [] }, selected: this.access.selected };
         const session = params.sessionId ? this.store.get(params.sessionId) : undefined;
@@ -123,6 +124,16 @@ export class FakeEngine {
         const after = params.afterSeq ?? -1;
         const events = session.events.filter(e => e.seq > after).slice(0, params.limit);
         return { events, nextSeq: events.at(-1)?.seq ?? after };
+      }
+      case 'session/fork-for-edit': {
+        const source = this.store.get(params.sessionId);
+        const index = source.events.findIndex(event => event.type === 'user/message' && event.data.id === params.messageId);
+        const start = source.events.slice(0, index).findLastIndex(event => event.type === 'turn/start');
+        if (index < 0 || start < 0) throw new Error('This message is no longer available to edit.');
+        this.seed(params.targetSessionId, '', source.events.slice(0, start).map(({ type, data }) => [type, data]));
+        Object.assign(this.store.get(params.targetSessionId), { executor: source.executor, model: source.model, cwd: source.cwd });
+        this.open.add(params.targetSessionId);
+        return { sessionId: params.targetSessionId, attachments: source.events[index].data.content.filter(block => block.type === 'image') };
       }
       case 'session/prompt': {
         if (!this.store.has(params.sessionId)) throw new Error('unknown SDK session');

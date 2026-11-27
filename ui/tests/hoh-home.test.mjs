@@ -161,15 +161,15 @@ test('folder disclosure is inserted after its rendered grid row instead of escap
   assert.doesNotMatch(css, /\.hoh-project-popover\s*\{[^}]*position:\s*fixed/);
 });
 
-test('folder art and project state styling use the project hue, blue active state and red waiting state', async () => {
+test('folder art keeps project hues and the dark HoH palette uses graphite, orange activity and distinct waiting indicators', async () => {
   const css = await readFile(new URL('../src/t3-entry/hoh-screens/home.css', import.meta.url), 'utf8');
   assert.match(homeSource, /data-working=\{\(group\.waiting === 0 && group\.states\.working > 0\)/);
-  assert.match(css, /\.hoh-project\[data-working\][^{]*\{[^}]*var\(--primary\)/);
-  assert.match(css, /\.hoh-project\[data-waiting\][^{]*\{[^}]*var\(--destructive\)/);
-  assert.match(css, /\.hoh-project__chip i\s*\{[^}]*background:\s*var\(--primary\)/);
-  assert.match(css, /\.hoh-project\[data-waiting\] \.hoh-project__chip i\s*\{[^}]*background:\s*var\(--destructive\)/);
-  assert.match(css, /\.hoh-project__icon i[^}]*var\(--hoh-project-color\)/);
-  assert.match(css, /\.hoh-project__icon b[^}]*var\(--hoh-project-color\)/);
+  assert.match(css, /html\.dark\[data-theme-id="hoh"\] \.hoh-project\[data-working\] \.hoh-project__chip i\s*\{[^}]*background:\s*var\(--app-theme-accent\)/);
+  assert.match(css, /html\.dark\[data-theme-id="hoh"\] \.hoh-project\[data-waiting\] \.hoh-project__chip i\s*\{[^}]*background:\s*var\(--destructive\)/);
+  assert.match(css, /\.hoh-project__icon\s*\{[^}]*--hoh-project-icon-color:\s*var\(--hoh-project-color\)/);
+  assert.match(css, /html\.dark\[data-theme-id="hoh"\] \.hoh-project__icon\s*\{[^}]*--hoh-project-icon-color:[^;]*var\(--card\)/);
+  assert.match(css, /\.hoh-project__icon i[^}]*var\(--hoh-project-icon-color\)/);
+  assert.match(css, /\.hoh-project__icon b[^}]*var\(--hoh-project-icon-color\)/);
   assert.match(css, /\.hoh-project__icon i::before/);
   assert.match(css, /\.hoh-project__icon em[^}]*border-radius:\s*50%/);
 });

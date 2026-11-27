@@ -2,7 +2,14 @@ import type { HohEngine } from './engine.ts';
 
 export interface PluginInventoryItem {
   id: string;
-  manifest: { name?: string; version?: string; description?: string; panel?: { title?: string; fields?: Array<{ key: string; label: string }> } };
+  manifest: {
+    name?: string;
+    version?: string;
+    description?: string;
+    repository?: string;
+    permissions?: { observe?: string[]; tools?: string[]; journal?: string[] };
+    panel?: { title?: string; fields?: Array<{ key: string; label: string }> };
+  };
   status: string;
   diagnostic: string | null;
   data: Record<string, unknown> | null;

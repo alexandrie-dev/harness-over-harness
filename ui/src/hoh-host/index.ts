@@ -51,6 +51,10 @@ export function installHohHost(options: InstallOptions) {
     subscribe: (listener: any) => options.engine.subscribe(listener),
   };
   (options.target ?? globalThis).__HOH_EXTERNAL_IMAGE__ = (threadId: string, path: string) => host.showExternalImage(threadId, path);
+  (options.target ?? globalThis).__HOH_MESSAGE_EDIT__ = {
+    canEdit: (threadId: string, messageId: string) => host.canEditUserMessage(threadId, messageId),
+    send: (threadId: string, messageId: string, text: string) => host.editUserMessage(threadId, messageId, text),
+  };
   void host.start();
   return {
     host,
@@ -59,6 +63,7 @@ export function installHohHost(options: InstallOptions) {
       delete (options.target ?? globalThis).__HOH_PLUGINS__;
       delete (options.target ?? globalThis).__HOH_PLUGIN_CREATOR__;
       delete (options.target ?? globalThis).__HOH_EXTERNAL_IMAGE__;
+      delete (options.target ?? globalThis).__HOH_MESSAGE_EDIT__;
       restoreSocket(); restoreFetch(); restoreXhr(); host.stop();
     },
   };

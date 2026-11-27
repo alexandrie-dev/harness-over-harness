@@ -673,6 +673,7 @@ test('one transient unknown-folder read is refunded; a persistent one is counted
 test('a local reply image is minted only for its conversation and native failures keep a visible reason', async () => {
   const engine = new FakeEngine();
   const reads = [];
+  let now = 1_000_000;
   engine.readImageAsset = async input => {
     reads.push(input);
     if (input.path.endsWith('missing.png')) throw new Error('Image unavailable: the file was not found.');
@@ -684,7 +685,7 @@ test('a local reply image is minted only for its conversation and native failure
       fileRevision: 'dev:ino:size:time',
     };
   };
-  const { host, client } = connect(engine);
+  const { host, client } = connect(engine, { now: () => now });
   await newThread(client, 'chat-local');
   const resource = { _tag: 'media-file', threadId: 'chat-local', path: 'shots/red.png', hostOnly: true };
   const first = await client.call('assets.createUrl', { resource });
@@ -692,7 +693,8 @@ test('a local reply image is minted only for its conversation and native failure
   assert.equal(first.sourcePath, `${DEFAULT_FOLDER}/shots/red.png`);
   assert.equal(first.fileRevision, 'dev:ino:size:time');
   assert.equal(Buffer.from(await (await fetch(first.relativeUrl)).arrayBuffer()).toString('base64'), PNG);
-  // A remint revalidates through native code but preserves the live URL while the file revision is unchanged.
+  // A remint after the reuse window revalidates, preserving the live URL for the same revision.
+  now += 30_001;
   const second = await client.call('assets.createUrl', { resource });
   assert.equal(second.relativeUrl, first.relativeUrl);
   const alias = await client.call('assets.createUrl', { resource: { ...resource, path: 'shots/alias.png' } });
@@ -716,7 +718,43 @@ test('a local reply image is minted only for its conversation and native failure
   await assert.rejects(fetch(first.relativeUrl));
 });
 
+test('repeated previews reuse an image without spending the budget for new files', async () => {
+  const engine = new FakeEngine();
+  let now = 1_000_000;
+  let reads = 0;
+  let revision = 'initial';
+  engine.readImageAsset = async ({ path }) => {
+    reads++;
+    return { dataBase64: PNG, mimeType: 'image/png', sizeBytes: PNG_BYTES,
+      sourcePath: `${DEFAULT_FOLDER}/${path}`, fileRevision: revision };
+  };
+  const { host, client } = connect(engine, { now: () => now });
+  await newThread(client, 'chat-preview-reuse');
+  const call = path => client.call('assets.createUrl', {
+    resource: { _tag: 'media-file', threadId: 'chat-preview-reuse', path, hostOnly: true },
+  });
+  try {
+    const initial = await call('shots/repeated.png');
+    for (let index = 0; index < 80; index++) {
+      now += 100;
+      assert.equal((await call('shots/repeated.png')).relativeUrl, initial.relativeUrl);
+    }
+    assert.equal(reads, 1);
+    assert.notEqual((await call('shots/new.png')).relativeUrl, initial.relativeUrl);
+    assert.equal(reads, 2);
+    now += 30_001;
+    revision = 'updated';
+    const updated = await call('shots/repeated.png');
+    assert.equal(updated.fileRevision, revision);
+    assert.notEqual(updated.relativeUrl, initial.relativeUrl);
+    assert.equal(reads, 3);
+  } finally {
+    host.stop();
+  }
+});
+
 test('local reply image retention is bounded per conversation with a visible failure', async () => {
+  let now = 1_000_000;
   const budget = overrides => mod.host.localImageRetentionFits({
     globalBytes: 0, globalEntries: 0, threadBytes: 0, threadEntries: 0,
     replacedBytes: 0, replacing: false, sizeBytes: 1, ...overrides,
@@ -745,7 +783,7 @@ test('local reply image retention is bounded per conversation with a visible fai
       fileRevision: `revision:${sourcePath}`,
     };
   };
-  const { host, client } = connect(engine);
+  const { host, client } = connect(engine, { now: () => now });
   await newThread(client, 'chat-image-budget');
   let firstAtCapacity;
   for (let index = 0; index < 32; index++) {
@@ -772,6 +810,7 @@ test('local reply image retention is bounded per conversation with a visible fai
     }
   }
   assert.equal(reads, 232, '200 aliases from other conversations complete within their own identity sets');
+  now += 30_001;
   const revalidateAtCapacity = await client.call('assets.createUrl', { resource: {
     _tag: 'media-file', threadId: 'chat-image-budget', path: 'shots/0.png', hostOnly: true,
   } });
@@ -797,7 +836,7 @@ test('local reply image retention is bounded per conversation with a visible fai
       url: `blob:retained-${index}`, revision: 'old', sourcePath,
       sizeBytes: 16 * 1024 * 1024, threadId: byteThread,
       decodeProfile: STATIC_PROFILE,
-      requestKeys: new Set(index === 0 ? [`${byteThread}\0shots/0.png`] : []),
+      requestKeys: new Map(index === 0 ? [[`${byteThread}\0shots/0.png`, null]] : []),
     });
   }
   byteHost.localImageBytes = 64 * 1024 * 1024;
@@ -895,6 +934,47 @@ test('identical local image reads in flight are combined and failure history is 
   host.stop();
 });
 
+test('a burst of project images waits for read slots and loads without reopening the chat', async () => {
+  const engine = new FakeEngine();
+  const firstWave = [];
+  const reads = [];
+  engine.readImageAsset = async ({ sessionId, path }) => {
+    reads.push({ sessionId, path });
+    if (reads.length <= 6) await new Promise(resolve => firstWave.push(resolve));
+    if (path === 'shots/missing.png') throw new Error('Image unavailable: the file was not found.');
+    return {
+      dataBase64: PNG, mimeType: 'image/png', sizeBytes: PNG_BYTES,
+      sourcePath: `${DEFAULT_FOLDER}/${path}`, fileRevision: path,
+    };
+  };
+  const { host, client } = connect(engine);
+  const threadIds = ['chat-image-burst-a', 'chat-image-burst-b', 'chat-image-burst-c'];
+  for (const threadId of threadIds) await newThread(client, threadId);
+  const request = (threadId, path) => client.request('assets.createUrl', { resource: {
+    _tag: 'media-file', threadId, path, hostOnly: true,
+  } });
+  try {
+    const missing = request(threadIds[0], 'shots/missing.png');
+    const images = threadIds.flatMap(threadId => Array.from({ length: 4 }, (_, index) =>
+      request(threadId, `shots/${index}.png`)));
+    const duplicate = request(threadIds[0], 'shots/3.png');
+    await new Promise(resolve => setImmediate(resolve));
+    assert.deepEqual(reads.map(read => read.sessionId), [
+      ...Array(3).fill(threadIds[0]), ...Array(3).fill(threadIds[1]),
+    ]);
+
+    for (const release of firstWave) release();
+    assert.match(failureOf(await missing).detail, /file was not found/i);
+    const results = await Promise.all(images);
+    for (const result of results) assert.match(result.value.relativeUrl, /^blob:/);
+    assert.equal((await duplicate).value.relativeUrl, results[3].value.relativeUrl);
+    assert.equal(reads.length, 13, 'the queued duplicate shares its native read');
+  } finally {
+    for (const release of firstWave) release();
+    host.stop();
+  }
+});
+
 test('retained raw image identity slots are reserved before concurrent native reads', async () => {
   const engine = new FakeEngine();
   let reads = 0;
@@ -988,6 +1068,10 @@ test('native image attempts are bounded per conversation across failures and ali
   assert.match(failureOf(refused).detail, /too many project image reads/i);
   assert.equal(reads, 64, 'the exhausted attempt budget refuses before native I/O');
 
+  now += 30_001;
+  assert.match((await call('aliases/0.png')).relativeUrl, /^blob:/);
+  assert.equal(reads, 64, 'an already opened image stays visible while the quota is exhausted');
+
   for (let index = 0; index < 128; index++) {
     const threadId = `chat-image-churn-${index}`;
     await newThread(client, threadId);
@@ -1005,28 +1089,33 @@ test('native image attempts are bounded per conversation across failures and ali
   host.stop();
 });
 
-test('stopping the host while a native image read is pending does not mint a late Blob URL', async () => {
+test('stopping the host cancels queued image reads and prevents late Blob URLs', async () => {
   const engine = new FakeEngine();
-  let release;
-  engine.readImageAsset = () => new Promise(resolve => { release = resolve; });
+  const releases = [];
+  engine.readImageAsset = () => new Promise(resolve => { releases.push(resolve); });
   const { host, client } = connect(engine);
   await newThread(client, 'chat-image-stop');
-  const pending = client.request('assets.createUrl', { resource: {
-    _tag: 'media-file', threadId: 'chat-image-stop', path: 'shots/late.png', hostOnly: true,
+  const request = index => client.request('assets.createUrl', { resource: {
+    _tag: 'media-file', threadId: 'chat-image-stop', path: `shots/late-${index}.png`, hostOnly: true,
   } });
-  while (!release) await new Promise(resolve => setImmediate(resolve));
+  const pending = [request(0), request(1), request(2)];
+  const queued = request(3);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(releases.length, 3);
   const createObjectURL = URL.createObjectURL;
   let minted = 0;
   URL.createObjectURL = value => { minted++; return createObjectURL(value); };
   try {
     host.stop();
-    release({
+    for (const release of releases) release({
       dataBase64: PNG, mimeType: 'image/png', sizeBytes: PNG_BYTES,
       sourcePath: `${DEFAULT_FOLDER}/shots/late.png`, fileRevision: 'late',
     });
-    const result = await pending;
-    assert.equal(failureOf(result)._tag, 'AssetWorkspaceAssetNotFoundError');
-    assert.match(failureOf(result).detail, /window has closed/i);
+    for (const result of await Promise.all([...pending, queued])) {
+      assert.equal(failureOf(result)._tag, 'AssetWorkspaceAssetNotFoundError');
+      assert.match(failureOf(result).detail, /window has closed/i);
+    }
+    assert.equal(releases.length, 3, 'the queued request never reaches the native bridge');
     assert.equal(minted, 0);
   } finally {
     URL.createObjectURL = createObjectURL;

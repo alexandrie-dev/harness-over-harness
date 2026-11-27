@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-open-external-ui-plugin"
+description = "Enables the open_external_ui_plugin command without any pre-configured scope."
+commands.allow = ["open_external_ui_plugin"]
+
+[[permission]]
+identifier = "deny-open-external-ui-plugin"
+description = "Denies the open_external_ui_plugin command without any pre-configured scope."
+commands.deny = ["open_external_ui_plugin"]

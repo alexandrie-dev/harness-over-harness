@@ -324,7 +324,13 @@ async fn create(
 ) -> Result<AgentHandle, BoxError> {
     // No id: the store gives a new one, as for the agent loop (`prepare(None)`).
     let id = options.session_id.clone();
-    if options.seed.is_some() {
+    // An edited conversation is an independent top-level chat. Seeded subagents
+    // still require a driver that can run their inherited context.
+    if options.seed.is_some()
+        && !options.meta.as_ref().is_some_and(|meta| {
+            meta.is_seeded == Some(true) && meta.parent_session.is_some() && meta.origin.is_none()
+        })
+    {
         return Err(format!(
             "external harness \"{}\" cannot start a session from a seed",
             shared.name
@@ -334,8 +340,8 @@ async fn create(
     let session = shared.sessions.prepare(
         id,
         PrepareSessionOptions::Create(CreateSessionOptions {
-            seed: None,
-            inherited_event_count: None,
+            seed: options.seed,
+            inherited_event_count: options.inherited_event_count,
             meta: options.meta.as_ref().map(session_meta),
         }),
     )?;

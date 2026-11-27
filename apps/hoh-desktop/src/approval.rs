@@ -296,7 +296,7 @@ fn session_of(action: &Value) -> String {
 /// Exact executors whose choices the person makes in the main T3 window. Unknown future names do
 /// not inherit this grant.
 pub const MAIN_WINDOW_EXECUTOR: &str = "claude";
-const MAIN_WINDOW_EXECUTORS: [&str; 2] = [MAIN_WINDOW_EXECUTOR, "codex"];
+const MAIN_WINDOW_EXECUTORS: [&str; 3] = [MAIN_WINDOW_EXECUTOR, "codex", "pi"];
 
 fn is_main_window_executor(executor: Option<&str>) -> bool {
     executor.is_some_and(|executor| MAIN_WINDOW_EXECUTORS.contains(&executor))

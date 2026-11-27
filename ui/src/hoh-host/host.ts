@@ -17,14 +17,15 @@
 // (`projects.searchEntries` → `hoh/workspace/entries`, nothing for "No project"); pictures are checked and kept
 // (`assets.persistChatAttachments`) until their message goes to the engine with them (`session/prompt`).
 import {
-  accessModeOf, CLAUDE_INSTANCE_ID, CODEX_INSTANCE_ID, claudeProvider, codexEffortOf, codexProvider, defaultClaudeModel, defaultCodexModel, effortOf, listedClaudeModel, listedCodexModel, runtimeModeOf, serverConfig, serverSettings, type ClaudeDiscovery, type CodexDiscovery, type HohAccessMode, type HohExecutor, type T3RuntimeMode,
+  accessModeOf, CLAUDE_INSTANCE_ID, CODEX_INSTANCE_ID, PI_INSTANCE_ID, EXECUTOR_INSTANCES, HOH_EXECUTORS, isHohExecutor, piModel, piProvider, claudeProvider, codexEffortOf, codexProvider, defaultClaudeModel, defaultCodexModel, effortOf, listedClaudeModel, listedCodexModel, runtimeModeOf, serverConfig, serverSettings, type ClaudeDiscovery, type CodexDiscovery, type HarnessDiscovery, type HohAccessMode, type HohExecutor, type T3RuntimeMode,
   isAccessMode, type T3InteractionMode,
 } from './config.ts';
 import { usagePricing, usageSummary, type UsageSummaryInput } from './usage.ts';
 import type { EngineNotification, EngineQuestion, EngineQuestionAnswer, HohEngine, LocalImageAsset } from './engine.ts';
 import { base64Of, readUploads, searchAnswer, skillsAsCommands, stripAttachedImageReferences, UPLOAD_PATH, UPLOAD_TTL_MS, uploadSlot, workspaceSnapshot, type KeptImage, type UploadSlot } from './composer.ts';
 import { englishError, hostFailure } from './errors.ts';
-import { folderProject, HOH_PROJECT_ID, hohProject, ThreadModel, type FolderProject, type HomeEntry, type Item } from './threads.ts';
+import { folderProject, HOH_PROJECT_ID, hohProject, ThreadModel, type FolderProject, type HomeEntry, type Item, type ShownAttachment } from './threads.ts';
+import type { SessionForkForEditResult } from '../protocol.ts';
 import { RpcFailure, type Handlers, type StreamSink } from './wire.ts';
 import { ThreadMetadataStore } from './thread-metadata.ts';
 import {
@@ -89,8 +90,10 @@ const LOCAL_IMAGE_MAX_ANIMATION_PIXELS_PER_SECOND = 400_000_000;
 const LOCAL_IMAGE_THREAD_MAX_ANIMATION_PIXELS_PER_SECOND = 200_000_000;
 const LOCAL_IMAGE_REQUEST_CACHE_MAX = 128;
 const LOCAL_IMAGE_FAILURE_TTL_MS = 5_000;
+const LOCAL_IMAGE_REUSE_MS = 30_000;
 const LOCAL_IMAGE_MAX_INFLIGHT = 6;
 const LOCAL_IMAGE_THREAD_MAX_INFLIGHT = 3;
+const LOCAL_IMAGE_MAX_PENDING_READS = 64;
 const LOCAL_IMAGE_CONTEXT_GRACE_MS = 2_000;
 const LOCAL_IMAGE_ATTEMPT_MAX = 64;
 const LOCAL_IMAGE_GLOBAL_ATTEMPT_MAX = 512;
@@ -101,7 +104,7 @@ const LOCAL_IMAGE_THREAD_MAX_IDENTITIES = 256;
 type LocalImageUrl = {
   url: string; revision: string; sourcePath: string; sizeBytes: number; threadId: string;
   decodeProfile: LocalImageDecodeProfile;
-  requestKeys: Set<string>;
+  requestKeys: Map<string, { cwd: string; readAt: number } | null>;
   confirmedPath?: string;
 };
 export type LocalImageDecodeProfile = {
@@ -124,6 +127,7 @@ type LocalImageThreadContext = {
 
 class PersistentLocalImageContextError extends Error {}
 class LocalImageContextCapacityError extends Error {}
+class LocalImageAttemptLimitError extends Error {}
 
 function lruGet<K, V>(map: Map<K, V>, key: K): V | undefined {
   const value = map.get(key);
@@ -193,8 +197,17 @@ function localImagePathAtRoot(path: string, requestedRoot: string, authoritative
 }
 const titleOf = (root: string) => root.split('/').filter(Boolean).at(-1) ?? root;
 const timeOf = (value: unknown) => typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : null;
-const executorOf = (instanceId: unknown): HohExecutor => instanceId === CODEX_INSTANCE_ID ? 'codex' : 'claude';
-const instanceOf = (executor: HohExecutor) => executor === 'codex' ? CODEX_INSTANCE_ID : CLAUDE_INSTANCE_ID;
+const executorOf = (instanceId: unknown): HohExecutor =>
+  HOH_EXECUTORS.find(executor => EXECUTOR_INSTANCES[executor] === instanceId) ?? 'claude';
+const instanceOf = (executor: HohExecutor) => EXECUTOR_INSTANCES[executor];
+
+function requireInteraction(executor: HohExecutor, interaction: unknown) {
+  if (interaction !== 'plan') return;
+  if (executor === 'codex') throw new Error('Plan mode for Codex is coming soon.');
+  if (executor === 'pi') throw new Error('Pi Agent does not support Plan mode in HoH.');
+}
+
+const PI_ACCESS_REQUIRED = 'Choose Full access in the composer to use Pi Agent.';
 const exactMode = (value: unknown): HohAccessMode | null => value === 'plan' ? 'confirm' : value === 'acceptEdits' ? 'auto-accept-edits' : ['confirm', 'auto-accept-edits', 'auto', 'full'].includes(String(value)) ? value as HohAccessMode : null;
 /** What the executor is actually running wins over a requested mode waiting for the next turn. */
 const effectiveSessionMode = (session: any, fallback: HohAccessMode): HohAccessMode =>
@@ -300,6 +313,8 @@ export class HohHost {
   private readonly homeListeners = new Set<() => void>();
   private claudeDiscovery: ClaudeDiscovery | null = null;
   private codexDiscovery: CodexDiscovery | null = null;
+  private piDiscovery: HarnessDiscovery | null = null;
+  private piDiscoveryInFlight?: { generation: number; promise: Promise<void> };
   /** Undefined while the startup probe is pending; set only when its bounded retry lane ends. */
   private discoveryFailure: unknown | undefined;
   private codexDiscoveryFailure: unknown | undefined;
@@ -365,6 +380,7 @@ export class HohHost {
   private localImageGlobalAttempts: number[] = [];
   /** Worst-case byte/entry reservations are installed before native I/O. */
   private readonly localImageReservations = new Map<string, LocalImageReservation>();
+  private readonly localImageReservationWaiters = new Set<() => void>();
   private localImageBytes = 0;
   /** Optimistic T3 drafts ask for their first image before createThread has installed the cwd. */
   private readonly localImageContextWaiters = new Map<string, Set<LocalImageContextWaiter>>();
@@ -373,6 +389,7 @@ export class HohHost {
   /** A failed create is terminal until its draft subscription closes or creation is retried. */
   private readonly failedLocalImageContexts = new Set<string>();
   private readonly creatingThreads = new Set<string>();
+  private readonly creatingEditBranches = new Set<string>();
   /** The skills Claude declared for each folder (its last workspace snapshot): `$name` in a message goes as `/name`. */
   private readonly skillsByFolder = new Map<string, Set<string>>();
   /** The reasoning level each chat was given (T3's model options): kept across Stop, reopening and restarts of the window. */
@@ -462,7 +479,7 @@ export class HohHost {
       if (!id || !title || createdAt === null || updatedAt === null || this.threads.has(id)) continue;
       const projectId = entry?.projectId === HOH_PROJECT_ID || (typeof entry?.projectId === 'string' && this.folders.has(entry.projectId))
         ? entry.projectId : this.homeOf(id);
-      const executor: HohExecutor = entry?.executor === 'codex' ? 'codex' : 'claude';
+      const executor: HohExecutor = isHohExecutor(entry?.executor) ? entry.executor : 'claude';
       const model = typeof entry?.model === 'string' && entry.model.trim() ? entry.model.trim() : this.model(executor);
       const restoredMode = exactMode(entry?.mode) ?? this.defaultMode;
       const thread = new ThreadModel({
@@ -759,6 +776,7 @@ export class HohHost {
 
   private iso() { return new Date(this.now()).toISOString(); }
   private model(executor: HohExecutor = this.selectedExecutor) {
+    if (executor === 'pi') return piModel(this.piDiscovery, this.selectedModel);
     return executor === 'codex'
       ? listedCodexModel(this.codexDiscovery, this.selectedModel) ?? defaultCodexModel(this.codexDiscovery)
       : listedClaudeModel(this.claudeDiscovery, this.selectedModel) ?? defaultClaudeModel(this.claudeDiscovery);
@@ -784,6 +802,7 @@ export class HohHost {
     this.localImageAttempts.clear();
     this.localImageGlobalAttempts = [];
     this.localImageReservations.clear();
+    this.wakeLocalImageReaders();
     this.localImageBytes = 0;
     for (const waiters of this.localImageContextWaiters.values()) {
       for (const waiter of waiters) {
@@ -898,6 +917,10 @@ export class HohHost {
   }
 
   private localImageThreadContextForPath(threadId: string, path: string, admittedBeforeRegistration: boolean) {
+    const thread = this.threads.get(threadId);
+    if (!this.stopped && thread?.loaded && thread.cwd) {
+      return Promise.resolve({ thread, admittedBeforeRegistration });
+    }
     const requestKey = `${threadId}\0${path}`;
     const existing = this.localImageContextInflight.get(requestKey);
     if (existing) return existing;
@@ -918,7 +941,7 @@ export class HohHost {
     return pending;
   }
 
-  private reserveLocalImage(requestKey: string, threadId: string) {
+  private tryReserveLocalImage(requestKey: string, threadId: string): boolean {
     let reservedGlobalBytes = 0;
     let reservedGlobalEntries = 0;
     let reservedThreadBytes = 0;
@@ -934,8 +957,6 @@ export class HohHost {
       if (!reservation.replacing) reservedThreadEntries++;
       if (reservation.reservesIdentity) reservedThreadIdentities++;
     }
-    if (this.localImageReservations.size >= LOCAL_IMAGE_MAX_INFLIGHT || threadInflight >= LOCAL_IMAGE_THREAD_MAX_INFLIGHT)
-      throw new Error('Image unavailable: too many project images are already being opened in this window.');
     let threadBytes = 0;
     let threadEntries = 0;
     let threadIdentities = 0;
@@ -947,32 +968,64 @@ export class HohHost {
       threadIdentities += retained.requestKeys.size;
       if (retained.requestKeys.has(requestKey)) existing = retained;
     }
-    if (!existing && threadIdentities + reservedThreadIdentities >= LOCAL_IMAGE_THREAD_MAX_IDENTITIES)
+    if (!existing && threadIdentities >= LOCAL_IMAGE_THREAD_MAX_IDENTITIES)
       throw new Error('Image unavailable: too many project image paths are already retained for this conversation.');
     const replacedBytes = existing?.sizeBytes ?? 0;
     // A known retained key is a replacement reservation: it cannot grow retention until the
     // canonical post-read size check succeeds, so refreshing it needs no speculative byte slot.
     const reservedSize = existing?.sizeBytes ?? LOCAL_IMAGE_BYTES;
-    if (!localImageRetentionFits({
-      globalBytes: this.localImageBytes + reservedGlobalBytes,
-      globalEntries: this.localImageUrls.size + reservedGlobalEntries,
-      threadBytes: threadBytes + reservedThreadBytes,
-      threadEntries: threadEntries + reservedThreadEntries,
+    const retained = {
+      globalBytes: this.localImageBytes, globalEntries: this.localImageUrls.size,
+      threadBytes, threadEntries,
       replacedBytes, replacing: !!existing, sizeBytes: reservedSize,
-    })) throw new Error('Image unavailable: too many project images are already open in this window.');
+    };
+    if (!localImageRetentionFits(retained))
+      throw new Error('Image unavailable: too many project images are already open in this window.');
+    // Active reads may use less than their reservations, or fail and free their slots.
+    if (this.localImageReservations.size >= LOCAL_IMAGE_MAX_INFLIGHT
+      || threadInflight >= LOCAL_IMAGE_THREAD_MAX_INFLIGHT
+      || (!existing && threadIdentities + reservedThreadIdentities >= LOCAL_IMAGE_THREAD_MAX_IDENTITIES)
+      || !localImageRetentionFits({
+        ...retained,
+        globalBytes: retained.globalBytes + reservedGlobalBytes,
+        globalEntries: retained.globalEntries + reservedGlobalEntries,
+        threadBytes: threadBytes + reservedThreadBytes,
+        threadEntries: threadEntries + reservedThreadEntries,
+      })) return false;
     this.localImageReservations.set(requestKey, {
       threadId, reservedBytes: reservedSize - replacedBytes,
       replacing: !!existing, reservesIdentity: !existing,
     });
+    return true;
   }
 
-  private bindLocalImageRequest(requestKey: string, key: string) {
+  private wakeLocalImageReaders() {
+    for (const resolve of this.localImageReservationWaiters) resolve();
+    this.localImageReservationWaiters.clear();
+  }
+
+  private async readLocalImageWhenReady(threadId: string, path: string, requestKey: string, cwd: string | null) {
+    for (;;) {
+      if (this.stopped) throw new Error('Image unavailable: this window has closed.');
+      if (this.deletedThreads.has(threadId)) throw new Error('Image unavailable: this conversation has been deleted.');
+      if (this.tryReserveLocalImage(requestKey, threadId)) break;
+      await new Promise<void>(resolve => this.localImageReservationWaiters.add(resolve));
+    }
+    try {
+      return await this.readLocalImage(threadId, path, requestKey, cwd);
+    } finally {
+      this.localImageReservations.delete(requestKey);
+      this.wakeLocalImageReaders();
+    }
+  }
+
+  private bindLocalImageRequest(requestKey: string, key: string, cwd: string | null) {
     const retained = this.localImageUrls.get(key);
     if (!retained) return;
     for (const [otherKey, other] of this.localImageUrls) {
       if (otherKey !== key && other.threadId === retained.threadId) other.requestKeys.delete(requestKey);
     }
-    retained.requestKeys.add(requestKey);
+    retained.requestKeys.set(requestKey, cwd === null ? null : { cwd, readAt: this.now() });
   }
 
   private consumeLocalImageAttempt(threadId: string) {
@@ -982,7 +1035,7 @@ export class HohHost {
     const previous = lruGet(this.localImageAttempts, threadId) ?? [];
     const attempts = previous.filter(timestamp => timestamp > now - LOCAL_IMAGE_ATTEMPT_WINDOW_MS);
     if (attempts.length >= LOCAL_IMAGE_ATTEMPT_MAX || this.localImageGlobalAttempts.length >= LOCAL_IMAGE_GLOBAL_ATTEMPT_MAX)
-      throw new Error('Image unavailable: too many project image reads were attempted for this conversation; try again later.');
+      throw new LocalImageAttemptLimitError('Image unavailable: too many project image reads were attempted for this conversation; try again later.');
     attempts.push(now);
     this.localImageGlobalAttempts.push(now);
     lruSet(this.localImageAttempts, threadId, attempts, LOCAL_IMAGE_ATTEMPT_THREADS_MAX);
@@ -1000,7 +1053,7 @@ export class HohHost {
     if (globalIndex >= 0) this.localImageGlobalAttempts.splice(globalIndex, 1);
   }
 
-  private async readLocalImage(threadId: string, path: string, requestKey: string) {
+  private async readLocalImage(threadId: string, path: string, requestKey: string, cwd: string | null) {
     if (!this.engine.readImageAsset) throw new Error('Image unavailable: this window cannot read project images.');
     let image: LocalImageAsset;
     let refundedContextFailure = false;
@@ -1021,10 +1074,10 @@ export class HohHost {
         this.refundLocalImageAttempt(threadId, attempt);
       }
     }
-    return this.retainLocalImage(threadId, requestKey, image);
+    return this.retainLocalImage(threadId, requestKey, image, cwd);
   }
 
-  private retainLocalImage(threadId: string, requestKey: string, image: LocalImageAsset): LocalImageUrl {
+  private retainLocalImage(threadId: string, requestKey: string, image: LocalImageAsset, cwd: string | null): LocalImageUrl {
     if (this.stopped) throw new Error('Image unavailable: this window has closed.');
     if (!LOCAL_IMAGE_TYPES.has(image?.mimeType) || !Number.isSafeInteger(image?.sizeBytes) || image.sizeBytes < 1 || image.sizeBytes > LOCAL_IMAGE_BYTES)
       throw new Error('Image unavailable: the native image response is invalid.');
@@ -1041,7 +1094,7 @@ export class HohHost {
     const key = `${threadId}\0${image.sourcePath}`;
     const existing = this.localImageUrls.get(key);
     if (existing?.revision === image.fileRevision && existing.sizeBytes === image.sizeBytes) {
-      this.bindLocalImageRequest(requestKey, key);
+      this.bindLocalImageRequest(requestKey, key, cwd);
       this.localImageFailures.delete(requestKey);
       return existing;
     }
@@ -1089,17 +1142,17 @@ export class HohHost {
     const minted = {
       url, revision: image.fileRevision, sourcePath: image.sourcePath,
       sizeBytes: image.sizeBytes, decodeProfile, threadId,
-      requestKeys: existing?.requestKeys ?? new Set<string>(),
+      requestKeys: existing?.requestKeys ?? new Map(),
     };
     this.localImageUrls.set(key, minted);
-    this.bindLocalImageRequest(requestKey, key);
+    this.bindLocalImageRequest(requestKey, key, cwd);
     this.localImageBytes += image.sizeBytes;
     this.localImageFailures.delete(requestKey);
     return minted;
   }
 
   /** A conversation-bound Blob URL for a native image that passed the single Rust file policy. */
-  private localImageUrl(threadId: string, path: string): Promise<LocalImageUrl> {
+  private localImageUrl(threadId: string, path: string, cwd: string | null): Promise<LocalImageUrl> {
     if (this.stopped) return Promise.reject(new Error('Image unavailable: this window has closed.'));
     if (path.length > 4096) return Promise.reject(new Error('Image unavailable: the image path is too long.'));
     const requestKey = `${threadId}\0${path}`;
@@ -1107,29 +1160,38 @@ export class HohHost {
     for (const image of this.localImageUrls.values()) {
       if (image.threadId === threadId && image.confirmedPath === path) return Promise.resolve(image);
     }
+    const reusable = (fresh: boolean) => {
+      for (const image of this.localImageUrls.values()) {
+        const request = image.requestKeys.get(requestKey);
+        if (request && request.cwd === cwd && (!fresh || this.now() - request.readAt < LOCAL_IMAGE_REUSE_MS)) {
+          return image;
+        }
+      }
+      return undefined;
+    };
     const failure = lruGet(this.localImageFailures, requestKey);
     if (failure && failure.expiresAt > this.now()) return Promise.reject(new Error(failure.message));
     const pending = this.localImageInflight.get(requestKey);
     if (pending) return pending;
     if (this.localImageReservations.has(requestKey)) return Promise.reject(new Error('This image is awaiting confirmation.'));
-    try {
-      this.reserveLocalImage(requestKey, threadId);
-    } catch (error) {
-      const message = errorText(error).slice(0, 512);
-      lruSet(this.localImageFailures, requestKey, {
-        message, expiresAt: this.now() + LOCAL_IMAGE_FAILURE_TTL_MS,
-      }, LOCAL_IMAGE_REQUEST_CACHE_MAX);
-      return Promise.reject(error);
+    // Tool completions can refresh the same screenshot repeatedly while it is being displayed.
+    const cached = reusable(true);
+    if (cached) return Promise.resolve(cached);
+    if (this.localImageInflight.size >= LOCAL_IMAGE_MAX_PENDING_READS) {
+      return Promise.reject(new Error('Image unavailable: the project image queue is full.'));
     }
-    const read = this.readLocalImage(threadId, path, requestKey)
+    const read = this.readLocalImageWhenReady(threadId, path, requestKey, cwd)
       .catch(error => {
+        if (error instanceof LocalImageAttemptLimitError) {
+          const shown = reusable(false);
+          if (shown) return shown;
+        }
         if (!this.stopped && !localImageContextUnknown(error)) lruSet(this.localImageFailures, requestKey, {
           message: errorText(error).slice(0, 512), expiresAt: this.now() + LOCAL_IMAGE_FAILURE_TTL_MS,
         }, LOCAL_IMAGE_REQUEST_CACHE_MAX);
         throw error;
       })
       .finally(() => {
-        this.localImageReservations.delete(requestKey);
         if (this.localImageInflight.get(requestKey) === read) this.localImageInflight.delete(requestKey);
       });
     this.localImageInflight.set(requestKey, read);
@@ -1140,15 +1202,18 @@ export class HohHost {
     if (!this.engine.confirmExternalImage || this.stopped || path.length > 4096 ||
         !this.threads.has(threadId) || this.deletedThreads.has(threadId)) return false;
     const requestKey = `${threadId}\0${path}`;
-    if (this.localImageReservations.has(requestKey)) return false;
-    this.reserveLocalImage(requestKey, threadId);
+    if (this.localImageInflight.has(requestKey) || this.localImageReservations.has(requestKey)) return false;
+    if (!this.tryReserveLocalImage(requestKey, threadId)) {
+      throw new Error('Image unavailable: the window is busy opening project images. Try again shortly.');
+    }
     try {
       const image = await this.engine.confirmExternalImage({ sessionId: threadId, path });
       if (!image || this.deletedThreads.has(threadId) || !this.localImageReservations.has(requestKey)) return false;
-      this.retainLocalImage(threadId, requestKey, image).confirmedPath = path;
+      this.retainLocalImage(threadId, requestKey, image, null).confirmedPath = path;
       return true;
     } finally {
       this.localImageReservations.delete(requestKey);
+      this.wakeLocalImageReaders();
     }
   }
 
@@ -1164,6 +1229,7 @@ export class HohHost {
     // session inventory and prompt traffic.
     this.discoveryStartedAt = this.now();
     const discoveryGeneration = this.discoveryGeneration;
+    void this.readPiDiscovery(discoveryGeneration);
     void this.loadConfiguration(discoveryGeneration).then(discovered => {
       if (!discovered && discoveryGeneration === this.discoveryGeneration) void this.retryConfiguration(discoveryGeneration);
     });
@@ -1247,19 +1313,40 @@ export class HohHost {
     this.codexDiscovery = codex;
     if (claude !== null) this.discoveryFailure = undefined;
     if (codex !== null) this.codexDiscoveryFailure = undefined;
-    for (const threadId of [...this.catalogPending]) {
-      const thread = this.threads.get(threadId);
-      const ready = thread?.executor === 'codex' ? codex !== null : claude !== null;
-      if (!thread || !ready) continue;
-      thread.model = this.model(thread.executor);
-      this.catalogPending.delete(threadId);
-      this.changed(threadId);
-    }
+    if (claude !== null) this.updateCatalog('claude');
+    if (codex !== null) this.updateCatalog('codex');
     if (claude !== null && codex !== null) {
       this.discoveryPending = false;
       return true;
     }
     return false;
+  }
+
+  private readPiDiscovery(generation = this.discoveryGeneration): Promise<void> {
+    if (this.piDiscoveryInFlight?.generation === generation) return this.piDiscoveryInFlight.promise;
+    const promise = this.engine.request('hoh/executor/discover', { executor: 'pi' })
+      .catch(() => null)
+      .then(found => {
+        if (this.stopped || generation !== this.discoveryGeneration) return;
+        this.piDiscovery = found;
+        if (found !== null) this.updateCatalog('pi');
+        this.configChanged();
+      })
+      .finally(() => {
+        if (this.piDiscoveryInFlight?.promise === promise) this.piDiscoveryInFlight = undefined;
+      });
+    this.piDiscoveryInFlight = { generation, promise };
+    return promise;
+  }
+
+  private updateCatalog(executor: HohExecutor) {
+    for (const threadId of this.catalogPending) {
+      const thread = this.threads.get(threadId);
+      if (thread?.executor !== executor) continue;
+      thread.model = this.model(executor);
+      this.catalogPending.delete(threadId);
+      this.changed(threadId);
+    }
   }
 
   private finishDiscoveryFailure(startedAt: number) {
@@ -1282,7 +1369,7 @@ export class HohHost {
       if (!mode) throw new Error('The engine returned an unknown executor access mode.');
       if (accessGeneration !== this.accessGeneration) return this.mode !== null;
       if (modelRevision === this.modelRevision) {
-        if (access?.selected?.executor === 'codex' || access?.selected?.executor === 'claude') this.selectedExecutor = access.selected.executor;
+        if (isHohExecutor(access?.selected?.executor)) this.selectedExecutor = access.selected.executor;
         if (typeof access?.selected?.model === 'string' && access.selected.model) this.selectedModel = access.selected.model;
       }
       if (modeRevision === this.modeRevision) {
@@ -1304,6 +1391,7 @@ export class HohHost {
   }
 
   private async onEngineReady() {
+    void this.readPiDiscovery();
     // Inventory is independent of provider discovery and the global access read. In particular,
     // a slow CLI probe after the engine connects must not delay the authoritative welcome and rows.
     const discovery = this.readDiscovery().then(() => this.configChanged());
@@ -1345,7 +1433,7 @@ export class HohHost {
     }, 0);
     bootstrapTimer?.unref?.();
     await Promise.all(sessions.map(async session => {
-      if (typeof session?.id !== 'string' || !session.id || this.deletedThreads.has(session.id)) return;
+      if (typeof session?.id !== 'string' || !session.id || this.deletedThreads.has(session.id) || this.creatingEditBranches.has(session.id)) return;
       const at = Number(session.updatedAt) || this.startedAt;
       const previous = this.threads.get(session.id);
       let executor = previous?.executor ?? this.selectedExecutor;
@@ -1361,10 +1449,10 @@ export class HohHost {
         const own = (await this.engine.request('hoh/executor/access/get', { executor: 'codex', sessionId: session.id }))?.session;
         const exact = exactMode(own?.runtimeMode);
         builtin = own?.builtin === true && own?.executor == null && own?.runtimeMode == null;
-        if (own && !builtin && (!exact || (own.executor !== 'codex' && own.executor !== 'claude'))) throw new Error('Conversation access is unavailable.');
+        if (own && !builtin && (!exact || !isHohExecutor(own.executor))) throw new Error('Conversation access is unavailable.');
         if (builtin) ownKnown = false;
         if (own && !builtin) ownKnown = true;
-        if (own?.executor === 'codex' || own?.executor === 'claude') executor = own.executor;
+        if (isHohExecutor(own?.executor)) executor = own.executor;
         model = typeof own?.model === 'string' && own.model ? own.model : undefined;
         mode = effectiveSessionMode(own, mode);
         runningPlan = own?.runningRuntimeMode === 'plan';
@@ -1372,10 +1460,11 @@ export class HohHost {
       } catch {
         if (previous) { executor = previous.executor; model = previous.model; mode = previous.mode; }
       }
-      // A Codex row with no persisted model must not publish the synthetic `default` model while
-      // app-server's native catalog is already in flight. Claude rows stay non-blocking for cold start.
-      if (executor === 'codex' && model === undefined && this.codexDiscovery === null && this.discoveryInFlight)
-        await this.discoveryInFlight.promise;
+      // Wait for an in-flight native catalog before publishing a default for an older binding.
+      if (model === undefined) {
+        if (executor === 'codex' && this.codexDiscovery === null) await this.discoveryInFlight?.promise;
+        if (executor === 'pi' && this.piDiscovery === null) await this.piDiscoveryInFlight?.promise;
+      }
       model ??= this.model(executor);
 
       if (this.deletedThreads.has(session.id)) return;
@@ -1424,7 +1513,7 @@ export class HohHost {
       if (runningInteraction !== null) discovered.setRunningInteractionMode(runningInteraction);
       this.applyThreadMetadata(discovered);
       this.threads.set(session.id, discovered);
-      if ((executor === 'codex' ? this.codexDiscovery : this.claudeDiscovery) === null) this.catalogPending.add(session.id);
+      if ((executor === 'pi' ? this.piDiscovery : executor === 'codex' ? this.codexDiscovery : this.claudeDiscovery) === null) this.catalogPending.add(session.id);
       inventoryChanged = true;
       // During the first load the metadata is already in the forthcoming snapshot. A retry happens after that
       // snapshot, so it needs an update for each conversation that arrived late.
@@ -1505,7 +1594,7 @@ export class HohHost {
           if (own && this.currentJournal(thread, journal) && !thread.loaded
             && generation === (this.modeGenerations.get(thread.id) ?? 0) && processGeneration === this.accessProcessGeneration) {
             const boundMode = exactMode(own.runtimeMode);
-            if ((own.executor === 'claude' || own.executor === 'codex') && boundMode && (!thread.bindingKnown || thread.executor === own.executor)) {
+            if (isHohExecutor(own.executor) && boundMode && (!thread.bindingKnown || thread.executor === own.executor)) {
               thread.executor = own.executor;
               thread.bindingKnown = true;
               thread.builtin = false;
@@ -1688,7 +1777,7 @@ export class HohHost {
         try {
           const own = (await this.engine.request('hoh/executor/access/get', { executor: thread.executor, sessionId: threadId }))?.session;
           if ((this.modeGenerations.get(threadId) ?? 0) === modeGeneration && this.accessProcessGeneration === processGeneration) {
-            if ((own?.executor === 'codex' || own?.executor === 'claude') && exactMode(own?.runtimeMode)) {
+            if (isHohExecutor(own?.executor) && exactMode(own?.runtimeMode)) {
               thread.executor = own.executor;
               thread.bindingKnown = true;
               thread.builtin = false;
@@ -1760,7 +1849,7 @@ export class HohHost {
           if ((this.modeGenerations.get(sessionId) ?? 0) !== modeGeneration) {
             // A newer launch owns the mode, but cannot change the conversation's immutable
             // executor binding. Keep that part of this successful answer.
-            if (own && (own.executor === 'claude' || own.executor === 'codex') && exactMode(own.runtimeMode)) {
+            if (own && isHohExecutor(own.executor) && exactMode(own.runtimeMode)) {
               created.executor = own.executor; created.bindingKnown = true; created.builtin = false;
               if (typeof own.model === 'string' && own.model) created.model = own.model;
               this.sessionAccessApplied.set(sessionId, sessionRevision); this.sessionAccessKnown.add(sessionId); this.changed(sessionId);
@@ -1772,7 +1861,7 @@ export class HohHost {
             created.builtin = true;
             this.sessionAccessApplied.set(sessionId, sessionRevision); this.sessionAccessKnown.add(sessionId); this.modeRevision++; this.changed(sessionId); return;
           }
-          if (!mode || (own?.executor !== 'claude' && own?.executor !== 'codex')) throw new Error('Conversation access is unavailable.');
+          if (!mode || !isHohExecutor(own?.executor)) throw new Error('Conversation access is unavailable.');
           created.executor = own.executor; created.mode = mode;
           created.bindingKnown = true;
           created.builtin = false;
@@ -1807,6 +1896,7 @@ export class HohHost {
 
   private onNotification(notification: EngineNotification, at = this.now(), replaying = false) {
     const params = notification.params ?? {};
+    if (this.creatingEditBranches.has(params.sessionId)) return;
     const eventType = params.event?.type;
     if (!replaying && notification.method === 'session.event'
       && (eventType === 'plugin:external-harness/folder-trust-changed' || eventType === 'plugin:external-harness/launch')) {
@@ -2095,6 +2185,7 @@ export class HohHost {
       cwd: this.workspaceRoot,
       claudeDiscovery: this.claudeDiscovery,
       codexDiscovery: this.codexDiscovery,
+      piDiscovery: this.piDiscovery,
       discoveryFailure: this.discoveryFailure,
       codexDiscoveryFailure: this.codexDiscoveryFailure,
       defaultMode: this.defaultMode,
@@ -2165,7 +2256,8 @@ export class HohHost {
     try {
       return await this.withSelectionMutation(async () => {
         const executor = executorOf(providerInstanceId ?? instanceOf(this.selectedExecutor));
-        if (executor === 'codex' && interaction === 'plan') throw new Error('Plan mode for Codex is coming soon.');
+        requireInteraction(executor, interaction);
+        if (executor === 'pi' && mode !== 'full-access') throw new Error(PI_ACCESS_REQUIRED);
         const chosenModel = model ?? this.model(executor);
         const chosenMode = accessModeOf(mode ?? runtimeModeOf(this.defaultMode));
         const already = this.threads.get(threadId);
@@ -2398,6 +2490,7 @@ export class HohHost {
     await this.requireAccess();
     const processGeneration = this.accessProcessGeneration;
     const wanted = accessModeOf(mode);
+    if (thread.executor === 'pi' && wanted !== 'full') throw new Error(PI_ACCESS_REQUIRED);
     this.modeRevision++;
     // thread.mode describes the running launch; the engine may have a different pending choice.
     // Always submit the person's choice, including a return to the currently displayed mode.
@@ -2426,7 +2519,7 @@ export class HohHost {
         return;
       }
       let bindingChanged = false;
-      if ((own.executor === 'claude' || own.executor === 'codex') && exactMode(own.runtimeMode)) {
+      if (isHohExecutor(own.executor) && exactMode(own.runtimeMode)) {
         if (thread.bindingKnown && thread.executor !== own.executor) return;
         bindingChanged = !thread.bindingKnown || thread.executor !== own.executor;
         thread.executor = own.executor;
@@ -2463,12 +2556,85 @@ export class HohHost {
     await this.withSelectionMutation(() => this.applyModelLocked(executor, model));
   }
 
+  canEditUserMessage(threadId: string, messageId: string) {
+    const thread = this.threads.get(threadId);
+    return Boolean(thread?.bindingKnown && !thread.builtin && thread.editableUserMessage(messageId));
+  }
+
+  async editUserMessage(threadId: string, messageId: string, text: string): Promise<string> {
+    await this.start();
+    const source = await this.loaded(threadId);
+    return this.withSelectionMutation(async () => {
+      if (!source || !this.canEditUserMessage(threadId, messageId)
+        || this.deletingThreads.has(threadId) || this.threads.get(threadId) !== source) {
+        throw new Error('This message is no longer available to edit.');
+      }
+      if (source.running || source.activeRunId()) throw new Error('Stop the current turn before editing a message.');
+      const prompt = text.trim();
+      if (!prompt) throw new Error('Enter a message.');
+      const original = source.editableUserMessage(messageId)!;
+      await this.requireAccess();
+      const sessionId = globalThis.crypto?.randomUUID?.() ?? `edit-${this.now()}-${Math.random().toString(36).slice(2)}`;
+      this.creatingEditBranches.add(sessionId);
+      let fork: SessionForkForEditResult;
+      try {
+        fork = await this.engine.request('session/fork-for-edit', {
+          sessionId: threadId, messageId: original.engineId, targetSessionId: sessionId,
+        });
+      } finally {
+        this.creatingEditBranches.delete(sessionId);
+      }
+      const branch = new ThreadModel({
+        id: sessionId, title: source.titleText() + ' (edited)', createdAt: this.now(),
+        model: source.model, mode: 'confirm', executor: source.executor,
+        projectId: source.projectId, interactionMode: source.interactionMode,
+      });
+      branch.cwd = source.cwd;
+      branch.pluginCreator = source.pluginCreator;
+      branch.pluginAuthoringPrefixes = this.pluginAuthoringPrefixes;
+      this.threads.set(sessionId, branch);
+      this.resumedSessions.add(sessionId);
+      let sending = false;
+      try {
+        const bound = await this.engine.request('hoh/executor/access/get', { executor: branch.executor, sessionId });
+        if (bound?.session?.executor !== source.executor || bound?.session?.model !== source.model) {
+          throw new Error('The edit was opened with a different executor or model.');
+        }
+        const journal = this.journalFor(branch);
+        await this.replayJournal(branch, journal);
+        branch.settleUnfinished(this.now());
+        branch.loaded = true;
+        await this.applyMode(branch, runtimeModeOf(source.mode));
+        this.setLevel(branch, source.options);
+        sending = true;
+        await this.send(branch, 'msg-' + sessionId, prompt, [], branch.interactionMode, undefined, {
+          blocks: fork.attachments, shown: original.attachments, authoringPrefix: original.authoringPrefix,
+        });
+      } catch (error) {
+        const { code } = hostFailure(error);
+        if (sending && (code === 'connecting' || code === 'failed')) {
+          // The bridge can lose the receipt after the engine accepted the message.
+          this.flush();
+          throw new Error('Could not confirm the send. Check the edited chat before retrying.');
+        }
+        await this.dispatch({ type: 'thread.delete', threadId: sessionId, commandId: sessionId }).catch(() => {});
+        throw new Error(errorText(error));
+      }
+      this.homes.set(sessionId, branch.projectId);
+      this.interactions.set(sessionId, branch.interactionMode);
+      this.titles.set(sessionId, branch.title);
+      this.save();
+      this.flush();
+      return sessionId;
+    });
+  }
+
   /**
    * One message to the engine: its pictures first (the bytes kept from T3's upload or `assets.persistChatAttachments`; the engine's
    * attachment store checks and copies them), then its text, with the skills Claude declared for the chat's folder
    * written as Claude runs them (`$name` → `/name`, T3's `planClaudeSkillDispatch`).
    */
-  private async send(thread: ThreadModel, messageId: string, text: string, attachments: unknown = [], interactionMode?: T3InteractionMode, context?: { records?: unknown }) {
+  private async send(thread: ThreadModel, messageId: string, text: string, attachments: unknown = [], interactionMode?: T3InteractionMode, context?: { records?: unknown }, edit?: { blocks: unknown[]; shown: ShownAttachment[]; authoringPrefix?: string }) {
     if (!thread.builtin) await this.requireAccess();
     if (!this.sessionAccessKnown.has(thread.id)) await this.notificationAccess.get(thread.id);
     if (this.deletingThreads.has(thread.id) || this.deletedThreads.has(thread.id) || this.threads.get(thread.id) !== thread)
@@ -2482,23 +2648,24 @@ export class HohHost {
       this.previewUrl(image);
       this.sentPreviewIds.add(image.id);
     }
-    const prompt = skillsAsCommands(
+    const prompt = (edit?.authoringPrefix ?? '') + skillsAsCommands(
       stripAttachedImageReferences(text, images.map(image => image.id), context),
       this.skillsByFolder.get(`${thread.executor}\0${folderPath(thread.cwd)}`) ?? new Set(),
     );
     this.homePrompts.add(thread.id);
-    thread.sendLocal(messageId, text, this.now(), images.map(({ data: _data, ...shown }) => ({ type: 'image' as const, ...shown })), prompt);
+    thread.sendLocal(messageId, text, this.now(), edit?.shown ?? images.map(({ data: _data, ...shown }) => ({ type: 'image' as const, ...shown })), prompt);
     this.changed(thread.id);
     const contentBlocks = [
+      ...(edit?.blocks ?? []),
       ...images.map(image => ({ type: 'image', data: image.data, mimeType: image.mimeType, name: image.name })),
       ...(prompt || !images.length ? [{ type: 'text', text: prompt }] : []),
     ];
     try {
-      const effort = thread.executor === 'codex' ? codexEffortOf(thread.options) : effortOf(thread.model, thread.options);
+      const effort = thread.executor === 'claude' ? effortOf(thread.model, thread.options) : codexEffortOf(thread.options);
       const result = await this.engine.request('session/prompt', {
         sessionId: thread.id,
         contentBlocks,
-        interactionMode: thread.executor === 'codex' ? 'default' : interactionMode ?? thread.interactionMode,
+        interactionMode: thread.executor !== 'claude' ? 'default' : interactionMode ?? thread.interactionMode,
         ...effortParam(effort),
       });
       this.homePrompts.delete(thread.id);
@@ -2515,7 +2682,7 @@ export class HohHost {
           } catch { /* the engine history remains usable if window storage is unavailable */ }
         }
       }
-      if (firstMessage && !thread.builtin && thread.executor === 'claude') void this.generateTitle(thread, text);
+      if (firstMessage && !edit && !thread.builtin && thread.executor === 'claude') void this.generateTitle(thread, text);
     } catch (error) {
       this.homePrompts.delete(thread.id);
       if (this.homeDispositions.has(thread.id)) this.failedHomePrompts.add(thread.id);
@@ -2744,7 +2911,7 @@ ${message.slice(0, 8000)}`;
         case 'message.dispatch': {
           const target = needThread();
           const interaction = command.interactionMode === undefined ? undefined : interactionModeOf(command.interactionMode);
-          if (target.executor === 'codex' && interaction === 'plan') throw new Error('Plan mode for Codex is coming soon.');
+          requireInteraction(target.executor, interaction);
           if (command.modelSelection?.instanceId && executorOf(command.modelSelection.instanceId) !== target.executor) throw dispatchError(command, 'A conversation cannot change its executor. Start a new chat.');
           if (!target.builtin && command.modelSelection?.model) { await this.applyModel(target.executor, command.modelSelection.model); target.model = command.modelSelection.model; }
           this.setLevel(target, command.modelSelection?.options);
@@ -2770,7 +2937,7 @@ ${message.slice(0, 8000)}`;
         case 'thread.interaction-mode.set': {
           const target = needThread();
           const interaction = interactionModeOf(command.interactionMode);
-          if (target.executor === 'codex' && interaction === 'plan') throw new Error('Plan mode for Codex is coming soon.');
+          requireInteraction(target.executor, interaction);
           target.setInteractionMode(interaction);
           this.interactions.set(target.id, interaction); this.save(); this.changed(target.id);
           break;
@@ -2809,6 +2976,7 @@ ${message.slice(0, 8000)}`;
           this.deletedThreads.add(target.id);
           this.deletingThreads.delete(target.id);
           this.threads.delete(target.id);
+          this.wakeLocalImageReaders();
           this.dirty.delete(target.id);
           this.streamChanges.delete(target.id);
           // Preserve window-owned project, title and preferences for manual recovery from trash.
@@ -2849,7 +3017,7 @@ ${message.slice(0, 8000)}`;
     const existing = await this.loaded(threadId);
     try {
       const requestedExecutor = executorOf(input.modelSelection?.instanceId ?? instanceOf(this.selectedExecutor));
-      if (requestedExecutor === 'codex' && interactionMode === 'plan') throw new Error('Plan mode for Codex is coming soon.');
+      requireInteraction(requestedExecutor, interactionMode);
       if (existing && requestedExecutor !== existing.executor) throw new Error('A conversation cannot change its executor. Start a new chat.');
       const launchProject = existing ? this.validateLaunchProject(existing, input.projectId) : null;
       const thread = existing ?? await this.createThread(threadId, input.title, input.modelSelection?.model, input.runtimeMode, input.projectId, input.modelSelection?.instanceId, interactionMode);
@@ -2957,7 +3125,7 @@ ${message.slice(0, 8000)}`;
             const imagePath = context.admittedBeforeRegistration && resource.hostOnly === true
               ? localImagePathAtRoot(path, requestedWorkspaceRoot, thread.cwd ?? '')
               : path;
-            const image = await this.localImageUrl(thread.id, imagePath);
+            const image = await this.localImageUrl(thread.id, imagePath, thread.cwd);
             return {
               relativeUrl: image.url,
               expiresAt: this.now() + UPLOAD_TTL_MS,
@@ -2991,6 +3159,7 @@ ${message.slice(0, 8000)}`;
           await this.start();
           const claude = () => claudeProvider(this.claudeDiscovery, this.iso(), this.mode !== null, this.discoveryFailure);
           const codex = () => codexProvider(this.codexDiscovery, this.iso(), this.codexDiscoveryFailure);
+          const pi = () => piProvider(this.piDiscovery, this.iso(), this.mode !== null);
           // The composer's folder (T3's workspace snapshot): `/` and `$` from its selected executor.
           const cwd = typeof payload?.cwd === 'string' ? payload.cwd.trim() : '';
           if (cwd && payload?.instanceId === CODEX_INSTANCE_ID) {
@@ -3001,12 +3170,21 @@ ${message.slice(0, 8000)}`;
             if (this.claudeDiscovery === null) await this.readDiscovery();
             return { providers: [{ ...claude(), workspaceSnapshots: [await this.workspaceSnapshot(cwd, 'claude')] }] };
           }
+          if (cwd && payload?.instanceId === PI_INSTANCE_ID) {
+            if (this.piDiscovery === null) await this.readPiDiscovery();
+            return { providers: [{ ...pi(), workspaceSnapshots: [await this.workspaceSnapshot(cwd, 'pi')] }] };
+          }
           if (cwd && payload?.instanceId === undefined) {
             if (this.claudeDiscovery === null || this.codexDiscovery === null) await this.readDiscovery();
             return { providers: [
               { ...claude(), workspaceSnapshots: [await this.workspaceSnapshot(cwd, 'claude')] },
               { ...codex(), workspaceSnapshots: [await this.workspaceSnapshot(cwd, 'codex')] },
+              { ...pi(), workspaceSnapshots: [await this.workspaceSnapshot(cwd, 'pi')] },
             ] };
+          }
+          if (payload?.instanceId === PI_INSTANCE_ID) {
+            await this.readPiDiscovery();
+            return { providers: [pi()] };
           }
           // Welcome mounts with an automatic empty refresh. While startup is pending it is an
           // observer of that same bounded lane, not a user's request to replace it or fail early.
@@ -3018,6 +3196,7 @@ ${message.slice(0, 8000)}`;
             return { providers: [
               claude(),
               codex(),
+              pi(),
             ] };
           }
           const generation = ++this.discoveryGeneration;
@@ -3025,11 +3204,13 @@ ${message.slice(0, 8000)}`;
           this.discoveryPending = true;
           this.discoveryFailure = undefined;
           this.codexDiscoveryFailure = undefined;
+          void this.readPiDiscovery(generation);
           if (!await this.readDiscovery(generation) && generation === this.discoveryGeneration) this.finishDiscoveryFailure(startedAt);
           this.configChanged();
           return { providers: [
             claude(),
             codex(),
+            pi(),
           ] };
         },
         'orchestration.dispatchCommand': (command: any) => this.dispatch(command ?? {}),

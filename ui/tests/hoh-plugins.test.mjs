@@ -5,17 +5,58 @@ import { componentHarness, textOf } from './screens-a/component-harness.mjs';
 
 const page = resolve(import.meta.dirname, '../src/t3-entry/hoh-screens/PluginsPage.tsx');
 
-test('shows a compiled plugin, its status, and the manifest panel for the selected session', async () => {
+test('opens a compiled plugin from the inventory for the selected session', async () => {
   const calls = [];
-  const inventory = { async list(id) { calls.push(id); return [{ id: 'turn-note', manifest: { name: 'Последний ход', version: '0.1.0', panel: { title: 'Итог', fields: [{ key: 'turn', label: 'Ход' }] } }, status: 'mounted', diagnostic: null, data: { turn: 3 } }]; } };
+  const plugin = {
+    id: 'turn-note',
+    manifest: { name: 'Последний ход', version: '0.1.0', panel: { title: 'Итог', fields: [{ key: 'turn', label: 'Ход' }] } },
+    status: 'mounted', diagnostic: null, data: { turn: 3 },
+  };
+  const inventory = { async list(id) { calls.push(id); return [plugin]; } };
   const h = componentHarness(page, 'PluginsPage', {}, { inventory, session: 'chat-1' });
   await h.settle();
   assert.deepEqual(calls, ['chat-1']);
   assert.match(h.text(), /Последний ход/);
-  assert.match(h.text(), /mounted/);
-  assert.match(h.text(), /Итог/);
-  assert.match(h.text(), /Ход3/);
-  assert(h.nodes().some(node => node.props['data-plugin-id'] === 'turn-note'));
+  assert.match(h.text(), /Active/);
+  assert.match(h.text(), /Session panel/);
+  h.nodes().find(node => node.props['data-plugin-id'] === 'turn-note').props.onClick();
+  await h.settle();
+  assert.doesNotMatch(h.text(), /Последний ход/);
+  h.unmount();
+});
+
+test('recognizes service names and filters the catalog by description', async () => {
+  const inventory = { list: async () => [
+    { id: 'write-notion', manifest: { name: 'Write to Notion', description: 'Send notes from YouTube to Stripey.' }, status: 'mounted' },
+    { id: 'turn-note', manifest: { name: 'Last turn' }, status: 'disabled' },
+  ] };
+  const h = componentHarness(page, 'PluginsPage', {}, { inventory });
+  await h.settle();
+  const search = h.nodes().find(node => node.type === 'input');
+  search.props.onChange({ target: { value: ' yOuTuBe ' } });
+  await h.settle();
+  assert.match(h.text(), /Write to Notion/);
+  assert.doesNotMatch(h.text(), /Last turn/);
+  assert.equal(h.nodes().find(node => node.props.className === 'hoh-plugin-artwork').props.children.props.entity, 'notion');
+  const mentions = h.nodes().filter(node => node.props.className === 'hoh-plugin-entity');
+  assert.deepEqual(mentions.map(node => node.props.children[0].props.entity), ['youtube', 'rust']);
+  h.unmount();
+});
+
+test('keeps plugin cards searchable when an older manifest supplies non-string display fields', async () => {
+  const inventory = { list: async () => [
+    { id: 'fallback-plugin', manifest: { name: 42, description: 17 }, status: 'disabled' },
+  ] };
+  const h = componentHarness(page, 'PluginsPage', {}, { inventory });
+  await h.settle();
+  const search = h.nodes().find(node => node.type === 'input');
+  search.props.onChange({ target: { value: 'fallback' } });
+  await h.settle();
+  assert.match(h.text(), /fallback-plugin/);
+  assert.match(h.text(), /disabled/);
+  search.props.onChange({ target: { value: 'no match' } });
+  await h.settle();
+  assert.match(h.text(), /No matching plugins/);
   h.unmount();
 });
 
