@@ -12,10 +12,13 @@ use std::{
     ffi::{CString, OsStr},
     fs::{self, File, OpenOptions},
     io::{self, BufRead, BufReader, Read, Write},
-    os::unix::{
-        ffi::OsStrExt,
-        fs::{OpenOptionsExt, PermissionsExt},
-        process::CommandExt,
+    os::{
+        fd::AsRawFd,
+        unix::{
+            ffi::OsStrExt,
+            fs::{OpenOptionsExt, PermissionsExt},
+            process::CommandExt,
+        },
     },
     path::{Path, PathBuf},
     process::{Command, Stdio},
@@ -88,6 +91,23 @@ impl Package {
             && executable.ends_with(&binary)
             && root.join(self.version_file).symlink_metadata().is_ok())
         .then_some(root)
+    }
+
+    fn lease_path(self, bundle: &Path) -> PathBuf {
+        if cfg!(target_os = "linux") {
+            bundle.join(self.version_file)
+        } else {
+            bundle.to_owned()
+        }
+    }
+
+    fn open_lease(self, bundle: &Path) -> io::Result<File> {
+        let path = self.lease_path(bundle);
+        if cfg!(target_os = "linux") {
+            open_regular_file(&path)
+        } else {
+            File::open(path)
+        }
     }
 }
 
@@ -336,6 +356,7 @@ fn github_token(cancelled: impl Fn() -> bool) -> Option<String> {
     // Finder launches with a restricted PATH, so also look in the Homebrew bin directories.
     for binary in ["gh", "/opt/homebrew/bin/gh", "/usr/local/bin/gh"] {
         match Command::new(binary)
+            .process_group(0)
             .args(["auth", "token", "--hostname", "github.com"])
             .env("GH_PROMPT_DISABLED", "1")
             .current_dir("/")
@@ -346,20 +367,21 @@ fn github_token(cancelled: impl Fn() -> bool) -> Option<String> {
         {
             Ok(mut child) => {
                 let deadline = Instant::now() + Duration::from_secs(10);
-                let status = install::wait_for_child(&mut child, || {
+                let status = install::wait_for_child_group(&mut child, || {
                     cancelled() || Instant::now() >= deadline
                 })
                 .ok()?;
+                let stdout = child.stdout.take()?;
+                if !status.success()
+                    || unsafe { libc::fcntl(stdout.as_raw_fd(), libc::F_SETFL, libc::O_NONBLOCK) }
+                        < 0
+                {
+                    return None;
+                }
                 let mut token = String::new();
-                child
-                    .stdout
-                    .take()?
-                    .take(1024)
-                    .read_to_string(&mut token)
-                    .ok()?;
+                stdout.take(1024).read_to_string(&mut token).ok()?;
                 let token = token.trim();
-                return (status.success()
-                    && !token.is_empty()
+                return (!token.is_empty()
                     && token.len() < 1024
                     && token.bytes().all(|byte| byte.is_ascii_graphic()))
                 .then(|| token.to_owned());
@@ -404,6 +426,9 @@ fn latest_release(
     }
     if matches!(status, 401 | 403 | 404) {
         token = github_token(cancelled);
+        if cancelled() {
+            return Err("The update check was cancelled.".into());
+        }
         if let Some(token) = token.as_deref() {
             status = fetch(
                 &url,
@@ -497,7 +522,7 @@ fn validate_bundle(
     package: Package,
     version: &Version,
     cancelled: impl Fn() -> bool,
-) -> Result<(), String> {
+) -> Result<(), StagingError> {
     if cancelled() {
         return Err("The update was cancelled.".into());
     }
@@ -507,6 +532,7 @@ fn validate_bundle(
         let error =
             |error| format!("macOS could not verify the signature of the new HoH.app ({error}).");
         let mut child = Command::new("/usr/bin/codesign")
+            .process_group(0)
             .args(["--verify", "--deep", "--strict"])
             .arg(bundle)
             .stdin(Stdio::null())
@@ -516,8 +542,20 @@ fn validate_bundle(
             .map_err(error)?;
         let deadline = Instant::now() + Duration::from_secs(45);
         let status =
-            install::wait_for_child(&mut child, || cancelled() || Instant::now() >= deadline)
-                .map_err(error)?;
+            install::wait_for_child_group(&mut child, || cancelled() || Instant::now() >= deadline)
+                .map_err(|failure| match failure {
+                    install::ChildWaitError::Interrupted if cancelled() => {
+                        "The update was cancelled.".into()
+                    }
+                    install::ChildWaitError::Interrupted => {
+                        "macOS signature verification took too long.".into()
+                    }
+                    install::ChildWaitError::ShutdownUnconfirmed(error) => {
+                        StagingError::ShutdownUnconfirmed(format!(
+                            "Could not confirm that macOS signature verification stopped ({error})."
+                        ))
+                    }
+                })?;
         if !status.success() {
             return Err("macOS could not verify the signature of the new HoH.app.".into());
         }
@@ -640,7 +678,8 @@ fn update(
     let extracted = extract::extract(&archive, &unpacked, cancelled);
     let ((), staging) = retain_if_shutdown_unconfirmed(extracted, staging)?;
     let bundle = package.staged_in(&unpacked).map_err(|_| INVALID_PACKAGE)?;
-    validate_bundle(&bundle, package, &version, cancelled)?;
+    let validated = validate_bundle(&bundle, package, &version, cancelled);
+    let ((), staging) = retain_if_shutdown_unconfirmed(validated, staging)?;
     #[cfg(target_os = "linux")]
     extract::preserve_access_modes(installed, &bundle).map_err(|error| {
         format!("Could not preserve permissions for the HoH installation ({error}).")

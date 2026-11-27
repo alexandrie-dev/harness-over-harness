@@ -6,7 +6,7 @@ use super::{
     },
     instance::{InstanceLock, pass_fd, take_fd},
     open_regular_file, package_for, read_install_metadata,
-    recovery::{Recovery, is_backup, sibling_path},
+    recovery::{Decision, Recovery, is_backup, sibling_path},
 };
 use crate::engine::{Connector, ProcessConfig};
 use semver::Version;
@@ -14,6 +14,7 @@ use std::{
     ffi::{OsStr, OsString},
     fs::{self, File, TryLockError},
     io::{self, Read, Write},
+    net::Shutdown,
     os::{
         fd::{AsFd, AsRawFd, OwnedFd},
         unix::{
@@ -39,6 +40,8 @@ const STOP_TIMEOUT: Duration = Duration::from_secs(10);
 const HELPER_STOP_TIMEOUT: Duration = Duration::from_secs(5);
 const WAIT_STEP: Duration = Duration::from_millis(75);
 const CHECK_READY: u8 = 1;
+const COMMIT_COMPLETE: u8 = 2;
+const USER_QUIT: u64 = u64::MAX;
 const SHUTDOWN_COMPLETE: u8 = 1;
 
 #[derive(Default)]
@@ -62,8 +65,42 @@ pub struct Installation {
 
 struct CandidateReadiness {
     lifecycle: Arc<UnixStream>,
+    recovery: Recovery,
     engine_status: File,
+    phase: Mutex<CandidatePhase>,
     ui: Mutex<Option<(u32, Instant)>>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum CandidatePhase {
+    Waiting,
+    Checking,
+    Ready,
+    Committed,
+    Quitting,
+    Aborted,
+}
+
+fn monitor_worker(mut lifecycle: &UnixStream, phase: &Mutex<CandidatePhase>) -> bool {
+    let mut request = [0];
+    loop {
+        let received = lifecycle.read_exact(&mut request).is_ok();
+        let mut phase = phase.lock().unwrap_or_else(|error| error.into_inner());
+        if *phase == CandidatePhase::Quitting {
+            return true;
+        }
+        match (received, request[0], *phase) {
+            (true, CHECK_READY, CandidatePhase::Waiting) => *phase = CandidatePhase::Checking,
+            (true, COMMIT_COMPLETE, CandidatePhase::Ready) => {
+                *phase = CandidatePhase::Committed;
+                return true;
+            }
+            _ => {
+                *phase = CandidatePhase::Aborted;
+                return false;
+            }
+        }
+    }
 }
 
 fn update_gate(installed: &Path) -> io::Result<File> {
@@ -95,8 +132,8 @@ fn update_gate(installed: &Path) -> io::Result<File> {
     Ok(gate)
 }
 
-fn check_lease(installed: &Path, lease: &File) -> io::Result<()> {
-    let active = fs::metadata(installed)?;
+fn check_lease(package: Package, installed: &Path, lease: &File) -> io::Result<()> {
+    let active = package.lease_path(installed).symlink_metadata()?;
     let held = lease.metadata()?;
     if (active.dev(), active.ino()) == (held.dev(), held.ino()) {
         Ok(())
@@ -136,6 +173,7 @@ impl Installation {
         if mode == Some(WORKER) {
             let package = package.ok_or("Cannot update this installation.")?;
             let installed = installed.ok_or("Cannot find the installation to update.")?;
+            let _gate = take_fd(args.next().as_deref()).map_err(|error| error.to_string())?;
             let staging = args.next().ok_or("Missing update staging directory.")?;
             let launch_args: Vec<_> = args.collect();
             worker(
@@ -169,14 +207,14 @@ impl Installation {
         let lease = if candidate || recovered {
             inherited_lease().map_err(lease_error)?
         } else {
-            let lease = File::open(installed).map_err(lease_error)?;
+            let lease = package.open_lease(installed).map_err(lease_error)?;
             lease.try_lock_shared().map_err(|error| match error {
                 TryLockError::WouldBlock => {
                     "HoH is applying an update. Open it again when the update finishes.".into()
                 }
                 TryLockError::Error(error) => lease_error(error),
             })?;
-            check_lease(installed, &lease).map_err(lease_error)?;
+            check_lease(package, installed, &lease).map_err(lease_error)?;
             if recover_pending(package, installed, &lease, &installation.instance)
                 .map_err(|error| format!("Could not recover the interrupted HoH update ({error})."))?
             {
@@ -184,7 +222,7 @@ impl Installation {
             }
             lease
         };
-        check_lease(installed, &lease).map_err(lease_error)?;
+        check_lease(package, installed, &lease).map_err(lease_error)?;
         let marker = read_install_metadata(&installed.join(package.version_file))
             .map_err(|error| format!("Could not read the HoH installation version ({error})."))?;
         if marker.trim() != version.to_string() {
@@ -198,13 +236,15 @@ impl Installation {
                 |error| format!("Could not connect to the HoH update worker ({error}).");
             let lifecycle =
                 UnixStream::from(take_fd(args.next().as_deref()).map_err(connect_error)?);
-            lifecycle.set_nonblocking(true).map_err(connect_error)?;
+            lifecycle.set_write_timeout(Some(WAIT_STEP)).map_err(connect_error)?;
             let recovery = Recovery::open(installed, package)
                 .map_err(connect_error)?
                 .ok_or("Could not find the pending HoH update.")?;
             installation.readiness = Some(Arc::new(CandidateReadiness {
                 lifecycle: Arc::new(lifecycle),
                 engine_status: recovery.prepare_engine_status().map_err(connect_error)?,
+                recovery,
+                phase: Mutex::new(CandidatePhase::Waiting),
                 ui: Mutex::default(),
             }));
         }
@@ -269,13 +309,19 @@ impl Installation {
         if matches!(*job, Job::Cancelling) {
             return Err("The update was cancelled.".into());
         }
+        if let Some(readiness) = &self.readiness
+            && *readiness.phase.lock().unwrap_or_else(|error| error.into_inner())
+                != CandidatePhase::Committed
+        {
+            return Err("HoH is still starting after an update.".into());
+        }
         let lease = self
             .lease
             .as_ref()
             .ok_or("The HoH installation is read-only.")?;
         let error_message = |error| format!("Could not prepare the HoH restart ({error}).");
         // Serialize upgrades to exclusive mode. On some systems try_lock releases the old shared lock.
-        let _gate = update_gate(installed).map_err(|error| {
+        let gate = update_gate(installed).map_err(|error| {
             if error.kind() == io::ErrorKind::WouldBlock {
                 "Another HoH process is applying an update.".into()
             } else {
@@ -297,8 +343,7 @@ impl Installation {
             });
         }
         let result = (|| {
-            check_lease(installed, lease)?;
-            #[cfg(target_os = "linux")]
+            check_lease(package, installed, lease)?;
             Recovery::check_exchange_permissions(
                 installed,
                 &package.staged_in(&staging.path().join("unpacked"))?,
@@ -306,9 +351,9 @@ impl Installation {
             let (until_exit, parent) = UnixStream::pair()?;
             let launch_args = current_launch_args();
             let output: OwnedFd = parent.into();
-            let mut child = self
-                .instance
-                .restart_command(executable, WORKER)?
+            let mut command = self.instance.restart_command(executable, WORKER)?;
+            pass_fd(&mut command, &gate)?;
+            let mut child = command
                 .arg(staging.path())
                 .args(launch_args)
                 .stdin(Stdio::from(lease.try_clone()?))
@@ -336,6 +381,32 @@ impl Installation {
         }
     }
 
+    pub fn watch_update_worker(&self, app: tauri::AppHandle) {
+        if let Some(readiness) = self.readiness.clone() {
+            thread::spawn(move || {
+                if !monitor_worker(&readiness.lifecycle, &readiness.phase) {
+                    app.exit(1);
+                }
+            });
+        }
+    }
+
+    pub fn report_user_quit(&self) {
+        if let Some(readiness) = &self.readiness {
+            let mut phase = readiness.phase.lock().unwrap_or_else(|error| error.into_inner());
+            if matches!(*phase, CandidatePhase::Committed | CandidatePhase::Quitting) {
+                return;
+            }
+            *phase = CandidatePhase::Quitting;
+            if let Err(error) = readiness.recovery.request_user_quit()
+                && error.kind() != io::ErrorKind::AlreadyExists
+            {
+                eprintln!("HoH could not record the quit request: {error}");
+            }
+            let _ = (&*readiness.lifecycle).write_all(&USER_QUIT.to_be_bytes());
+        }
+    }
+
     pub(super) fn ui_status(&self, view: u32, ready: bool) {
         if let Some(readiness) = &self.readiness {
             let mut ui = readiness.ui.lock().unwrap_or_else(|error| error.into_inner());
@@ -356,18 +427,10 @@ impl Installation {
     pub(crate) fn engine_ready_handler(&self) -> Option<crate::engine::ReadyHandler> {
         let readiness = self.readiness.clone()?;
         Some(Box::new(move |generation, transport| {
-            let mut lifecycle = &*readiness.lifecycle;
-            let mut request = [0];
-            match lifecycle.read(&mut request) {
-                Ok(1) if request[0] == CHECK_READY => {}
-                Err(error)
-                    if matches!(
-                        error.kind(),
-                        io::ErrorKind::WouldBlock | io::ErrorKind::Interrupted
-                    ) =>
-                {
-                    return false;
-                }
+            let mut phase = readiness.phase.lock().unwrap_or_else(|error| error.into_inner());
+            match *phase {
+                CandidatePhase::Checking => {}
+                CandidatePhase::Waiting | CandidatePhase::Ready => return false,
                 _ => return true,
             }
             let ui = readiness.ui.lock().unwrap_or_else(|error| error.into_inner());
@@ -377,10 +440,15 @@ impl Installation {
                 }) && transport.confirm_running()
             });
             let reply = confirmed.map_or(0, |(generation, _)| generation).to_be_bytes();
-            if let Err(error) = lifecycle.write_all(&reply) {
+            if let Err(error) = (&*readiness.lifecycle).write_all(&reply) {
                 eprintln!("HoH could not confirm update readiness: {error}");
                 return true;
             }
+            *phase = if confirmed.is_some() {
+                CandidatePhase::Ready
+            } else {
+                CandidatePhase::Waiting
+            };
             false
         }))
     }
@@ -439,37 +507,46 @@ fn launch(
         .spawn()
 }
 
-fn await_ready(child: &mut Child, lifecycle: &mut UnixStream) -> io::Result<bool> {
+enum StartupOutcome {
+    Ready,
+    Failed,
+    UserQuit,
+}
+
+fn await_ready(child: &mut Child, lifecycle: &mut UnixStream) -> io::Result<StartupOutcome> {
     let deadline = Instant::now() + START_TIMEOUT;
     lifecycle.set_read_timeout(Some(WAIT_STEP))?;
     lifecycle.set_write_timeout(Some(WAIT_STEP))?;
     let mut reply = [0; 8];
     let mut received = 0;
     lifecycle.write_all(&[CHECK_READY])?;
-    while child.try_wait()?.is_none() && Instant::now() < deadline {
+    while Instant::now() < deadline {
         match lifecycle.read(&mut reply[received..]) {
-            Ok(0) => return Ok(false),
+            Ok(0) => break,
             Ok(count) => received += count,
             Err(error)
                 if matches!(
                     error.kind(),
                     io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut | io::ErrorKind::Interrupted
-                ) =>
-            {
-                continue;
-            }
+                ) => {}
             Err(error) => return Err(error),
+        }
+        if received == reply.len() && u64::from_be_bytes(reply) == USER_QUIT {
+            return Ok(StartupOutcome::UserQuit);
+        }
+        if child.try_wait()?.is_some() {
+            break;
         }
         if received == reply.len() {
             if u64::from_be_bytes(reply) != 0 {
-                return Ok(child.try_wait()?.is_none());
+                return Ok(StartupOutcome::Ready);
             }
             thread::sleep(WAIT_STEP);
             lifecycle.write_all(&[CHECK_READY])?;
             received = 0;
         }
     }
-    Ok(false)
+    Ok(StartupOutcome::Failed)
 }
 
 fn stop_candidate(
@@ -477,7 +554,13 @@ fn stop_candidate(
     lifecycle: &mut UnixStream,
     recovery: &Recovery,
 ) -> io::Result<()> {
-    if let Err(error) = child.kill()
+    let _ = lifecycle.shutdown(Shutdown::Write);
+    let deadline = Instant::now() + STOP_TIMEOUT;
+    while child.try_wait()?.is_none() && Instant::now() < deadline {
+        thread::sleep(WAIT_STEP);
+    }
+    if child.try_wait()?.is_none()
+        && let Err(error) = child.kill()
         && child.try_wait()?.is_none()
     {
         return Err(error);
@@ -531,14 +614,26 @@ fn recover_pending(
     };
     let _gate = update_gate(installed)?;
     active.try_lock()?;
-    check_lease(installed, active)?;
-    let backup = File::open(recovery.backup())?;
+    check_lease(package, installed, active)?;
+    let backup = package.open_lease(recovery.backup())?;
     backup.try_lock()?;
-    let restored = recovery.is_swapped(active, &backup)? && !recovery.committed()?;
-    if restored {
-        if let Some(status) = recovery.engine_status()? {
-            confirm_interrupted_engine_stopped(&status)?;
+    check_lease(package, recovery.backup(), &backup)?;
+    #[cfg(target_os = "linux")]
+    let legacy_leases = if recovery.marker_lease() {
+        None
+    } else {
+        let leases = [File::open(installed)?, File::open(recovery.backup())?];
+        for lease in &leases {
+            lease.try_lock()?;
         }
+        Some(leases)
+    };
+    let swapped = recovery.is_swapped(installed)?;
+    let restored = swapped && recovery.decision()? != Decision::Committed;
+    if swapped && let Some(status) = recovery.engine_status()? {
+        confirm_interrupted_engine_stopped(&status)?;
+    }
+    if restored {
         recovery.exchange(installed)?;
     }
     recovery.sync_exchange(installed)?;
@@ -546,7 +641,10 @@ fn recover_pending(
         eprintln!("HoH could not clean up the interrupted update: {error}");
     }
     if restored {
-        restart_previous(package, installed, &current_launch_args(), instance, &backup)?;
+        let lease = &backup;
+        #[cfg(target_os = "linux")]
+        let lease = legacy_leases.as_ref().map_or(lease, |leases| &leases[1]);
+        restart_previous(package, installed, &current_launch_args(), instance, lease)?;
     } else {
         active.lock_shared()?;
     }
@@ -581,13 +679,13 @@ fn worker(
         return Err(io::ErrorKind::InvalidInput.into());
     }
     let lease = inherited_lease()?;
-    check_lease(installed, &lease)?;
+    check_lease(package, installed, &lease)?;
     let mut parent = UnixStream::from(std::io::stdout().as_fd().try_clone_to_owned()?);
     if let Err(error) = await_parent_exit(&mut parent) {
         let _ = fs::remove_dir_all(staging);
         return Err(error);
     }
-    let (recovery, candidate) = match Recovery::publish(installed, staging, package, &lease) {
+    let (recovery, candidate) = match Recovery::publish(installed, staging, package) {
         Ok(prepared) => prepared,
         Err(error) => {
             eprintln!("HoH could not prepare the update recovery directory: {error}");
@@ -601,6 +699,7 @@ fn worker(
         let _ = recovery.finish();
         return restart_previous(package, installed, args, instance, &lease);
     }
+    let mut user_quit = false;
     if recovery.sync_exchange(installed).is_ok()
         && let Ok((mut lifecycle, candidate_end)) = UnixStream::pair()
         && let Ok(mut child) = launch(
@@ -613,21 +712,34 @@ fn worker(
         )
     {
         drop(candidate_end);
-        if await_ready(&mut child, &mut lifecycle).unwrap_or(false) {
-            match recovery.commit() {
+        match await_ready(&mut child, &mut lifecycle) {
+            Ok(StartupOutcome::Ready) => match recovery.commit() {
                 Ok(()) => {
-                    let result = recovery.finish();
                     candidate.lock_shared()?;
-                    return result;
+                    lifecycle.write_all(&[COMMIT_COMPLETE])?;
+                    return recovery.finish();
                 }
+                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
                 Err(error) => eprintln!("HoH could not commit the updated installation: {error}"),
-            }
+            },
+            Ok(StartupOutcome::UserQuit) => user_quit = true,
+            Ok(StartupOutcome::Failed) => {}
+            Err(error) => eprintln!("HoH could not confirm the updated installation: {error}"),
         }
         stop_candidate(&mut child, &mut lifecycle, &recovery)?;
     }
+    match recovery.decision()? {
+        Decision::Committed => {
+            return Err(io::Error::other("the update commit could not be confirmed"));
+        }
+        Decision::UserQuit => user_quit = true,
+        Decision::Pending | Decision::Rollback => {}
+    }
     recovery.exchange(installed)?;
     let result = recovery.sync_exchange(installed).and_then(|()| recovery.finish());
-    restart_previous(package, installed, args, instance, &lease)?;
+    if !user_quit {
+        restart_previous(package, installed, args, instance, &lease)?;
+    }
     result
 }
 
@@ -644,23 +756,6 @@ fn await_parent_exit(parent: &mut UnixStream) -> io::Result<()> {
         io::ErrorKind::InvalidData,
         "could not confirm the previous HoH shut down",
     ))
-}
-
-pub(super) fn wait_for_child(
-    child: &mut Child,
-    cancelled: impl Fn() -> bool,
-) -> io::Result<ExitStatus> {
-    loop {
-        if cancelled() {
-            let _ = child.kill();
-            child.wait()?;
-            return Err(io::ErrorKind::Interrupted.into());
-        }
-        if let Some(status) = child.try_wait()? {
-            return Ok(status);
-        }
-        thread::sleep(WAIT_STEP);
-    }
 }
 
 pub(super) enum ChildWaitError {
@@ -716,10 +811,56 @@ fn confirm_child_group_stopped(child: &mut Child) -> io::Result<()> {
     }
 }
 
-#[cfg(all(test, target_os = "linux"))]
+#[cfg(test)]
 mod tests {
     use super::*;
 
+    #[test]
+    fn worker_loss_after_readiness_requires_shutdown() {
+        let (worker, candidate) = UnixStream::pair().unwrap();
+        let phase = Mutex::new(CandidatePhase::Ready);
+        drop(worker);
+
+        assert!(!monitor_worker(&candidate, &phase));
+        assert!(*phase.lock().unwrap() == CandidatePhase::Aborted);
+    }
+
+    #[test]
+    fn commit_acknowledgement_allows_candidate_to_keep_running() {
+        let (mut worker, candidate) = UnixStream::pair().unwrap();
+        let phase = Mutex::new(CandidatePhase::Ready);
+        worker.write_all(&[COMMIT_COMPLETE]).unwrap();
+        drop(worker);
+
+        assert!(monitor_worker(&candidate, &phase));
+        assert!(*phase.lock().unwrap() == CandidatePhase::Committed);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn search_only_bundle_uses_the_readable_marker_lease() {
+        let package = package_for("linux", "x86_64").unwrap();
+        let parent = tempfile::tempdir().unwrap();
+        let bundle = parent.path().join(package.install_dir);
+        fs::create_dir(&bundle).unwrap();
+        fs::write(bundle.join(package.version_file), b"0.0.1\n").unwrap();
+        fs::set_permissions(&bundle, fs::Permissions::from_mode(0o111)).unwrap();
+
+        let active = package.open_lease(&bundle).unwrap();
+        let updater = package.open_lease(&bundle).unwrap();
+        fs::set_permissions(&bundle, fs::Permissions::from_mode(0o755)).unwrap();
+        active.try_lock_shared().unwrap();
+        check_lease(package, &bundle, &active).unwrap();
+        assert!(matches!(updater.try_lock(), Err(TryLockError::WouldBlock)));
+        drop(active);
+        updater.try_lock().unwrap();
+        assert!(matches!(
+            package.open_lease(&bundle).unwrap().try_lock_shared(),
+            Err(TryLockError::WouldBlock)
+        ));
+    }
+
+    #[cfg(target_os = "linux")]
     #[test]
     fn candidate_socket_drains_to_eof_after_reset() {
         let (mut worker, candidate) = UnixStream::pair().unwrap();

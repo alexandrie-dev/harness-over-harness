@@ -1,6 +1,9 @@
 use tauri::Manager;
 
 fn setup_application(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    app.state::<hoh_desktop::auto_update::Installation>()
+        .watch_update_worker(app.handle().clone());
     // Tauri creates configured windows before setup, so probes can safely attach
     // observers to an already-loaded main WebView.
     #[cfg(all(feature = "probe", target_os = "linux"))]
@@ -15,9 +18,12 @@ fn setup_application(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Err
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-fn defer_exit(app: &tauri::AppHandle) -> bool {
-    app.state::<hoh_desktop::auto_update::Installation>()
-        .defer_exit()
+fn defer_exit(app: &tauri::AppHandle, user_quit: bool) -> bool {
+    let installation = app.state::<hoh_desktop::auto_update::Installation>();
+    if user_quit {
+        installation.report_user_quit();
+    }
+    installation.defer_exit()
 }
 
 fn main() {
@@ -84,7 +90,7 @@ fn main() {
                 && let tauri::WindowEvent::CloseRequested { api, .. } = event
             {
                 #[cfg(any(target_os = "linux", target_os = "macos"))]
-                if defer_exit(window.app_handle()) {
+                if defer_exit(window.app_handle(), true) {
                     api.prevent_close();
                     return;
                 }
@@ -96,8 +102,8 @@ fn main() {
         .expect("build HoH desktop")
         .run(|app, event| {
             #[cfg(any(target_os = "linux", target_os = "macos"))]
-            if let tauri::RunEvent::ExitRequested { api, .. } = &event
-                && defer_exit(app)
+            if let tauri::RunEvent::ExitRequested { code, api, .. } = &event
+                && defer_exit(app, code.is_none())
             {
                 api.prevent_exit();
                 return;
