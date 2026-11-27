@@ -295,6 +295,7 @@ pub(crate) struct StartSettings {
 }
 
 pub(crate) struct Probe {
+    pub version: Option<String>,
     pub models: Vec<Value>,
     pub account: Value,
 }
@@ -309,7 +310,7 @@ impl CodexSession {
         trusted: bool,
         model: Option<String>,
         effort: Option<String>,
-    ) -> Result<(Arc<Self>, mpsc::Receiver<HarnessEvent>), HarnessFailure> {
+    ) -> Result<(Arc<Self>, mpsc::Receiver<HarnessEvent>, Value), HarnessFailure> {
         let frames = supervisor
             .take_frames()
             .ok_or_else(|| HarnessFailure::new(code::CLOSED, "process frames are taken"))?;
@@ -331,7 +332,7 @@ impl CodexSession {
         });
         tokio::spawn(read_loop(inner.clone(), frames));
         let session = Arc::new(Self { inner, owner });
-        session
+        let initialization = session
             .request(
                 "initialize",
                 json!({
@@ -340,8 +341,14 @@ impl CodexSession {
                 }),
             )
             .await?;
+        if !initialization.is_object() {
+            return Err(HarnessFailure::new(
+                code::PROTOCOL,
+                "Codex app-server initialize returned an invalid response.",
+            ));
+        }
         session.notify("initialized", json!({})).await?;
-        Ok((session, events_rx))
+        Ok((session, events_rx, initialization))
     }
 
     pub(crate) async fn start(
@@ -358,7 +365,7 @@ impl CodexSession {
             effort,
             resume,
         } = settings;
-        let (session, events) = Self::open(
+        let (session, events, _) = Self::open(
             supervisor,
             event_queue,
             request_timeout,
@@ -431,7 +438,7 @@ impl CodexSession {
         request_timeout: Duration,
         cwd: String,
     ) -> Result<Value, HarnessFailure> {
-        let (session, _events) = Self::open(
+        let (session, _events, _) = Self::open(
             supervisor,
             1,
             request_timeout,
@@ -454,7 +461,7 @@ impl CodexSession {
         request_timeout: Duration,
         cwd: String,
     ) -> Result<Value, HarnessFailure> {
-        let (session, _events) = Self::open(
+        let (session, _events, _) = Self::open(
             supervisor,
             1,
             request_timeout,
@@ -476,7 +483,7 @@ impl CodexSession {
         supervisor: Supervisor,
         request_timeout: Duration,
     ) -> Result<Probe, HarnessFailure> {
-        let (session, _events) = Self::open(
+        let (session, _events, initialization) = Self::open(
             supervisor,
             1,
             request_timeout,
@@ -493,14 +500,17 @@ impl CodexSession {
             let answer = session
                 .request("model/list", json!({"cursor":cursor,"limit":100}))
                 .await?;
-            models.extend(
-                answer
-                    .get("data")
-                    .or_else(|| answer.get("models"))
-                    .and_then(Value::as_array)
-                    .cloned()
-                    .unwrap_or_default(),
-            );
+            let page = answer
+                .get("data")
+                .or_else(|| answer.get("models"))
+                .and_then(Value::as_array)
+                .ok_or_else(|| {
+                    HarnessFailure::new(
+                        code::PROTOCOL,
+                        "Codex app-server model/list did not return a model list.",
+                    )
+                })?;
+            models.extend(page.iter().cloned());
             cursor = answer
                 .get("nextCursor")
                 .and_then(Value::as_str)
@@ -513,7 +523,11 @@ impl CodexSession {
             .request("account/read", json!({"refreshToken":false}))
             .await?;
         session.terminate_now(Duration::from_millis(300)).await;
-        Ok(Probe { models, account })
+        Ok(Probe {
+            version: crate::version::from_initialize(&initialization),
+            models,
+            account,
+        })
     }
 
     fn thread_policy(&self) -> Value {

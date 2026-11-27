@@ -77,6 +77,16 @@ fn finish_turn(status: &str) {
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
+    if args[1..]
+        .iter()
+        .map(String::as_str)
+        .eq(["features", "list"])
+    {
+        if std::env::var("CODEX_STUB_LEGACY").as_deref() != Ok("1") {
+            println!("code_mode_host stable true");
+        }
+        return;
+    }
     if args.get(1).map(String::as_str) == Some("--version") {
         println!(
             "{}",
@@ -86,7 +96,7 @@ fn main() {
     }
     assert_eq!(args.get(1).map(String::as_str), Some("app-server"));
     let scenario = std::env::var("CODEX_STUB_SCENARIO").unwrap_or_else(|_| "stream".into());
-    log(&json!({"stubEvent":"argv", "args": &args[1..]}));
+    log(&json!({"stubEvent":"argv", "program":args[0], "args": &args[1..]}));
     let stdin = std::io::stdin();
     let mut approval = 0_u8;
     let mut child: Option<Child> = None;
@@ -103,9 +113,17 @@ fn main() {
         let method = message.get("method").and_then(Value::as_str);
         let id = message.get("id").cloned();
         match method {
-            Some("initialize") => send(
-                json!({"id":id,"result":{"serverInfo":{"name":"codex-stub","version":"0.166.0"}}}),
-            ),
+            Some("initialize") => {
+                let banner = std::env::var("CODEX_STUB_VERSION")
+                    .unwrap_or_else(|_| "codex-cli 0.166.0".into());
+                let version = banner.strip_prefix("codex-cli ").unwrap_or(&banner);
+                let result = if scenario == "bad-initialize" {
+                    Value::Null
+                } else {
+                    json!({"serverInfo":{"name":"codex-stub","version":version}})
+                };
+                send(json!({"id":id,"result":result}));
+            }
             Some("initialized") => {}
             Some("model/list") => send(json!({"id":id,"result":{"data":[
                 {"id":"gpt-stub","model":"gpt-stub","displayName":"GPT Stub","hidden":false,"isDefault":true,"defaultReasoningEffort":"medium","supportedReasoningEfforts":[{"reasoningEffort":"low","description":"Fast"},{"reasoningEffort":"medium","description":"Balanced"},{"reasoningEffort":"high","description":"Deep"}]},

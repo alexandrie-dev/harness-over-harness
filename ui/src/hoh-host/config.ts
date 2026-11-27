@@ -260,10 +260,9 @@ export function codexEffortOf(selection: unknown): string | null {
 
 function codexMessage(discovery: CodexDiscovery | null, requestFailure?: unknown): string | undefined {
   if (discovery === null) return requestFailure === undefined ? undefined : englishError(requestFailure, 'Failed to execute Codex CLI health check.');
-  if (!discovery.installed) return 'Codex CLI (`codex`) was not found on PATH.';
-  if (discovery.versionStatus !== 'supported') return 'This Codex CLI version is not supported by HoH.';
-  if (discovery.auth === 'unauthenticated') return 'Codex CLI is not authenticated. Run `codex login` and try again.';
   const detail = discovery.detail?.trim();
+  if (!discovery.installed) return englishError(detail, 'Codex CLI (`codex`) was not found on PATH.');
+  if (discovery.auth === 'unauthenticated') return 'Codex CLI is not authenticated. Run `codex login` and try again.';
   return detail ? englishError(detail, 'Codex CLI is installed but failed to run.') : undefined;
 }
 
@@ -271,8 +270,8 @@ export function codexProvider(discovery: CodexDiscovery | null, now: string, req
   const message = codexMessage(discovery, requestFailure);
   const ready = discovery === null
     ? requestFailure === undefined
-    : discovery.installed && discovery.versionStatus === 'supported'
-      && discovery.auth !== 'unauthenticated' && message === undefined && discovery.models.length > 0;
+    : discovery.installed && discovery.auth !== 'unauthenticated'
+      && message === undefined && discovery.models.length > 0;
   return {
     instanceId: CODEX_INSTANCE_ID,
     driver: CODEX_INSTANCE_ID,

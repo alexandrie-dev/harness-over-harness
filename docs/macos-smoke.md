@@ -2,10 +2,19 @@
 
 Проведите проверку на локальном Mac из отдельной учётной записи macOS, в которой
 HoH ещё не запускался. Это даёт чистое состояние Finder и HoH без удаления
-данных. Установите и авторизуйте реальный Codex CLI для этой учётной записи.
-Поддерживаемый диапазон указан в [адаптере Codex](../crates/hoh-harness-codex/src/version.rs).
-Расположение CLI должно быть доступно HoH из Finder, например
-`/opt/homebrew/bin` или `~/.local/bin`.
+данных. Установите актуальный полный пакет Codex CLI и войдите в Codex под этой
+учётной записью. HoH определяет совместимость по ответам `app-server`.
+
+```sh
+curl -fsSL https://chatgpt.com/codex/install.sh | sh
+"$HOME/.local/bin/codex" login
+```
+
+На macOS установщик создаёт ссылки на `codex` и `codex-code-mode-host` в
+`~/.local/bin`, который HoH добавляет в PATH при запуске из Finder. Codex
+запускает помощник из своей установки. Если установлен ещё один `codex`,
+сверьте результат `command -v codex` с путём к установленному CLI.
+[Установка Codex CLI](https://learn.chatgpt.com/docs/codex/cli#install-codex)
 
 ## Подготовка пакета
 
@@ -23,7 +32,8 @@ app="$qa_dir/HoH.app"
 uname -m
 sw_vers -productVersion
 command -v codex
-codex --version
+"$HOME/.local/bin/codex" --version
+test -x "$HOME/.local/bin/codex-code-mode-host"
 shasum -a 256 "$archive"
 file "$app/Contents/MacOS/hoh-desktop" "$app/Contents/MacOS/hoh"
 /usr/bin/codesign --verify --deep --strict "$app"
@@ -32,7 +42,8 @@ printf 'Проект: %s\n' "$qa_dir/project"
 /usr/bin/open -R "$app"
 ```
 
-Ожидаются `arm64` у системы и обоих исполняемых файлов, успешная проверка подписи
+Ожидаются `arm64` у системы и обоих исполняемых файлов HoH, версия полного
+пакета Codex и исполняемый `codex-code-mode-host`, успешная проверка подписи
 и выделенный в Finder пакет. В тестовой графической сессии не задавайте
 `HOH_ENGINE_PATH`, `HOH_TEST_ENGINE` или `HOH_WINDOW_PROFILE`. Если macOS
 блокирует открытие, запишите сообщение системы и результат проверки подписи.
@@ -47,9 +58,10 @@ printf 'Проект: %s\n' "$qa_dir/project"
    Проект появляется в окне. Отдельно откройте диалог повторно и отмените выбор
    через **Esc**. Список проектов сохраняет прежний состав.
 2. В новом чате проекта выберите Codex и режим **Supervised**. Попросите
-   прочитать `note.txt` и вывести его содержимое. Ожидайте потоковый ответ с
-   `QA-6819` и завершение хода. Появление Codex в окне и успешный ход подтверждают
-   обнаружение и авторизацию CLI при запуске из Finder.
+   выполнить `/bin/cat note.txt` в терминале проекта и вывести результат.
+   Если HoH запросит подтверждение команды, разрешите её один раз. Проверьте
+   выполнение `/bin/cat note.txt` и строку `QA-6819` в выводе инструмента,
+   затем дождитесь завершения хода.
 3. Двумя отдельными запросами попросите Codex выполнить команду, которая
    записывает маркер в файл рядом с папкой проекта. Используйте абсолютный
    путь из `$qa_dir` и разные имена `deny.txt` и `allow.txt`. Например,

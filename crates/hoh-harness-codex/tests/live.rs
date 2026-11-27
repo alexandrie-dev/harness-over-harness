@@ -70,6 +70,40 @@ async fn finish_turn(
 }
 
 #[tokio::test]
+#[ignore = "requires a complete Codex installation named by HOH_CODEX_SMOKE_BIN"]
+async fn real_codex_discovers_and_starts_without_sign_in() {
+    let executable = std::env::var_os("HOH_CODEX_SMOKE_BIN").expect("set Codex executable");
+    let temp = TempDir::new().expect("local protocol smoke workspace");
+    let codex_home = temp.path().join("codex");
+    std::fs::create_dir(&codex_home).unwrap();
+    let harness = CodexHarness::new(CodexConfig {
+        executable: executable.into(),
+        extra_env: vec![
+            ("CODEX_HOME".into(), codex_home.to_str().unwrap().into()),
+            ("HOME".into(), temp.path().to_str().unwrap().into()),
+        ],
+        ..CodexConfig::default()
+    });
+    let (discovery, status) = harness.discover_with_status().await.unwrap();
+    assert_eq!(
+        status,
+        hoh_external_harness::VersionStatus::Supported,
+        "{discovery:?}"
+    );
+    assert_ne!(discovery.auth, AuthState::Authenticated, "{discovery:?}");
+    let model = discovery.models.first().expect("offline model catalog");
+    let started = harness
+        .start_with_access(
+            params(&temp, model.id.clone(), None, None),
+            AccessMode::Confirm,
+        )
+        .await
+        .expect("start a real Codex thread");
+    assert!(!started.result.native_session_id.as_str().is_empty());
+    started.session.terminate(Duration::from_secs(1)).await;
+}
+
+#[tokio::test]
 #[ignore = "uses the installed authenticated codex; run scripts/cx-live-check.sh"]
 async fn real_codex_streams_approves_resumes_and_stops() {
     assert_eq!(std::env::var("HOH_CODEX_LIVE").as_deref(), Ok("1"));

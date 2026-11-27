@@ -1565,14 +1565,14 @@ test('Codex: app-server models and effort are offered; executor and exact mode a
   }), /coming soon/i);
   assert.equal(host.home.entries()[0].providerInstanceId, 'codex');
 
-  const unsupported = new FakeEngine({ codexDiscovery: {
-    executor: 'codex', installed: true, version: '0.200.0', versionStatus: 'unsupported',
-    auth: 'authenticated', detail: null, models: [{ id: 'future-model', isDefault: true }],
+  const incompatible = new FakeEngine({ codexDiscovery: {
+    executor: 'codex', installed: true, version: null, versionStatus: 'unknown',
+    auth: 'unknown', detail: 'Codex app-server initialize returned an invalid response.', models: [],
   } });
-  const unsupportedConfig = await connect(unsupported).client.call('server.getConfig', {});
-  const unsupportedCodex = unsupportedConfig.providers.find(provider => provider.instanceId === 'codex');
-  assert.equal(unsupportedCodex.status, 'error');
-  assert.match(unsupportedCodex.message, /not supported/);
+  const failedConfig = await connect(incompatible).client.call('server.getConfig', {});
+  const failedCodex = failedConfig.providers.find(provider => provider.instanceId === 'codex');
+  assert.equal(failedCodex.status, 'error');
+  assert.match(failedCodex.message, /initialize returned an invalid response/);
 });
 
 test('a restored global Codex selection remains the default provider and model', async () => {

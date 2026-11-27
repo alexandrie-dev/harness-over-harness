@@ -1750,22 +1750,39 @@ async fn late_interrupt_error_does_not_close_replacement_turn() {
 }
 
 #[tokio::test]
-async fn unsupported_and_unrecognized_versions_never_start_a_session() {
-    for banner in ["codex-cli 0.167.0", "not a version"] {
+async fn compatible_app_servers_start_regardless_of_version_metadata() {
+    for (banner, expected) in [
+        ("codex-cli 0.110.0", Some("0.110.0")),
+        ("codex-cli 0.172.0", Some("0.172.0")),
+        ("codex-cli 1.100.0-alpha.7", Some("1.100.0-alpha.7")),
+        ("not a version", None),
+    ] {
         let temp = TempDir::new().unwrap();
-        let config = CodexConfig {
+        let harness = CodexHarness::new(CodexConfig {
             executable: stub(),
             extra_env: vec![("CODEX_STUB_VERSION".into(), banner.into())],
             ..CodexConfig::default()
-        };
-        let harness = CodexHarness::new(config);
-        let (_, status) = harness.discover_with_status().await.unwrap();
-        assert_ne!(status, VersionStatus::Supported);
-        assert!(
-            harness
-                .start_with_access(start_params(&temp, None), AccessMode::Confirm)
-                .await
-                .is_err()
-        );
+        });
+        let (discovery, status) = harness.discover_with_status().await.unwrap();
+        assert_eq!(status, VersionStatus::Supported);
+        assert_eq!(discovery.version.as_deref(), expected);
+        let started = harness
+            .start_with_access(start_params(&temp, None), AccessMode::Confirm)
+            .await
+            .unwrap();
+        started.session.terminate(Duration::ZERO).await;
     }
+}
+
+#[tokio::test]
+async fn an_invalid_initialize_response_fails_discovery_and_startup() {
+    let temp = TempDir::new().unwrap();
+    let (harness, _) = harness(&temp, "bad-initialize");
+    let (discovery, status) = harness.discover_with_status().await.unwrap();
+    assert_eq!(status, VersionStatus::Unknown);
+    assert!(discovery.detail.unwrap().contains("initialize"));
+    let Err(error) = harness.start_or_resume(start_params(&temp, None)).await else {
+        panic!("invalid handshake accepted");
+    };
+    assert_eq!(error.code, hoh_external_harness::code::PROTOCOL);
 }

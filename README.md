@@ -40,8 +40,17 @@ python3 scripts/build-desktop.py --build-dir target/macos
 Обе команды `cargo fetch` подготавливают зависимости. Сборка использует эти
 кэши офлайн и создаёт `target/macos/HoH-macos-arm64.zip`. Распакуйте архив и
 откройте `HoH.app` в Finder. Внутри приложения есть движок и локальная подпись
-для разработки. На Mac включён профиль внешних исполнителей. Установите
-поддерживаемый Codex CLI и выполните [приёмку на Apple Silicon](docs/macos-smoke.md).
+для разработки. На Mac включён профиль внешних исполнителей. Для работы с
+Codex установите или обновите полный пакет CLI и перезапустите HoH.
+
+```sh
+curl -fsSL https://chatgpt.com/codex/install.sh | sh
+"$HOME/.local/bin/codex" login
+```
+
+Codex запускает `codex-code-mode-host` из своей установки. Если вы
+указываете путь к CLI вручную, используйте бинарник из полного пакета.
+Проверьте запуск команд в HoH по [сценарию приёмки на Apple Silicon](docs/macos-smoke.md).
 
 ## Запуск
 

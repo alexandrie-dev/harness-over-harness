@@ -5,6 +5,7 @@
 //! stdio and persists only the thread id returned by that process.
 
 mod harness;
+mod installation;
 mod session;
 pub mod version;
 
@@ -24,7 +25,7 @@ pub const HARNESS_NAME: &str = "codex";
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", default, deny_unknown_fields)]
 pub struct Config {
-    /// The `codex` program; looked up in `PATH` when absent.
+    /// The Codex launcher. By default, search `PATH` and the standalone installation.
     pub executable: Option<String>,
     /// Accepted only for compatibility with hand-written profiles and ignored. Access is chosen
     /// by the privileged main-window method, never by package configuration.

@@ -2,7 +2,6 @@
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
-use std::process::Stdio;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -69,90 +68,6 @@ impl CodexHarness {
     pub fn new(config: CodexConfig) -> Self {
         Self { config }
     }
-}
-
-enum VersionCheck {
-    Supported(String),
-    NotInstalled,
-    Refused {
-        version: Option<String>,
-        message: String,
-    },
-}
-
-impl VersionCheck {
-    fn status(&self) -> VersionStatus {
-        match self {
-            Self::Supported(_) => VersionStatus::Supported,
-            Self::Refused {
-                version: Some(_), ..
-            } => VersionStatus::Unsupported,
-            Self::NotInstalled | Self::Refused { version: None, .. } => VersionStatus::Unknown,
-        }
-    }
-}
-
-async fn check_version(config: &CodexConfig) -> VersionCheck {
-    let mut command = tokio::process::Command::new(&config.executable);
-    command
-        .arg("--version")
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .kill_on_drop(true)
-        .envs(
-            config
-                .extra_env
-                .iter()
-                .filter(|(name, _)| !hoh_external_harness::supervisor::is_telegram_env(name))
-                .map(|(name, value)| (name, value)),
-        );
-    for (name, _) in std::env::vars_os() {
-        if name.to_string_lossy().starts_with("TELEGRAM_") {
-            command.env_remove(name);
-        }
-    }
-    let output = match tokio::time::timeout(config.version_timeout, command.output()).await {
-        Ok(Ok(output)) => output,
-        Ok(Err(error))
-            if matches!(
-                error.kind(),
-                std::io::ErrorKind::NotFound | std::io::ErrorKind::PermissionDenied
-            ) =>
-        {
-            return VersionCheck::NotInstalled;
-        }
-        Ok(Err(error)) => {
-            return VersionCheck::Refused {
-                version: None,
-                message: format!("Codex CLI не запускается: {error}"),
-            };
-        }
-        Err(_) => {
-            return VersionCheck::Refused {
-                version: None,
-                message: "Codex CLI не ответил на --version".to_owned(),
-            };
-        }
-    };
-    let mut banner = String::from_utf8_lossy(&output.stdout).into_owned();
-    if banner.trim().is_empty() {
-        banner = String::from_utf8_lossy(&output.stderr).into_owned();
-    }
-    let Some(parsed) = version::parse_version(&banner) else {
-        return VersionCheck::Refused {
-            version: None,
-            message: version::unrecognized_version_message(&banner),
-        };
-    };
-    let shown = version::format_version(parsed);
-    if !output.status.success() || !version::is_supported(parsed) {
-        return VersionCheck::Refused {
-            version: Some(shown.clone()),
-            message: version::unsupported_version_message(&shown),
-        };
-    }
-    VersionCheck::Supported(shown)
 }
 
 fn app_server_spec(config: &CodexConfig, cwd: &Path, trusted: bool) -> ProcessSpec {
@@ -276,41 +191,31 @@ fn models_from(values: Vec<Value>) -> Vec<HarnessModel> {
         .collect()
 }
 
-async fn discover_codex(config: &CodexConfig) -> (Discovery, VersionStatus) {
-    let checked = check_version(config).await;
-    let status = checked.status();
-    let version = match checked {
-        VersionCheck::Supported(version) => version,
-        VersionCheck::NotInstalled => {
-            return (
-                Discovery {
-                    installed: false,
-                    version: None,
-                    auth: AuthState::Unknown,
-                    models: Vec::new(),
-                    detail: Some(version::not_installed_message()),
-                    failure: None,
-                },
-                status,
-            );
-        }
-        VersionCheck::Refused { version, message } => {
-            return (
-                Discovery {
-                    installed: true,
-                    version,
-                    auth: AuthState::Unknown,
-                    models: Vec::new(),
-                    detail: Some(hoh_external_harness::redact::redact(&message)),
-                    failure: None,
-                },
-                status,
-            );
-        }
+fn unavailable_discovery(message: String) -> (Discovery, VersionStatus) {
+    (
+        Discovery {
+            installed: false,
+            version: None,
+            auth: AuthState::Unknown,
+            models: Vec::new(),
+            detail: Some(message),
+            failure: None,
+        },
+        VersionStatus::Unknown,
+    )
+}
+
+async fn discover_codex(config: CodexConfig) -> (Discovery, VersionStatus) {
+    let config = match config.with_installation().await {
+        Ok(config) => config,
+        Err(error) => return unavailable_discovery(error.message),
     };
     let cwd = std::env::temp_dir();
-    let probe = match spawn(config, &cwd) {
+    let probe = match spawn(&config, &cwd) {
         Ok(supervisor) => CodexSession::probe(supervisor, config.request_timeout).await,
+        Err(error) if error.code == code::NOT_INSTALLED => {
+            return unavailable_discovery(version::not_installed_message());
+        }
         Err(error) => Err(error),
     };
     match probe {
@@ -319,7 +224,7 @@ async fn discover_codex(config: &CodexConfig) -> (Discovery, VersionStatus) {
             (
                 Discovery {
                     installed: true,
-                    version: Some(version),
+                    version: probe.version,
                     auth,
                     models: models_from(probe.models),
                     detail: (auth == AuthState::Unauthenticated).then(|| {
@@ -328,19 +233,19 @@ async fn discover_codex(config: &CodexConfig) -> (Discovery, VersionStatus) {
                     }),
                     failure: None,
                 },
-                status,
+                VersionStatus::Supported,
             )
         }
         Err(error) => (
             Discovery {
                 installed: true,
-                version: Some(version),
+                version: None,
                 auth: AuthState::Unknown,
                 models: Vec::new(),
                 detail: Some(hoh_external_harness::redact::redact(&error.message)),
                 failure: None,
             },
-            status,
+            VersionStatus::Unknown,
         ),
     }
 }
@@ -452,18 +357,7 @@ impl ExternalHarness for CodexHarness {
     fn commands(&self, cwd: PathBuf) -> BoxFuture<'static, HarnessResult<HarnessCommands>> {
         let config = self.config.clone();
         Box::pin(async move {
-            match check_version(&config).await {
-                VersionCheck::Supported(_) => {}
-                VersionCheck::NotInstalled => {
-                    return Err(HarnessFailure::new(
-                        code::NOT_INSTALLED,
-                        version::not_installed_message(),
-                    ));
-                }
-                VersionCheck::Refused { message, .. } => {
-                    return Err(HarnessFailure::new(code::UNSUPPORTED_VERSION, message));
-                }
-            }
+            let config = config.with_installation().await?;
             let cwd_string = cwd.to_str().ok_or_else(|| {
                 HarnessFailure::new(code::IO, "The workspace folder is not a UTF-8 path.")
             })?;
@@ -488,6 +382,7 @@ impl ExternalHarness for CodexHarness {
     fn rate_limits(&self) -> BoxFuture<'static, HarnessResult<Option<Vec<ExecutorLimitWindow>>>> {
         let config = self.config.clone();
         Box::pin(async move {
+            let config = config.with_installation().await?;
             let cwd = std::env::temp_dir();
             let supervisor = spawn(&config, &cwd)?;
             let response = CodexSession::read_rate_limits(
@@ -502,14 +397,14 @@ impl ExternalHarness for CodexHarness {
 
     fn discover(&self) -> BoxFuture<'static, HarnessResult<Discovery>> {
         let config = self.config.clone();
-        Box::pin(async move { Ok(discover_codex(&config).await.0) })
+        Box::pin(async move { Ok(discover_codex(config).await.0) })
     }
 
     fn discover_with_status(
         &self,
     ) -> BoxFuture<'static, HarnessResult<(Discovery, VersionStatus)>> {
         let config = self.config.clone();
-        Box::pin(async move { Ok(discover_codex(&config).await) })
+        Box::pin(async move { Ok(discover_codex(config).await) })
     }
 
     fn start_or_resume(&self, params: StartParams) -> BoxFuture<'static, HarnessResult<Started>> {
@@ -538,18 +433,7 @@ impl ExternalHarness for CodexHarness {
                     "Plan mode for Codex is coming soon",
                 ));
             }
-            let version = match check_version(&config).await {
-                VersionCheck::Supported(version) => version,
-                VersionCheck::NotInstalled => {
-                    return Err(HarnessFailure::new(
-                        code::NOT_INSTALLED,
-                        version::not_installed_message(),
-                    ));
-                }
-                VersionCheck::Refused { message, .. } => {
-                    return Err(HarnessFailure::new(code::UNSUPPORTED_VERSION, message));
-                }
-            };
+            let config = config.with_installation().await?;
             let cwd = PathBuf::from(&params.cwd);
             let mut process = app_server_spec(&config, &cwd, trusted);
             process.cwd_identity = params.cwd_identity;
@@ -568,17 +452,7 @@ impl ExternalHarness for CodexHarness {
                     resume,
                 },
             )
-            .await
-            .map_err(|error| {
-                if error.code == code::PROTOCOL {
-                    HarnessFailure::new(
-                        error.code,
-                        version::protocol_message(&version, &error.message),
-                    )
-                } else {
-                    error
-                }
-            })?;
+            .await?;
             let (session, events, thread_id, resumed) = started;
             Ok(Started {
                 result: StartResult {
