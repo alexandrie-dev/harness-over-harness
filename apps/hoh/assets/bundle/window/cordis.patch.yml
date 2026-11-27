@@ -101,6 +101,9 @@
     - id: harness-pi
       name: 'hoh:harness-pi'
 
+    - id: harness-kimi
+      name: 'hoh:harness-kimi'
+
     - id: external-harness-window
       name: 'hoh:external-harness-window'
 

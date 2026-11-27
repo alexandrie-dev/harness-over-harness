@@ -18,8 +18,12 @@
 // (`assets.persistChatAttachments`) until their message goes to the engine with them (`session/prompt`).
 import { WorkspaceGit } from './workspace-git.ts';
 import {
-  accessModeOf, CLAUDE_INSTANCE_ID, CODEX_INSTANCE_ID, PI_INSTANCE_ID, EXECUTOR_INSTANCES, HOH_EXECUTORS, isHohExecutor, piModel, piProvider, claudeProvider, codexEffortOf, codexProvider, defaultClaudeModel, defaultCodexModel, effortOf, listedClaudeModel, listedCodexModel, runtimeModeOf, serverConfig, serverSettings, type ClaudeDiscovery, type CodexDiscovery, type HarnessDiscovery, type HohAccessMode, type HohExecutor, type T3RuntimeMode,
-  isAccessMode, KEYBINDINGS_LOCATION, presentProvider, type EnvironmentPlatform, type T3InteractionMode,
+  accessModeOf, CLAUDE_INSTANCE_ID, CODEX_INSTANCE_ID, EXECUTOR_INSTANCES, FULL_ACCESS_EXECUTORS, FULL_ACCESS_LABELS, HOH_EXECUTORS,
+  claudeProvider, codexEffortOf, codexProvider, defaultClaudeModel, defaultCodexModel, effortOf,
+  fullAccessModel, fullAccessProvider, isAccessMode, isFullAccessExecutor, isHohExecutor, KEYBINDINGS_LOCATION,
+  listedClaudeModel, listedCodexModel, presentProvider, runtimeModeOf, serverConfig, serverSettings,
+  type ClaudeDiscovery, type CodexDiscovery, type EnvironmentPlatform, type FullAccessExecutor, type HarnessDiscovery,
+  type HohAccessMode, type HohExecutor, type T3InteractionMode, type T3RuntimeMode,
 } from './config.ts';
 import { usagePricing, usageSummary, type UsageSummaryInput } from './usage.ts';
 import { explicitTitlesFromPrompt, fallbackTitleSeed, isAttachmentBootstrapTitle, shortGeneratedTitle, shortTitleFromPrompt, titleGenerationPrompt, titleSource } from './chat-title.ts';
@@ -217,10 +221,10 @@ const instanceOf = (executor: HohExecutor) => EXECUTOR_INSTANCES[executor];
 function requireInteraction(executor: HohExecutor, interaction: unknown) {
   if (interaction !== 'plan') return;
   if (executor === 'codex') throw new Error('Plan mode for Codex is coming soon.');
-  if (executor === 'pi') throw new Error('Pi Agent does not support Plan mode in HoH.');
+  if (isFullAccessExecutor(executor)) throw new Error(`${FULL_ACCESS_LABELS[executor]} does not support Plan mode in HoH.`);
 }
 
-const PI_ACCESS_REQUIRED = 'Choose Full access in the composer to use Pi Agent.';
+const fullAccessRequired = (executor: FullAccessExecutor) => `Choose Full access in the composer to use ${FULL_ACCESS_LABELS[executor]}.`;
 const exactMode = (value: unknown): HohAccessMode | null => value === 'plan' ? 'confirm' : value === 'acceptEdits' ? 'auto-accept-edits' : ['confirm', 'auto-accept-edits', 'auto', 'full'].includes(String(value)) ? value as HohAccessMode : null;
 /** What the executor is actually running wins over a requested mode waiting for the next turn. */
 const effectiveSessionMode = (session: any, fallback: HohAccessMode): HohAccessMode =>
@@ -324,8 +328,8 @@ export class HohHost {
   private readonly git: WorkspaceGit;
   private claudeDiscovery: ClaudeDiscovery | null = null;
   private codexDiscovery: CodexDiscovery | null = null;
-  private piDiscovery: HarnessDiscovery | null = null;
-  private piDiscoveryInFlight?: { generation: number; promise: Promise<void> };
+  private fullAccessDiscovery: Record<FullAccessExecutor, HarnessDiscovery | null> = { pi: null, kimi: null };
+  private fullAccessDiscoveryInFlight: Partial<Record<FullAccessExecutor, { generation: number; promise: Promise<void> }>> = {};
   /** Undefined while the startup probe is pending; set only when its bounded retry lane ends. */
   private discoveryFailure: unknown | undefined;
   private codexDiscoveryFailure: unknown | undefined;
@@ -881,7 +885,7 @@ export class HohHost {
 
   private iso() { return new Date(this.now()).toISOString(); }
   private model(executor: HohExecutor = this.selectedExecutor) {
-    if (executor === 'pi') return piModel(this.piDiscovery, this.selectedModel);
+    if (isFullAccessExecutor(executor)) return fullAccessModel(executor, this.fullAccessDiscovery[executor], this.selectedModel);
     return executor === 'codex'
       ? listedCodexModel(this.codexDiscovery, this.selectedModel) ?? defaultCodexModel(this.codexDiscovery)
       : listedClaudeModel(this.claudeDiscovery, this.selectedModel) ?? defaultClaudeModel(this.claudeDiscovery);
@@ -1342,7 +1346,7 @@ export class HohHost {
     // session inventory and prompt traffic.
     this.discoveryStartedAt = this.now();
     const discoveryGeneration = this.discoveryGeneration;
-    void this.readPiDiscovery(discoveryGeneration);
+    for (const executor of FULL_ACCESS_EXECUTORS) void this.readFullAccessDiscovery(executor, discoveryGeneration);
     void this.loadConfiguration(discoveryGeneration).then(discovered => {
       if (!discovered && discoveryGeneration === this.discoveryGeneration) void this.retryConfiguration(discoveryGeneration);
     });
@@ -1435,20 +1439,21 @@ export class HohHost {
     return false;
   }
 
-  private readPiDiscovery(generation = this.discoveryGeneration): Promise<void> {
-    if (this.piDiscoveryInFlight?.generation === generation) return this.piDiscoveryInFlight.promise;
-    const promise = this.engine.request('hoh/executor/discover', { executor: 'pi' })
+  private readFullAccessDiscovery(executor: FullAccessExecutor, generation = this.discoveryGeneration): Promise<void> {
+    const inFlight = this.fullAccessDiscoveryInFlight[executor];
+    if (inFlight?.generation === generation) return inFlight.promise;
+    const promise = this.engine.request('hoh/executor/discover', { executor })
       .catch(() => null)
       .then(found => {
         if (this.stopped || generation !== this.discoveryGeneration) return;
-        this.piDiscovery = found;
-        if (found !== null) this.updateCatalog('pi');
+        this.fullAccessDiscovery[executor] = found;
+        if (found !== null) this.updateCatalog(executor);
         this.configChanged();
       })
       .finally(() => {
-        if (this.piDiscoveryInFlight?.promise === promise) this.piDiscoveryInFlight = undefined;
+        if (this.fullAccessDiscoveryInFlight[executor]?.promise === promise) delete this.fullAccessDiscoveryInFlight[executor];
       });
-    this.piDiscoveryInFlight = { generation, promise };
+    this.fullAccessDiscoveryInFlight[executor] = { generation, promise };
     return promise;
   }
 
@@ -1504,7 +1509,7 @@ export class HohHost {
   }
 
   private async onEngineReady() {
-    void this.readPiDiscovery();
+    for (const executor of FULL_ACCESS_EXECUTORS) void this.readFullAccessDiscovery(executor);
     // Inventory is independent of provider discovery and the global access read. In particular,
     // a slow CLI probe after the engine connects must not delay the authoritative welcome and rows.
     const discovery = this.readDiscovery().then(() => this.configChanged());
@@ -1577,7 +1582,7 @@ export class HohHost {
       // Wait for an in-flight native catalog before publishing a default for an older binding.
       if (model === undefined) {
         if (executor === 'codex' && this.codexDiscovery === null) await this.discoveryInFlight?.promise;
-        if (executor === 'pi' && this.piDiscovery === null) await this.piDiscoveryInFlight?.promise;
+        if (isFullAccessExecutor(executor) && this.fullAccessDiscovery[executor] === null) await this.fullAccessDiscoveryInFlight[executor]?.promise;
       }
       model ??= this.model(executor);
 
@@ -1631,7 +1636,7 @@ export class HohHost {
       discovered.sideChat = this.readSideChat(session.sideChat);
       this.applyThreadMetadata(discovered);
       this.threads.set(session.id, discovered);
-      if ((executor === 'pi' ? this.piDiscovery : executor === 'codex' ? this.codexDiscovery : this.claudeDiscovery) === null) this.catalogPending.add(session.id);
+      if ((isFullAccessExecutor(executor) ? this.fullAccessDiscovery[executor] : executor === 'codex' ? this.codexDiscovery : this.claudeDiscovery) === null) this.catalogPending.add(session.id);
       inventoryChanged = true;
       // During the first load the metadata is already in the forthcoming snapshot. A retry happens after that
       // snapshot, so it needs an update for each conversation that arrived late.
@@ -2380,7 +2385,7 @@ export class HohHost {
       availableEditors: this.availableEditors,
       claudeDiscovery: this.claudeDiscovery,
       codexDiscovery: this.codexDiscovery,
-      piDiscovery: this.piDiscovery,
+      fullAccessDiscovery: this.fullAccessDiscovery,
       discoveryFailure: this.discoveryFailure,
       codexDiscoveryFailure: this.codexDiscoveryFailure,
       defaultMode: this.defaultMode,
@@ -2473,7 +2478,7 @@ export class HohHost {
       return await this.withSelectionMutation(async () => {
         const executor = executorOf(providerInstanceId ?? instanceOf(this.selectedExecutor));
         requireInteraction(executor, interaction);
-        if (executor === 'pi' && mode !== 'full-access') throw new Error(PI_ACCESS_REQUIRED);
+        if (isFullAccessExecutor(executor) && mode !== 'full-access') throw new Error(fullAccessRequired(executor));
         const chosenModel = model ?? this.model(executor);
         const chosenMode = accessModeOf(mode ?? runtimeModeOf(this.defaultMode));
         const already = this.threads.get(threadId);
@@ -2713,7 +2718,7 @@ export class HohHost {
     await this.requireAccess();
     const processGeneration = this.accessProcessGeneration;
     const wanted = accessModeOf(mode);
-    if (thread.executor === 'pi' && wanted !== 'full') throw new Error(PI_ACCESS_REQUIRED);
+    if (isFullAccessExecutor(thread.executor) && wanted !== 'full') throw new Error(fullAccessRequired(thread.executor));
     this.modeRevision++;
     // thread.mode describes the running launch; the engine may have a different pending choice.
     // Always submit the person's choice, including a return to the currently displayed mode.
@@ -3781,7 +3786,11 @@ export class HohHost {
             codexProvider(this.codexDiscovery, this.iso(), this.codexDiscoveryFailure),
             preferences(),
           );
-          const pi = () => presentProvider(piProvider(this.piDiscovery, this.iso(), this.mode !== null), preferences());
+          const fullAccess = (executor: FullAccessExecutor) => presentProvider(
+            fullAccessProvider(executor, this.fullAccessDiscovery[executor], this.iso(), this.mode !== null),
+            preferences(),
+          );
+          const requested = payload?.instanceId;
           // The composer's folder (T3's workspace snapshot): `/` and `$` from its selected executor.
           const cwd = typeof payload?.cwd === 'string' ? payload.cwd.trim() : '';
           if (cwd && payload?.instanceId === CODEX_INSTANCE_ID) {
@@ -3793,21 +3802,23 @@ export class HohHost {
             if (this.claudeDiscovery === null) await this.readDiscovery();
             return { providers: [{ ...claude(), workspaceSnapshots: [await this.workspaceSnapshot(cwd, 'claude')] }] };
           }
-          if (cwd && payload?.instanceId === PI_INSTANCE_ID) {
-            if (this.piDiscovery === null) await this.readPiDiscovery();
-            return { providers: [{ ...pi(), workspaceSnapshots: [await this.workspaceSnapshot(cwd, 'pi')] }] };
+          if (cwd && isFullAccessExecutor(requested)) {
+            if (this.fullAccessDiscovery[requested] === null) await this.readFullAccessDiscovery(requested);
+            return { providers: [{ ...fullAccess(requested), workspaceSnapshots: [await this.workspaceSnapshot(cwd, requested)] }] };
           }
           if (cwd && payload?.instanceId === undefined) {
             if (this.claudeDiscovery === null || this.codexDiscovery === null) await this.readDiscovery();
             return { providers: [
               { ...claude(), workspaceSnapshots: [await this.workspaceSnapshot(cwd, 'claude')] },
               { ...codex(), workspaceSnapshots: [await this.workspaceSnapshot(cwd, 'codex')] },
-              { ...pi(), workspaceSnapshots: [await this.workspaceSnapshot(cwd, 'pi')] },
+              ...await Promise.all(FULL_ACCESS_EXECUTORS.map(async executor => ({
+                ...fullAccess(executor), workspaceSnapshots: [await this.workspaceSnapshot(cwd, executor)],
+              }))),
             ] };
           }
-          if (payload?.instanceId === PI_INSTANCE_ID) {
-            await this.readPiDiscovery();
-            return { providers: [pi()] };
+          if (isFullAccessExecutor(requested)) {
+            await this.readFullAccessDiscovery(requested);
+            return { providers: [fullAccess(requested)] };
           }
           // Welcome mounts with an automatic empty refresh. While startup is pending it is an
           // observer of that same bounded lane, not a user's request to replace it or fail early.
@@ -3819,7 +3830,7 @@ export class HohHost {
             return { providers: [
               claude(),
               codex(),
-              pi(),
+              ...FULL_ACCESS_EXECUTORS.map(fullAccess),
             ] };
           }
           const generation = ++this.discoveryGeneration;
@@ -3827,13 +3838,13 @@ export class HohHost {
           this.discoveryPending = true;
           this.discoveryFailure = undefined;
           this.codexDiscoveryFailure = undefined;
-          void this.readPiDiscovery(generation);
+          for (const executor of FULL_ACCESS_EXECUTORS) void this.readFullAccessDiscovery(executor, generation);
           if (!await this.readDiscovery(generation) && generation === this.discoveryGeneration) this.finishDiscoveryFailure(startedAt);
           this.configChanged();
           return { providers: [
             claude(),
             codex(),
-            pi(),
+            ...FULL_ACCESS_EXECUTORS.map(fullAccess),
           ] };
         },
         'orchestration.dispatchCommand': (command: any) => this.dispatch(command ?? {}),

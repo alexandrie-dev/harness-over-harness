@@ -82,7 +82,7 @@ export const HIDDEN_COMPONENTS: Readonly<Record<string, readonly string[]>> = {
 };
 
 /** Providers показывает встроенные харнессы HoH. */
-export const VISIBLE_PROVIDER_DRIVERS: readonly string[] = ['claudeAgent', 'codex', 'pi'];
+export const VISIBLE_PROVIDER_DRIVERS: readonly string[] = ['claudeAgent', 'codex', 'pi', 'kimi'];
 
 /** Элементы, которые T3 рисует без условия. */
 export const HIDDEN_SELECTORS: readonly string[] = [

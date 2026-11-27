@@ -296,7 +296,7 @@ fn session_of(action: &Value) -> String {
 /// Exact executors whose choices the person makes in the main T3 window. Unknown future names do
 /// not inherit this grant.
 pub const MAIN_WINDOW_EXECUTOR: &str = "claude";
-const MAIN_WINDOW_EXECUTORS: [&str; 3] = [MAIN_WINDOW_EXECUTOR, "codex", "pi"];
+const MAIN_WINDOW_EXECUTORS: [&str; 4] = [MAIN_WINDOW_EXECUTOR, "codex", "pi", "kimi"];
 
 fn is_main_window_executor(executor: Option<&str>) -> bool {
     executor.is_some_and(|executor| MAIN_WINDOW_EXECUTORS.contains(&executor))
@@ -304,7 +304,7 @@ fn is_main_window_executor(executor: Option<&str>) -> bool {
 
 /// Privileged window requests whose confirmation is the person's action in the main window itself,
 /// without a separate confirmation window (founder 22.11 19:16, lead 22.11 20:43; as in T3): the
-/// executor's access mode, Claude or Codex chosen to answer, and the folder of a conversation it runs
+/// executor's access mode, executor chosen to answer, and the folder of a conversation it runs
 /// (`session_executor` — what the engine reports for that conversation). The built-in agent loop's
 /// model and folder keep their window. Only the main window may send these (`bridge::check_main`);
 /// the executor, the model and the SDK server never reach this path, and the engine's own request
