@@ -5,7 +5,6 @@ use crate::{
 };
 use hoh_session::SessionId;
 use hoh_session_persistence::SessionAlreadyOwnedError;
-use std::os::fd::AsRawFd;
 use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
 use std::{fs::File, sync::Mutex};
 pub const LEASE_FILENAME: &str = "session.lock";
@@ -33,21 +32,27 @@ impl SessionWriteLease {
                 (rustix::fs::OFlags::DIRECTORY | rustix::fs::OFlags::NOFOLLOW).bits() as i32,
             )
             .open(dir)?;
-        let anchored = format!("/proc/self/fd/{}/{}", directory.as_raw_fd(), LEASE_FILENAME);
         for _ in 0..3 {
             fs.hook(IoOperation::Open, &path, None, false, None).await?;
-            let file = tokio::fs::OpenOptions::new()
-                .write(true)
-                .create(true)
+            let directory = directory.try_clone()?;
+            let file = tokio::task::spawn_blocking(move || {
+                use rustix::fs::{Mode, OFlags, openat};
                 // Never follow a lock symlink or modify an existing file before ownership.
-                .custom_flags(
-                    (rustix::fs::OFlags::NOFOLLOW | rustix::fs::OFlags::NONBLOCK).bits() as i32,
+                openat(
+                    directory,
+                    LEASE_FILENAME,
+                    OFlags::WRONLY
+                        | OFlags::CREATE
+                        | OFlags::NOFOLLOW
+                        | OFlags::NONBLOCK
+                        | OFlags::CLOEXEC,
+                    Mode::from_bits_truncate(0o666),
                 )
-                .open(&anchored)
-                .await
-                .map_err(|e| fs_error(e, "open", &path, None))?
-                .into_std()
-                .await;
+                .map(File::from)
+                .map_err(std::io::Error::from)
+            })
+            .await?
+            .map_err(|e| fs_error(e, "open", &path, None))?;
             fs.hook(IoOperation::Open, &path, None, true, None).await?;
             let checked = async {
                 fs.hook(IoOperation::Flock, &path, None, false, None)

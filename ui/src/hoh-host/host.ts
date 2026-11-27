@@ -18,7 +18,7 @@
 // (`assets.persistChatAttachments`) until their message goes to the engine with them (`session/prompt`).
 import {
   accessModeOf, CLAUDE_INSTANCE_ID, CODEX_INSTANCE_ID, PI_INSTANCE_ID, EXECUTOR_INSTANCES, HOH_EXECUTORS, isHohExecutor, piModel, piProvider, claudeProvider, codexEffortOf, codexProvider, defaultClaudeModel, defaultCodexModel, effortOf, listedClaudeModel, listedCodexModel, runtimeModeOf, serverConfig, serverSettings, type ClaudeDiscovery, type CodexDiscovery, type HarnessDiscovery, type HohAccessMode, type HohExecutor, type T3RuntimeMode,
-  isAccessMode, type T3InteractionMode,
+  isAccessMode, type EnvironmentPlatform, type T3InteractionMode,
 } from './config.ts';
 import { usagePricing, usageSummary, type UsageSummaryInput } from './usage.ts';
 import type { EngineNotification, EngineQuestion, EngineQuestionAnswer, HohEngine, LocalImageAsset } from './engine.ts';
@@ -35,6 +35,7 @@ import {
 
 export interface HohHostOptions {
   readonly engine: HohEngine;
+  readonly platform?: EnvironmentPlatform;
   readonly now?: () => number;
   /** Folder shown as the project root until the engine names one. */
   readonly workspaceRoot?: string;
@@ -271,6 +272,7 @@ export function questionAnswer(question: EngineQuestion | undefined, answers: Re
 
 export class HohHost {
   private readonly engine: HohEngine;
+  private readonly platform: EnvironmentPlatform | undefined;
   private readonly now: () => number;
   private readonly throttleMs: number;
   private readonly loadRetryMs: number;
@@ -417,6 +419,7 @@ export class HohHost {
 
   constructor(options: HohHostOptions) {
     this.engine = options.engine;
+    this.platform = options.platform;
     this.now = options.now ?? Date.now;
     this.throttleMs = options.throttleMs ?? 40;
     this.loadRetryMs = options.loadRetryMs ?? 500;
@@ -2183,6 +2186,7 @@ export class HohHost {
   private config() {
     return serverConfig({
       cwd: this.workspaceRoot,
+      platform: this.platform,
       claudeDiscovery: this.claudeDiscovery,
       codexDiscovery: this.codexDiscovery,
       piDiscovery: this.piDiscovery,

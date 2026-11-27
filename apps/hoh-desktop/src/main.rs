@@ -3,19 +3,19 @@ use tauri::Manager;
 fn setup_application(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     // Tauri creates configured windows before setup, so probes can safely attach
     // observers to an already-loaded main WebView.
-    #[cfg(feature = "probe")]
+    #[cfg(all(feature = "probe", target_os = "linux"))]
     {
         hoh_desktop::probe::trace("setup:application:start");
         hoh_desktop::probe::setup(app)
     }
-    #[cfg(not(feature = "probe"))]
+    #[cfg(not(all(feature = "probe", target_os = "linux")))]
     {
         hoh_desktop::native::setup(app)
     }
 }
 
 fn main() {
-    #[cfg(feature = "probe")]
+    #[cfg(all(feature = "probe", target_os = "linux"))]
     hoh_desktop::probe::trace("process:start");
     let builder = tauri::Builder::default();
     #[cfg(target_os = "linux")]
@@ -26,6 +26,7 @@ fn main() {
         .on_permission_request(hoh_desktop::native::webview_permission)
         .invoke_handler(tauri::generate_handler![
             hoh_desktop::native::engine_request,
+            hoh_desktop::native::environment_platform,
             hoh_desktop::native::subscribe_engine_notifications,
             hoh_desktop::native::pick_folder,
             hoh_desktop::native::browse_folders,
@@ -61,7 +62,7 @@ fn main() {
                 tauri::RunEvent::Exit | tauri::RunEvent::ExitRequested { .. }
             );
             if exiting {
-                #[cfg(feature = "probe")]
+                #[cfg(all(feature = "probe", target_os = "linux"))]
                 hoh_desktop::probe::trace("process:exit-event");
                 if let Some(host) = app.try_state::<hoh_desktop::native::Host>() {
                     hoh_desktop::native::shutdown(app, &host);

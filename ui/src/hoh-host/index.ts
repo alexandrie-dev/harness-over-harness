@@ -7,6 +7,7 @@
 // T3 then opens `ws://hoh.local/ws?...` through `globalThis.WebSocket` and reads `/api/auth/session`
 // and `/.well-known/t3/environment` through `globalThis.fetch`; both are answered here, in memory.
 import type { HohEngine } from './engine.ts';
+import type { EnvironmentPlatform } from './config.ts';
 import { HohHost } from './host.ts';
 import { pluginInventory } from './plugin-inventory.ts';
 import { installHohFetch, installHohXhr } from './http.ts';
@@ -24,6 +25,7 @@ export const HOH_HOSTNAME = 'hoh.local';
 
 export interface InstallOptions extends WireServerOptions {
   readonly engine: HohEngine;
+  readonly platform?: EnvironmentPlatform;
   readonly hostname?: string;
   readonly pluginAuthoringSkill?: string;
   readonly pluginAuthoringGuide?: string;
@@ -32,11 +34,11 @@ export interface InstallOptions extends WireServerOptions {
 
 /** Start the host and put its socket and fetch in place. Returns the host and a function that undoes it. */
 export function installHohHost(options: InstallOptions) {
-  const host = new HohHost({ engine: options.engine });
+  const host = new HohHost({ engine: options.engine, platform: options.platform });
   const server = new WireServer(host.handlers(), options);
   const matches = socketMatcher(options.hostname ?? HOH_HOSTNAME);
   const restoreSocket = installHohWebSocket(server, matches, options.target);
-  const restoreFetch = installHohFetch(matches, options.target, (threadId, cursor) => host.readTimeline(threadId, cursor));
+  const restoreFetch = installHohFetch(matches, options.target, (threadId, cursor) => host.readTimeline(threadId, cursor), options.platform);
   // T3 uploads a picture's bytes with XMLHttpRequest to the address it was given; the host keeps them.
   const restoreXhr = installHohXhr(matches, (method, pathname, contentType, body) =>
     method === 'POST' ? host.receiveUpload(pathname, contentType, body) : Promise.resolve({ status: 404 }), options.target);

@@ -533,9 +533,13 @@ impl Host {
 
     /// [`start`](Self::start) with more variables in the engine's environment.
     fn start_with_env(workspace: &Workspace, env: &[(&str, &str)]) -> Self {
+        Self::start_profile(workspace, "window", env)
+    }
+
+    fn start_profile(workspace: &Workspace, profile: &str, env: &[(&str, &str)]) -> Self {
         let stderr = workspace.root.path().join("engine.stderr");
         let mut child = tokio::process::Command::new(env!("CARGO_BIN_EXE_hoh"))
-            .args(["--profile", "window"])
+            .args(["--profile", profile])
             .env_clear()
             .env("HOME", workspace.root.path())
             .env("DSH_HOME", workspace.root.path().join("home"))
@@ -2693,6 +2697,150 @@ async fn a_cold_claude_conversation_keeps_usage_and_stopped_turns_and_can_contin
             .has("--resume")
     );
     host.shutdown().await;
+}
+
+#[tokio::test]
+#[ignore = "set HOH_CODEX_STUB to the codex-stub binary built with --features stub"]
+async fn external_profile_runs_and_resumes_codex() {
+    const PROFILE: &str = "window-external";
+    const SESSION: &str = "window-codex";
+    let stub = PathBuf::from(std::env::var_os("HOH_CODEX_STUB").expect("HOH_CODEX_STUB"))
+        .canonicalize()
+        .expect("resolve codex-stub executable");
+    let workspace = Workspace::new();
+    let home = workspace.root.path().join("home");
+    let profile = home.join("profiles").join(PROFILE);
+    std::fs::create_dir(&profile).expect("external profile folder");
+    // The harness supplies a narrow environment to the process. Keep the record path local
+    // to the fixture without reaching around the harness's environment handling.
+    let wrapper = workspace.root.path().join("codex");
+    std::os::unix::fs::symlink(stub, wrapper.with_file_name("codex-stub-bin"))
+        .expect("link codex-stub");
+    std::fs::write(
+        &wrapper,
+        r#"#!/bin/sh
+CODEX_STUB_LOG="${0%/*}/codex-rpc.jsonl" exec "${0%/*}/codex-stub-bin" "$@"
+"#,
+    )
+    .expect("write Codex wrapper");
+    std::fs::set_permissions(&wrapper, std::fs::Permissions::from_mode(0o700))
+        .expect("Codex wrapper is executable");
+    std::fs::write(
+        profile.join("cordis.patch.yml"),
+        format!(
+            "- id: harness-codex\n  config:\n    executable: {}\n",
+            json!(wrapper)
+        ),
+    )
+    .expect("configure the Codex fixture");
+
+    let mut host = Host::start_profile(&workspace, PROFILE, &[]);
+    host.initialize(&workspace).await;
+    let request = host
+        .send(
+            "session/prompt",
+            json!({"sessionId": "no-executor", "contentBlocks": [{"type": "text", "text": "unused"}]}),
+        )
+        .await;
+    let (refused, approvals) = host.response(&request, None).await;
+    assert_eq!(approvals, 0);
+    assert!(
+        refused["error"]["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("no agent factory registered")),
+        "{refused}\n{}",
+        host.context(),
+    );
+
+    let choice = host
+        .privileged(
+            "hoh/executor/select",
+            json!({"executor": "codex", "model": "gpt-stub"}),
+            "allowed-once",
+        )
+        .await;
+    assert_eq!(choice["result"]["executor"], "codex", "{choice}");
+    assert_codex_stream(&mut host, SESSION, "first", "allowed-once").await;
+    let page = json!({"sessionId": SESSION, "limit": 1000});
+    let history = host.ok("session/events", page.clone()).await;
+    let events = history["events"].as_array().expect("session history");
+    let thread = events
+        .iter()
+        .rev()
+        .find(|event| {
+            event["type"] == "plugin:external-harness/session"
+                && event["data"]["harness"] == "codex"
+                && event["data"]["nativeSessionId"].is_string()
+        })
+        .and_then(|event| event["data"]["nativeSessionId"].as_str())
+        .expect("persisted Codex thread id");
+    // Resume is driven by the durable conversation binding even without a default executor.
+    host.select_engine_model().await;
+    host.shutdown().await;
+
+    let mut host = Host::start_profile(&workspace, PROFILE, &[]);
+    host.initialize(&workspace).await;
+    host.ok("session/resume", json!({"sessionId": SESSION}))
+        .await;
+    let reopened = host.ok("session/events", page).await;
+    assert!(
+        reopened["events"]
+            .as_array()
+            .expect("reopened history")
+            .starts_with(events)
+    );
+    assert_codex_stream(&mut host, SESSION, "second", "rejected").await;
+    host.shutdown().await;
+
+    let log = std::fs::read_to_string(wrapper.with_file_name("codex-rpc.jsonl"))
+        .expect("Codex fixture requests");
+    let requests = log
+        .lines()
+        .map(|line| serde_json::from_str::<Value>(line).expect("Codex request"))
+        .collect::<Vec<_>>();
+    let threads = requests
+        .iter()
+        .filter(|request| {
+            matches!(
+                request["method"].as_str(),
+                Some("thread/start" | "thread/resume")
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(threads.len(), 2, "{log}");
+    assert_eq!(threads[0]["method"], "thread/start", "{log}");
+    assert_eq!(threads[1]["method"], "thread/resume", "{log}");
+    assert_eq!(threads[1]["params"]["threadId"], thread, "{log}");
+    let decisions = requests
+        .iter()
+        .filter(|request| request["id"] == "approval-command" && request.get("method").is_none())
+        .filter_map(|reply| reply["result"]["decision"].as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(decisions, ["accept", "decline"], "{log}");
+}
+
+async fn assert_codex_stream(host: &mut Host, session: &str, prompt: &str, outcome: &str) {
+    let from = host.frames.len();
+    let approvals = host.turn(session, prompt, Some(outcome)).await;
+    assert_eq!(approvals.len(), 1, "{}", host.context());
+    assert_eq!(approvals[0].tool_name, "bash");
+    let streamed = host.frames[from..]
+        .iter()
+        .filter(|frame| {
+            frame["method"] == "session.assistant-stream"
+                && frame["params"]["sessionId"] == session
+                && frame["params"]["frame"]["type"] == "chunk"
+                && frame["params"]["frame"]["chunk"]["type"] == "text-delta"
+        })
+        .filter_map(|frame| frame["params"]["frame"]["chunk"]["text"].as_str())
+        .collect::<String>();
+    assert_eq!(streamed, "part done", "{}", host.context());
+    assert_eq!(
+        host.turn_end(session)["kind"],
+        "completed",
+        "{}",
+        host.context()
+    );
 }
 
 /// Финальное ревью Fable, C. The choices the window saved (`external-harness.json` next to the

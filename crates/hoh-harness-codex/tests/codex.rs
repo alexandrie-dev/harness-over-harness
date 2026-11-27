@@ -85,6 +85,51 @@ fn lines(path: &Path) -> Vec<Value> {
         .collect()
 }
 
+fn child_is_running(pid: u32) -> bool {
+    assert_ne!(pid, 0, "the fixture did not start a child");
+    let probe = std::process::Command::new("/bin/ps")
+        .args(["-p", &pid.to_string(), "-o", "state="])
+        .env_clear()
+        .output()
+        .expect("read process state");
+    assert!(probe.stderr.is_empty(), "ps failed for {pid}: {probe:?}");
+    let state = probe
+        .stdout
+        .iter()
+        .copied()
+        .find(|byte| !byte.is_ascii_whitespace());
+    match (probe.status.code(), state) {
+        (Some(1), None) => false,
+        (Some(0), Some(state)) => !matches!(state, b'Z' | b'X'),
+        _ => panic!("ps failed for {pid}: {probe:?}"),
+    }
+}
+
+async fn running_child(log: &Path) -> u32 {
+    let pid = tokio::time::timeout(Duration::from_secs(3), async {
+        loop {
+            if let Some(pid) = lines(log).iter().find_map(|line| line["childPid"].as_u64()) {
+                return u32::try_from(pid).expect("fixture child PID fits in u32");
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("the fixture reported a child PID");
+    assert!(child_is_running(pid), "fixture child {pid} never ran");
+    pid
+}
+
+async fn assert_child_stopped(pid: u32, message: &str) {
+    tokio::time::timeout(Duration::from_secs(3), async {
+        while child_is_running(pid) {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .unwrap_or_else(|_| panic!("{message}: child {pid} survived"));
+}
+
 async fn event(events: &mut tokio::sync::mpsc::Receiver<HarnessEvent>) -> HarnessEvent {
     tokio::time::timeout(Duration::from_secs(3), events.recv())
         .await
@@ -977,6 +1022,13 @@ async fn foreign_thread_requests_and_resolutions_fail_before_showing_a_card() {
             })
             .await
             .unwrap();
+        let child = if scenario == "foreign-thread-request" {
+            let child = running_child(&log).await;
+            fs::write(log.with_extension("release"), b"send the foreign request").unwrap();
+            Some(child)
+        } else {
+            None
+        };
         protocol_end_without_a_request_card(&mut started.events, scenario).await;
         if let Some(forbidden_id) = forbidden_id {
             assert!(
@@ -987,21 +1039,8 @@ async fn foreign_thread_requests_and_resolutions_fail_before_showing_a_card() {
                 "{scenario}: a result escaped for an invalid request"
             );
         }
-        if scenario == "foreign-thread-request" {
-            let child = lines(&log)
-                .iter()
-                .find_map(|line| line.get("childPid").and_then(Value::as_u64))
-                .expect("foreign-request fixture child");
-            let start = Instant::now();
-            while Path::new(&format!("/proc/{child}")).exists()
-                && start.elapsed() < Duration::from_secs(3)
-            {
-                tokio::time::sleep(Duration::from_millis(20)).await;
-            }
-            assert!(
-                !Path::new(&format!("/proc/{child}")).exists(),
-                "foreign request protocol failure left owned child {child} running"
-            );
+        if let Some(child) = child {
+            assert_child_stopped(child, "foreign request protocol failure").await;
         }
     }
 }
@@ -1398,26 +1437,10 @@ async fn terminate_removes_the_process_tree_without_a_native_interrupt() {
         })
         .await
         .unwrap();
-    while !lines(&log)
-        .iter()
-        .any(|line| line.get("childPid").is_some())
-    {
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
-    let child = lines(&log)
-        .iter()
-        .find_map(|line| line.get("childPid").and_then(Value::as_u64))
-        .unwrap();
+    let child = running_child(&log).await;
     let start = Instant::now();
     started.session.terminate(Duration::from_millis(200)).await;
-    while Path::new(&format!("/proc/{child}")).exists() && start.elapsed() < Duration::from_secs(3)
-    {
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
-    assert!(
-        !Path::new(&format!("/proc/{child}")).exists(),
-        "child {child} survived"
-    );
+    assert_child_stopped(child, "Codex termination").await;
     assert!(start.elapsed() < Duration::from_secs(3));
     let _ = event(&mut started.events).await;
 }
@@ -1441,19 +1464,7 @@ async fn early_interrupt_waits_for_turn_started_after_result_and_reaps_process_t
             })
             .await
     });
-    while !lines(&log).iter().any(|line| {
-        line.get("method") == Some(&Value::String("turn/start".into()))
-            && line.get("childPid").is_none()
-    }) || !lines(&log)
-        .iter()
-        .any(|line| line.get("childPid").is_some())
-    {
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
-    let child = lines(&log)
-        .iter()
-        .find_map(|line| line.get("childPid").and_then(Value::as_u64))
-        .unwrap();
+    let child = running_child(&log).await;
 
     started.session.interrupt().await.unwrap();
     prompt.await.unwrap().unwrap();
@@ -1499,17 +1510,8 @@ async fn early_interrupt_waits_for_turn_started_after_result_and_reaps_process_t
         Some(&serde_json::json!({"threadId":"thread-stub","turnId":"turn-stub"}))
     );
 
-    let stopped_at = Instant::now();
     started.session.terminate(Duration::from_millis(200)).await;
-    while Path::new(&format!("/proc/{child}")).exists()
-        && stopped_at.elapsed() < Duration::from_secs(3)
-    {
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
-    assert!(
-        !Path::new(&format!("/proc/{child}")).exists(),
-        "child {child} survived early Stop"
-    );
+    assert_child_stopped(child, "early Stop").await;
 }
 
 #[tokio::test]

@@ -81,7 +81,13 @@ impl ExecAcknowledgement {
     fn create_named(files: &LinuxLaunchFiles, name: &str) -> Result<Self, BoxError> {
         use rustix::fs::{Mode, OFlags};
         let path = files.directory.join(name);
+        #[cfg(not(target_os = "macos"))]
         rustix::fs::mkfifoat(rustix::fs::CWD, &path, Mode::from_bits_truncate(0o600))?;
+        #[cfg(target_os = "macos")]
+        nix::unistd::mkfifo(
+            &path,
+            nix::sys::stat::Mode::S_IRUSR | nix::sys::stat::Mode::S_IWUSR,
+        )?;
         let descriptor = rustix::fs::open(
             &path,
             OFlags::RDONLY | OFlags::NONBLOCK | OFlags::CLOEXEC,

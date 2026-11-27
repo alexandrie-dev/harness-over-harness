@@ -16,6 +16,22 @@ export const HOH_EXECUTORS = ['claude', 'codex', 'pi'] as const;
 /** T3's orchestration protocol (packages/contracts/src/environment.ts `ORCHESTRATION_PROTOCOL_VERSION`). */
 export const ORCHESTRATION_PROTOCOL_VERSION = 2;
 
+export interface EnvironmentPlatform {
+  readonly os: 'darwin' | 'linux' | 'windows' | 'unknown';
+  readonly arch: 'arm64' | 'x64' | 'other';
+}
+
+export function environmentDescriptor(platform: EnvironmentPlatform = { os: 'unknown', arch: 'other' }) {
+  return {
+    environmentId: HOH_ENVIRONMENT_ID,
+    label: HOH_LABEL,
+    platform,
+    serverVersion: '0.0.0-hoh',
+    orchestrationProtocolVersion: ORCHESTRATION_PROTOCOL_VERSION,
+    capabilities: { repositoryIdentity: false, connectionProbe: true, threadForceStop: true, inlineMessageContext: true, providerWorkspaceSnapshotsOnDemand: true },
+  };
+}
+
 export type T3RuntimeMode = 'approval-required' | 'auto-accept-edits' | 'auto' | 'full-access';
 export type HohAccessMode = 'confirm' | 'auto-accept-edits' | 'auto' | 'full';
 export type HohExecutor = typeof HOH_EXECUTORS[number];
@@ -352,6 +368,7 @@ export function serverSettings(model: string, defaultMode: HohAccessMode, overri
 
 export interface ConfigInput {
   readonly cwd: string;
+  readonly platform?: EnvironmentPlatform;
   readonly claudeDiscovery: ClaudeDiscovery | null;
   readonly codexDiscovery: CodexDiscovery | null;
   readonly piDiscovery?: HarnessDiscovery | null;
@@ -388,14 +405,7 @@ export function serverConfig(input: ConfigInput) {
     [PI_INSTANCE_ID]: () => piModel(input.piDiscovery ?? null),
   })[instanceId]();
   return {
-    environment: {
-      environmentId: HOH_ENVIRONMENT_ID,
-      label: HOH_LABEL,
-      platform: { os: 'linux', arch: 'x64' },
-      serverVersion: '0.0.0-hoh',
-      orchestrationProtocolVersion: ORCHESTRATION_PROTOCOL_VERSION,
-      capabilities: { repositoryIdentity: false, connectionProbe: true, threadForceStop: true, inlineMessageContext: true, providerWorkspaceSnapshotsOnDemand: true },
-    },
+    environment: environmentDescriptor(input.platform),
     auth: {
       policy: 'desktop-managed-local',
       bootstrapMethods: ['desktop-bootstrap'],

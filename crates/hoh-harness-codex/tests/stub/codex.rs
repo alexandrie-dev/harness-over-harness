@@ -1,5 +1,6 @@
 use std::fs::OpenOptions;
 use std::io::{BufRead, BufReader, Write};
+use std::os::unix::process::CommandExt;
 use std::process::{Child, Command};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -350,8 +351,10 @@ fn main() {
                     );
                 }
                 if scenario == "interrupt" {
-                    let spawned = Command::new("sh")
-                        .args(["-c", "sleep 120"])
+                    // A signal to the harness's group cannot reach this command.
+                    let spawned = Command::new("/bin/sleep")
+                        .arg("120")
+                        .process_group(0)
                         .spawn()
                         .unwrap();
                     log(&json!({"childPid":spawned.id()}));
@@ -374,6 +377,10 @@ fn main() {
                         .unwrap();
                     log(&json!({"childPid":spawned.id()}));
                     child = Some(spawned);
+                    let release = std::env::var_os("CODEX_STUB_RELEASE").unwrap();
+                    while !std::path::Path::new(&release).exists() {
+                        std::thread::sleep(std::time::Duration::from_millis(5));
+                    }
                     send(
                         json!({"id":"foreign-approval","method":"item/commandExecution/requestApproval","params":{"threadId":"thread-foreign","turnId":"turn-stub","itemId":"cmd-1","command":"printf foreign","cwd":"/work","reason":"foreign thread"}}),
                     );

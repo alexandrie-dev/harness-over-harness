@@ -2,6 +2,7 @@
 use super::{
     process_shutdown::{Exit, ProcessShutdown, create_process_shutdown},
     profile_initialization::{fs_error, initialize_profile_from_default},
+    window_glue::{WINDOW_EXTERNAL_PROFILE, WINDOW_PROFILE},
 };
 use hoh_error::BoxError;
 use hoh_kernel::{Context, FiberState, Kernel, Service, Undo};
@@ -26,6 +27,17 @@ pub const PROFILE_ROOT_CONFIG: &str = "# dsh profile root — an empty entry lis
 fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     m.lock().unwrap_or_else(|e| e.into_inner())
 }
+const WINDOW_BUNDLE: &str = "@hoh/window";
+const WINDOW_EXTERNAL_BUNDLE: &str = "@hoh/window-external";
+
+fn window_bundle(profile: &str) -> Option<&'static str> {
+    match profile {
+        WINDOW_PROFILE => Some(WINDOW_BUNDLE),
+        WINDOW_EXTERNAL_PROFILE => Some(WINDOW_EXTERNAL_BUNDLE),
+        _ => None,
+    }
+}
+
 pub struct ShippedBundles;
 impl BundleSource for ShippedBundles {
     fn bundle(&self, name: &str) -> Result<Bundle, LoadError> {
@@ -40,7 +52,9 @@ impl BundleSource for ShippedBundles {
             "@deepseek-ai/dsh-sdk-minimal" => {
                 include_str!("../assets/bundle/sdk-minimal/cordis.patch.yml")
             }
-            "@hoh/window" => include_str!("../assets/bundle/window/cordis.patch.yml"),
+            WINDOW_BUNDLE | WINDOW_EXTERNAL_BUNDLE => {
+                include_str!("../assets/bundle/window/cordis.patch.yml")
+            }
             _ => {
                 return Err(LoadError::Runtime(format!(
                     "bundle {} is not included in this HoH build",
@@ -49,7 +63,14 @@ impl BundleSource for ShippedBundles {
             }
         };
         let mut patch = text.to_owned();
-        if name == "@hoh/window" {
+        if name == WINDOW_BUNDLE {
+            patch.push_str(include_str!("../assets/bundle/window/native.patch.yml"));
+        } else if name == WINDOW_EXTERNAL_BUNDLE {
+            patch.push_str(&format!(
+                "\n- id: sdk-app-startup\n  config:\n    profile: {WINDOW_EXTERNAL_PROFILE}\n"
+            ));
+        }
+        if matches!(name, WINDOW_BUNDLE | WINDOW_EXTERNAL_BUNDLE) {
             patch.push_str(
                 "\n- insert:\n    - id: plugin-inventory\n      name: 'hoh:plugin-inventory'\n",
             );
@@ -105,10 +126,10 @@ pub fn prepare_profile(
     if let Some(template) = from_default_profile {
         initialize_profile_from_default(name, template, home, warn)?;
     }
-    if name == crate::window_glue::WINDOW_PROFILE {
+    if let Some(bundle) = window_bundle(name) {
         let dir = hoh_loader::resolve_profile_dir(name, home)?;
         if !dir.join("package.json").exists() {
-            hoh_loader::init_profile(&dir, &["@hoh/window".into()])?;
+            hoh_loader::init_profile(&dir, &[bundle.into()])?;
         }
     }
     let mut profile =
@@ -516,8 +537,8 @@ pub async fn run_profile(
     });
     // The sdk profiles speak the same stdio JSON-RPC as the window engine, so they take the same glue
     // (single stdin reader, end-of-input announcement, exit after `shutdown`).
-    let window_profile = [crate::window_glue::WINDOW_PROFILE, "sdk", "sdk-minimal"]
-        .contains(&options.profile.name.as_str());
+    let stdio_profile = window_bundle(&options.profile.name).is_some()
+        || matches!(options.profile.name.as_str(), "sdk" | "sdk-minimal");
     let launch = async {
         ctx.provide::<ProfileContextKey>(Arc::new(ProfileContext {
             name: options.profile.name,
@@ -545,7 +566,7 @@ pub async fn run_profile(
             },
         )
         .await?;
-        if window_profile {
+        if stdio_profile {
             let (exiting_host, exit_host) = (host.clone(), host.clone());
             let stdio = host
                 .window_stdio

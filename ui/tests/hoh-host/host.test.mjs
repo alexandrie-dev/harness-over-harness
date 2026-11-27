@@ -126,6 +126,21 @@ test('HTTP before the socket: session is signed in, the descriptor names the sam
   restore();
 });
 
+test('the HTTP descriptor and RPC config describe the same execution platform', async () => {
+  const platform = { os: 'darwin', arch: 'arm64' };
+  const target = { fetch: async () => new Response('asset') };
+  const installed = mod.index.installHohHost({ engine: new FakeEngine(), platform, target });
+  try {
+    const descriptor = await (await target.fetch('http://hoh.local/.well-known/t3/environment')).json();
+    const client = new WireClient(mod.socket.HohWebSocket, installed.server);
+    const { environment } = await client.call('server.getConfig', {});
+    assert.deepEqual(descriptor.platform, platform);
+    assert.deepEqual(environment, descriptor);
+  } finally {
+    installed.uninstall();
+  }
+});
+
 test('the list: chats of the engine, newest first, with the completion marker', async () => {
   const engine = new FakeEngine();
   engine.seed('chat-old', 'Первый разговор', [['user/message', { id: 'u1', source: { kind: 'user' }, content: [{ type: 'text', text: 'Привет' }] }]]);

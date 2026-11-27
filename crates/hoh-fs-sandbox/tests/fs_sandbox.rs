@@ -195,6 +195,36 @@ async fn read_only_allows_reads_every_mode_permits_reading() {
 
 #[cfg(unix)]
 #[tokio::test]
+async fn protected_stat_allows_workspace_metadata_and_refuses_engine_storage() {
+    let fixture = Fixture::new_with_protected(SandboxMode::WorkspaceWrite, true).await;
+    let workspace = fixture.target(&fixture.workspace).await;
+    let info = fixture.fs.stat(&workspace, None).await.unwrap().unwrap();
+    assert_eq!(info.r#type, hoh_fs::FsType::Directory);
+
+    let missing = fixture.target(&fixture.workspace.join("missing")).await;
+    assert!(fixture.fs.stat(&missing, None).await.unwrap().is_none());
+
+    let protected = fixture.outside.join("storage");
+    fs::create_dir(&protected).unwrap();
+    let protected = protected.to_string_lossy().into_owned();
+    let denied = FsTarget {
+        target_key: protected.clone().into(),
+        display_path: protected,
+    };
+    assert!(
+        fixture
+            .fs
+            .stat(&denied, None)
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("protected engine storage")
+    );
+    fixture.kernel.shutdown().await;
+}
+
+#[cfg(unix)]
+#[tokio::test]
 async fn protected_engine_storage_denies_read_list_write_and_symlink_in_every_mode() {
     use std::os::unix::fs::symlink;
 

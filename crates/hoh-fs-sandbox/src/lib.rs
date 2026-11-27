@@ -26,6 +26,11 @@ use hoh_timeout::AbortSignal;
 
 use crate::containment::is_path_under;
 
+#[cfg(target_os = "linux")]
+const DIRECTORY_ACCESS: rustix::fs::OFlags = rustix::fs::OFlags::PATH;
+#[cfg(not(target_os = "linux"))]
+const DIRECTORY_ACCESS: rustix::fs::OFlags = rustix::fs::OFlags::RDONLY;
+
 struct AnchoredTarget {
     target: FsTarget,
     physical: String,
@@ -51,10 +56,17 @@ impl FileIdentity {
 
     fn from_fd(fd: &impl AsFd) -> Result<Self, BoxError> {
         let stat = rustix::fs::fstat(fd)?;
-        Ok(Self {
+        Ok(Self::from_stat(&stat))
+    }
+
+    fn from_stat(stat: &rustix::fs::Stat) -> Self {
+        Self {
+            #[cfg(target_os = "macos")]
+            device: stat.st_dev as u64,
+            #[cfg(not(target_os = "macos"))]
             device: stat.st_dev,
             inode: stat.st_ino,
-        })
+        }
     }
 }
 
@@ -126,9 +138,7 @@ impl SandboxedFileSystem {
             let parent = rustix::fs::openat(
                 &directory,
                 "..",
-                rustix::fs::OFlags::PATH
-                    | rustix::fs::OFlags::DIRECTORY
-                    | rustix::fs::OFlags::CLOEXEC,
+                DIRECTORY_ACCESS | rustix::fs::OFlags::DIRECTORY | rustix::fs::OFlags::CLOEXEC,
                 rustix::fs::Mode::empty(),
             )?;
             if FileIdentity::from_fd(&parent)? == identity {
@@ -151,18 +161,14 @@ impl SandboxedFileSystem {
             let Some(parent_path) = candidate.parent() else {
                 let root = rustix::fs::open(
                     candidate,
-                    rustix::fs::OFlags::PATH
-                        | rustix::fs::OFlags::DIRECTORY
-                        | rustix::fs::OFlags::CLOEXEC,
+                    DIRECTORY_ACCESS | rustix::fs::OFlags::DIRECTORY | rustix::fs::OFlags::CLOEXEC,
                     rustix::fs::Mode::empty(),
                 )?;
                 return self.directory_chain_reaches_protected(root);
             };
             let parent = match rustix::fs::open(
                 parent_path,
-                rustix::fs::OFlags::PATH
-                    | rustix::fs::OFlags::DIRECTORY
-                    | rustix::fs::OFlags::CLOEXEC,
+                DIRECTORY_ACCESS | rustix::fs::OFlags::DIRECTORY | rustix::fs::OFlags::CLOEXEC,
                 rustix::fs::Mode::empty(),
             ) {
                 Ok(parent) => parent,
@@ -175,6 +181,7 @@ impl SandboxedFileSystem {
                 }
                 Err(error) => return Err(error.into()),
             };
+            #[cfg(target_os = "linux")]
             let target_is_protected = match candidate.file_name() {
                 Some(name) => match rustix::fs::openat(
                     &parent,
@@ -183,6 +190,18 @@ impl SandboxedFileSystem {
                     rustix::fs::Mode::empty(),
                 ) {
                     Ok(target) => self.is_protected_fd(&target)?,
+                    Err(rustix::io::Errno::NOENT | rustix::io::Errno::NOTDIR) => false,
+                    Err(error) => return Err(error.into()),
+                },
+                None => self.is_protected_fd(&parent)?,
+            };
+            #[cfg(not(target_os = "linux"))]
+            let target_is_protected = match candidate.file_name() {
+                Some(name) => match rustix::fs::statat(&parent, name, rustix::fs::AtFlags::empty())
+                {
+                    Ok(stat) => self
+                        .protected_identities
+                        .contains(&FileIdentity::from_stat(&stat)),
                     Err(rustix::io::Errno::NOENT | rustix::io::Errno::NOTDIR) => false,
                     Err(error) => return Err(error.into()),
                 },
@@ -204,6 +223,80 @@ impl SandboxedFileSystem {
         Ok(target)
     }
 
+    /// Checking a project's working directory only needs metadata. Bind that access to the
+    /// opened parent and never follow a symlink substituted after resolving the original path.
+    #[cfg(target_os = "macos")]
+    async fn stat_protected(
+        &self,
+        target: &FsTarget,
+        signal: Option<AbortSignal>,
+    ) -> Result<Option<FsInfo>, BoxError> {
+        use hoh_fs::FsType;
+        use rustix::fs::{AtFlags, FileType, Mode, OFlags, fstat, open, statat};
+        use rustix::io::Errno;
+
+        let _effect_guard = self.policy.lock_protected_effect().await;
+        let fresh = self
+            .local
+            .resolve(
+                &target.display_path,
+                FsResolveOptions {
+                    signal: signal.clone(),
+                    ..FsResolveOptions::default()
+                },
+            )
+            .await?;
+        self.checked_resolved_target(fresh.clone()).await?;
+        let path = Path::new(fresh.target_key.as_str());
+        let parent = match open(
+            path.parent().unwrap_or(path),
+            DIRECTORY_ACCESS | OFlags::DIRECTORY | OFlags::CLOEXEC,
+            Mode::empty(),
+        ) {
+            Ok(parent) => parent,
+            Err(Errno::NOENT | Errno::NOTDIR) => return Ok(None),
+            Err(error) => return Err(error.into()),
+        };
+        let stat = match path.file_name() {
+            Some(name) => statat(&parent, name, AtFlags::SYMLINK_NOFOLLOW),
+            None => fstat(&parent),
+        };
+        if self.directory_chain_reaches_protected(parent)? {
+            return Err(Self::protected_error(&fresh));
+        }
+        let stat = match stat {
+            Ok(stat) => stat,
+            Err(Errno::NOENT | Errno::NOTDIR) => return Ok(None),
+            Err(error) => return Err(error.into()),
+        };
+        let identity = FileIdentity::from_stat(&stat);
+        if self.protected_identities.contains(&identity) {
+            return Err(Self::protected_error(&fresh));
+        }
+        let r#type = match FileType::from_raw_mode(stat.st_mode.into()) {
+            FileType::RegularFile => FsType::File,
+            FileType::Directory => FsType::Directory,
+            FileType::Symlink => return Err(Errno::LOOP.into()),
+            _ => FsType::Other,
+        };
+        if let Some(signal) = signal {
+            signal.throw_if_aborted()?;
+        }
+        let size = stat.st_size as u64;
+        let mtime = i128::from(stat.st_mtime) * 1_000_000_000 + i128::from(stat.st_mtime_nsec);
+        let ctime = i128::from(stat.st_ctime) * 1_000_000_000 + i128::from(stat.st_ctime_nsec);
+        Ok(Some(FsInfo {
+            version: format!(
+                "{}:{}:{size}:{mtime}:{ctime}",
+                identity.device, identity.inode
+            )
+            .into(),
+            r#type,
+            size: Some(size),
+        }))
+    }
+
+    #[cfg(target_os = "linux")]
     async fn open_anchor(&self, path: &str) -> Result<(OwnedFd, String), BoxError> {
         let fd = rustix::fs::open(
             path,
@@ -216,6 +309,16 @@ impl SandboxedFileSystem {
             .to_string_lossy()
             .into_owned();
         Ok((fd, physical))
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    async fn open_anchor(&self, _path: &str) -> Result<(OwnedFd, String), BoxError> {
+        // A path reopen cannot provide the descriptor binding required for protected storage.
+        Err(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            "HoH filesystem tools with protected storage require descriptor-bound access on this platform",
+        )
+        .into())
     }
 
     async fn check_physical_path(&self, physical: &str, target: &FsTarget) -> Result<(), BoxError> {
@@ -475,6 +578,10 @@ impl FileSystem for SandboxedFileSystem {
         signal: Option<AbortSignal>,
     ) -> FsFuture<'a, Option<FsInfo>> {
         Box::pin(async move {
+            #[cfg(target_os = "macos")]
+            if !self.policy.protected_roots().is_empty() {
+                return self.stat_protected(target, signal).await;
+            }
             let target = self.checked_access_target(target).await?;
             self.local.stat(&target.target, signal).await
         })

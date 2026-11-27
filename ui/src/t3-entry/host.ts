@@ -6,11 +6,13 @@
 /** Движок HoH для хоста: ui/src/hoh-host/engine.ts (HohEngine). Здесь — только то, что нужно входу. */
 export interface HohEngineLike {
   request(method: string, params: unknown): Promise<unknown>;
+  environmentPlatform?: import('../hoh-host/engine').HohEngine['environmentPlatform'];
   subscribeStatus?(listener: (status: import('../hoh-host/engine').EngineStatus) => void): Promise<() => void>;
   subscribe?(listener: (notification: { method: string; params: any }) => void): Promise<() => void>;
 }
 export interface HohHostOptions {
   readonly engine: HohEngineLike;
+  readonly platform?: import('../hoh-host/config').EnvironmentPlatform;
   readonly pluginAuthoringSkill?: string;
   readonly pluginAuthoringGuide?: string;
 }

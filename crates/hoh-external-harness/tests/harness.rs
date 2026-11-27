@@ -627,14 +627,22 @@ async fn until_event(agent: &Arc<dyn Agent>, event_type: &str) {
 }
 
 fn alive(pid: u32) -> bool {
-    match std::fs::read(format!("/proc/{pid}/stat")) {
-        Err(_) => false,
-        // The state follows the parenthesised command name, which may be no UTF-8.
-        Ok(stat) => !stat
-            .iter()
-            .rposition(|&byte| byte == b')')
-            .and_then(|end_of_name| stat.get(end_of_name + 2))
-            .is_some_and(|state| matches!(state, b'Z' | b'X')),
+    assert_ne!(pid, 0, "the fixture did not start a child");
+    let probe = std::process::Command::new("/bin/ps")
+        .args(["-p", &pid.to_string(), "-o", "state="])
+        .env_clear()
+        .output()
+        .expect("read process state");
+    assert!(probe.stderr.is_empty(), "ps failed for {pid}: {probe:?}");
+    let state = probe
+        .stdout
+        .iter()
+        .copied()
+        .find(|byte| !byte.is_ascii_whitespace());
+    match (probe.status.code(), state) {
+        (Some(1), None) => false,
+        (Some(0), Some(state)) => !matches!(state, b'Z' | b'X'),
+        _ => panic!("ps failed for {pid}: {probe:?}"),
     }
 }
 
@@ -1393,6 +1401,7 @@ async fn shutdown_stops_the_harness_process() {
     until_event(&agent, "tool/call").await;
     tokio::time::sleep(Duration::from_millis(100)).await;
     let pid = grandchild(&dirs);
+    assert!(alive(pid));
     drop(agent);
     tokio::time::timeout(Duration::from_secs(30), env.close())
         .await

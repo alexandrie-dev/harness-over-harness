@@ -1,4 +1,4 @@
-# Native window engine: one self-contained service composition over stdio JSON-RPC.
+# Services shared by both window profiles over stdio JSON-RPC.
 - insert:
     - id: llm
       name: '@deepseek-ai/dsh-llm'
@@ -48,16 +48,8 @@
     - id: tools
       name: '@deepseek-ai/dsh-tools'
 
-    - id: tool-executor-native
-      name: '@deepseek-ai/dsh-tool-executor-native'
-
     - id: agent
       name: '@deepseek-ai/dsh-agent'
-
-    # File effects are confined to the workspace; anything wider is an escalation the user
-    # approves (approval/request with a mac), exactly as in the dsh base profile.
-    - id: sandbox
-      name: '@deepseek-ai/dsh-sandbox-local'
 
     - id: sandbox-policy
       name: '@deepseek-ai/dsh-sandbox-policy'
@@ -75,30 +67,6 @@
     - id: working-directory
       name: '@deepseek-ai/dsh-working-directory'
 
-    - id: tool-working-directory
-      name: '@deepseek-ai/dsh-tool-working-directory'
-
-    - id: tool-fs
-      name: '@deepseek-ai/dsh-tool-fs'
-      config:
-        readImage: false
-        applyPatch: true
-
-    - id: subprocess
-      name: '@deepseek-ai/dsh-subprocess-local'
-
-    - id: bash-sandbox
-      name: '@deepseek-ai/dsh-bash-sandbox'
-
-    - id: shell-env
-      name: '@deepseek-ai/dsh-shell-env'
-
-    - id: tool-bash
-      name: '@deepseek-ai/dsh-tool-bash'
-      config:
-        enableRunInBackground: false
-        promoteOnTimeout: false
-
     - id: user-questions
       name: '@deepseek-ai/dsh-user-questions'
 
@@ -108,11 +76,6 @@
     # Asks the user, through user-approval's host path, before a privileged hoh/* call runs.
     - id: privileged-approver
       name: 'hoh:window-privileged-approver'
-
-    # Window profile only (no dsh counterpart): bash commands that may delete or overwrite an
-    # existing file are put to the user first.
-    - id: destructive-guard
-      name: 'hoh:window-destructive-guard'
 
     # The external-harness slot: the shared destructive-command classifier, the harness registry
     # with Claude Code in it, and the hoh/executor/* methods the window calls.
@@ -133,19 +96,6 @@
 
     - id: external-harness-window
       name: 'hoh:external-harness-window'
-
-    - id: tool-ask-user
-      name: '@deepseek-ai/dsh-tool-ask-user'
-
-    - id: tool-todo
-      name: '@deepseek-ai/dsh-tool-todo'
-      config:
-        allowParallelInProgress: true
-
-    - id: agent-loop
-      name: '@deepseek-ai/dsh-agent-loop'
-      config:
-        agents: []
 
     - id: sdk-app-startup
       name: '@deepseek-ai/dsh-sdk-app'

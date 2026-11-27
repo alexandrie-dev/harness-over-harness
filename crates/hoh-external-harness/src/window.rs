@@ -685,8 +685,11 @@ impl Window {
             Some(home) => tokio::fs::canonicalize(home).await.ok(),
             None => None,
         };
-        protected_folder(folder, user_home.as_deref())
-            .then_some("is a protected system or home folder")
+        let protected = protected_folder(folder, user_home.as_deref());
+        #[cfg(target_os = "macos")]
+        let protected = protected
+            || darwin_protected_folder(folder, user_home.as_deref(), darwin_user_temp().await);
+        protected.then_some("is a protected system or home folder")
     }
 
     fn service(&self) -> &ExternalHarnessesService {
@@ -1364,6 +1367,73 @@ fn protected_folder(folder: &Path, user_home: Option<&Path>) -> bool {
         })
 }
 
+/// Use the operating system's per-user temporary directory. TMPDIR can point elsewhere.
+#[cfg(target_os = "macos")]
+async fn darwin_user_temp() -> Option<&'static Path> {
+    static TEMP: tokio::sync::OnceCell<Option<PathBuf>> = tokio::sync::OnceCell::const_new();
+    TEMP.get_or_init(|| async {
+        let output = tokio::process::Command::new("/usr/bin/getconf")
+            .arg("DARWIN_USER_TEMP_DIR")
+            .env_clear()
+            .output()
+            .await
+            .ok()?;
+        if !output.status.success() {
+            return None;
+        }
+        let path = std::str::from_utf8(&output.stdout).ok()?.trim_end();
+        let path = tokio::fs::canonicalize(path).await.ok()?;
+        path.starts_with("/private/var/folders").then_some(path)
+    })
+    .await
+    .as_deref()
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn darwin_protected_folder(
+    folder: &Path,
+    user_home: Option<&Path>,
+    user_temp: Option<&Path>,
+) -> bool {
+    if darwin_after_prefix(folder, Path::new("/private/var")).is_some() {
+        return !user_temp
+            .and_then(|temp| darwin_after_prefix(folder, temp))
+            .is_some_and(|mut tail| tail.next().is_some());
+    }
+    if ["/System", "/Library", "/private/etc"]
+        .iter()
+        .any(|path| darwin_after_prefix(folder, Path::new(path)).is_some())
+        || darwin_after_prefix(folder, Path::new("/private"))
+            .is_some_and(|mut tail| tail.next().is_none())
+    {
+        return true;
+    }
+    let Some(user_home) = user_home else {
+        return darwin_after_prefix(folder, Path::new("/Users")).is_some();
+    };
+    darwin_after_prefix(folder, user_home).is_some_and(|mut tail| {
+        tail.next().is_none_or(|name| {
+            let name = name.as_os_str().as_encoded_bytes();
+            name.starts_with(b".") || name.eq_ignore_ascii_case(b"Library")
+        })
+    })
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn darwin_after_prefix<'a>(path: &'a Path, prefix: &Path) -> Option<std::path::Components<'a>> {
+    let mut tail = path.components();
+    prefix
+        .components()
+        .all(|part| {
+            tail.next().is_some_and(|candidate| {
+                part.as_os_str()
+                    .as_encoded_bytes()
+                    .eq_ignore_ascii_case(candidate.as_os_str().as_encoded_bytes())
+            })
+        })
+        .then_some(tail)
+}
+
 fn wire(mode: AccessMode) -> ExecutorAccessMode {
     match mode {
         AccessMode::Confirm => ExecutorAccessMode::Confirm,
@@ -1403,7 +1473,7 @@ async fn write(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Window, build_15_mode, protected_folder, saved_folder_match};
+    use super::{Window, build_15_mode, darwin_protected_folder, protected_folder, saved_folder_match};
     use crate::contract::{
         AuthState, Discovery, DiscoveryFailure, DiscoveryOperation, VersionStatus,
     };
@@ -1503,6 +1573,50 @@ mod tests {
             value["failure"],
             json!({"kind":"timeout", "operation":"initialize", "timeoutSeconds":45})
         );
+    }
+
+    #[test]
+    fn darwin_protects_system_and_library_paths_and_keeps_workspace_directories() {
+        let home = Some(Path::new("/Users/person"));
+        let temp = Some(Path::new("/private/var/folders/ab/cdef/T"));
+        for path in [
+            "/System/Volumes/Data",
+            "/Library/Application Support",
+            "/PRIVATE/etc/ssh",
+            "/private",
+            "/private/var/db",
+            "/private/var/folders/ab/cdef/T",
+            "/private/var/folders/xy/other/T/project",
+            "/users/Person",
+            "/Users/Person/.ssh/keys",
+            "/Users/Person/library/Keychains",
+        ] {
+            assert!(
+                darwin_protected_folder(Path::new(path), home, temp),
+                "{path}"
+            );
+        }
+        for path in [
+            "/Users/person/code/project",
+            "/Users/person/LibraryProject",
+            "/private/tmp/project",
+            "/private/var/folders/ab/cdef/T/project",
+        ] {
+            assert!(
+                !darwin_protected_folder(Path::new(path), home, temp),
+                "{path}"
+            );
+        }
+        assert!(darwin_protected_folder(
+            Path::new("/Users/person/project"),
+            None,
+            temp
+        ));
+        assert!(darwin_protected_folder(
+            Path::new("/private/var/folders/ab/cdef/T/project"),
+            home,
+            None,
+        ));
     }
 
     #[test]

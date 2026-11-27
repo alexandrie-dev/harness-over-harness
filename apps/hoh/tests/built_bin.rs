@@ -359,6 +359,76 @@ async fn prints_the_headless_profile_without_host_or_browser_layers() {
     );
 }
 #[tokio::test]
+async fn window_profiles_share_host_plugins_and_select_the_native_execution_bundle() {
+    let root = tempfile::tempdir().unwrap();
+    let native = rows(&ok(&run(
+        root.path(),
+        &["--profile", "window", "--dump-config"],
+    )
+    .await));
+    let external = rows(&ok(&run(
+        root.path(),
+        &["--profile", "window-external", "--dump-config"],
+    )
+    .await));
+
+    let native_ids = [
+        "agent-loop",
+        "bash-sandbox",
+        "destructive-guard",
+        "sandbox",
+        "shell-env",
+        "subprocess",
+        "tool-ask-user",
+        "tool-bash",
+        "tool-executor-native",
+        "tool-fs",
+        "tool-todo",
+        "tool-working-directory",
+    ];
+    for id in native_ids {
+        assert!(native.iter().any(|row| row.id == id), "window lacks {id}");
+        assert!(
+            external.iter().all(|row| row.id != id),
+            "window-external includes {id}"
+        );
+    }
+    assert_eq!(native.len(), external.len() + native_ids.len());
+    for row in &external {
+        let original = native.iter().find(|old| old.id == row.id).unwrap();
+        if row.id == "sdk-app-startup" {
+            assert_eq!(original.config["profile"], "window");
+            assert_eq!(row.config["profile"], "window-external");
+        } else {
+            assert_eq!(row, original);
+        }
+    }
+    for (id, name) in [
+        ("agent", "@deepseek-ai/dsh-agent"),
+        ("filesystem", "@deepseek-ai/dsh-fs-sandbox"),
+        ("harness-codex", "hoh:harness-codex"),
+        (
+            "session-persistence-jsonl",
+            "@deepseek-ai/dsh-session-persistence-jsonl",
+        ),
+        ("privileged-approver", "hoh:window-privileged-approver"),
+        ("sdk-app-startup", "@deepseek-ai/dsh-sdk-app"),
+        ("plugin-inventory", "hoh:plugin-inventory"),
+        ("author-turn-note", "hoh:plugin-turn-note"),
+    ] {
+        assert!(
+            external.iter().any(|row| row.id == id && row.name == name),
+            "window-external lacks {id}"
+        );
+    }
+    assert!(
+        root.path()
+            .join("home/profiles/window-external/package.json")
+            .is_file()
+    );
+}
+
+#[tokio::test]
 async fn prints_the_exact_standalone_sdk_minimal_tree_without_dsh_base() {
     let root = tempfile::tempdir().unwrap();
     let output = ok(&run(

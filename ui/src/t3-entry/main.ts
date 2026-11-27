@@ -11,6 +11,7 @@ import './hoh-screens/sidebar.css';
 import './grid/tokens.css';
 import './grid/frame.css';
 import { installGridCheck } from './grid/check';
+import { configureMacProjectPicker } from './macos-project-picker';
 import { installWhisperClient } from './whisper/client';
 
 declare global {
@@ -25,9 +26,12 @@ declare global {
 
 const testEngine = !window.__TAURI_INTERNALS__ ? window.__HOH_T3_TEST_ENGINE__ : undefined;
 const engine = testEngine ?? tauriEngine();
+const platform = await engine.environmentPlatform?.().catch(() => undefined);
+configureMacProjectPicker(platform);
 installWhisperClient(engine);
 installHohHost({
   engine,
+  platform,
   pluginAuthoringSkill,
   pluginAuthoringGuide,
   ...(testEngine ? { onRequest: (method: string, payload: unknown) => window.__HOH_T3_TEST_REQUESTS__?.push({ method, payload }) } : {}),

@@ -10,7 +10,7 @@ use crate::{
 use hoh_protocol::{ApprovalOutcome, SecretString};
 use serde_json::{Value, json};
 use std::{
-    ffi::OsString,
+    ffi::{OsStr, OsString},
     path::PathBuf,
     sync::{
         Arc, Mutex,
@@ -42,7 +42,7 @@ pub struct Host {
     notifications: EngineNotifications,
 }
 
-/// How the native host starts the engine. The real `hoh` needs the window profile and its own
+/// How the native host starts the engine. The real `hoh` needs a window profile and its own
 /// data folder; the replay stub (tests only) takes no arguments.
 #[derive(Debug, PartialEq, Eq)]
 struct EngineLaunch {
@@ -55,15 +55,24 @@ struct EngineLaunch {
     model: &'static str,
 }
 
+fn default_engine_profile() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "window-external"
+    } else {
+        "window"
+    }
+}
+
 fn select_engine_launch(
     test_engine: Option<OsString>,
     configured_engine: Option<OsString>,
+    configured_profile: Option<&OsStr>,
     engine_home: &std::path::Path,
 ) -> Result<EngineLaunch, String> {
     let is_test = test_engine.is_some();
-    let value = test_engine.or(configured_engine).ok_or_else(|| {
-        "Путь к Помощнику не задан при сборке. Переустановите приложение".to_owned()
-    })?;
+    let value = test_engine
+        .or(configured_engine)
+        .ok_or_else(|| "Движок HoH не найден. Переустановите приложение".to_owned())?;
     if value.is_empty() {
         return Err("Путь к Помощнику пуст. Переустановите приложение".into());
     }
@@ -76,9 +85,17 @@ fn select_engine_launch(
             model: "mock",
         });
     }
+    let profile = match configured_profile {
+        None => default_engine_profile(),
+        Some(value) => match value.to_str() {
+            Some("window") => "window",
+            Some("window-external") => "window-external",
+            _ => return Err("HOH_WINDOW_PROFILE принимает window или window-external".into()),
+        },
+    };
     Ok(EngineLaunch {
         path: PathBuf::from(value),
-        args: vec!["--profile".into(), "window".into()],
+        args: vec!["--profile".into(), profile.into()],
         env: vec![(
             "DSH_HOME".into(),
             engine_home
@@ -102,10 +119,41 @@ fn create_private_dir(path: &std::path::Path) -> std::io::Result<()> {
     std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700))
 }
 
+fn bundled_engine_path(executable: &std::path::Path) -> PathBuf {
+    executable.with_file_name("hoh")
+}
+
 fn engine_launch(engine_home: &std::path::Path) -> Result<EngineLaunch, String> {
     let configured = std::env::var_os("HOH_ENGINE_PATH")
+        .or_else(|| {
+            let sibling = bundled_engine_path(&std::env::current_exe().ok()?);
+            sibling.is_file().then(|| sibling.into_os_string())
+        })
         .or_else(|| option_env!("HOH_ENGINE_PATH").map(OsString::from));
-    select_engine_launch(std::env::var_os("HOH_TEST_ENGINE"), configured, engine_home)
+    select_engine_launch(
+        std::env::var_os("HOH_TEST_ENGINE"),
+        configured,
+        std::env::var_os("HOH_WINDOW_PROFILE").as_deref(),
+        engine_home,
+    )
+}
+
+#[tauri::command]
+pub fn environment_platform(window: tauri::WebviewWindow) -> Result<Value, String> {
+    if window.label() != "main" {
+        return Err("Сведения о платформе доступны главному окну".into());
+    }
+    let os = match std::env::consts::OS {
+        "macos" => "darwin",
+        "windows" => "win32",
+        os => os,
+    };
+    let arch = match std::env::consts::ARCH {
+        "aarch64" => "arm64",
+        "x86_64" => "x64",
+        arch => arch,
+    };
+    Ok(json!({ "os": os, "arch": arch }))
 }
 
 /// The window icon in several sizes (`_NET_WM_ICON`): the task bar and the window switcher pick the one that fits.
@@ -136,7 +184,7 @@ fn set_window_icons(window: &tauri::WebviewWindow) {
 }
 
 pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
-    #[cfg(feature = "probe")]
+    #[cfg(all(feature = "probe", target_os = "linux"))]
     crate::probe::trace("native:setup:start");
     #[cfg(target_os = "linux")]
     if let Some(window) = app.get_webview_window("main") {
@@ -171,6 +219,9 @@ pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         Ok(path) => path,
         Err(_) => app.path().home_dir()?.join("Documents"),
     };
+    #[cfg(target_os = "macos")]
+    let default_folder = workspace::usable_default_on_macos(&documents, &app.path().home_dir()?)?;
+    #[cfg(not(target_os = "macos"))]
     let default_folder = workspace::usable_default(&documents, &config_dir)?;
     // The sandbox of the session is rooted in this folder: the one chosen on the first run, else
     // the app's own folder in Documents. Never the home folder.
@@ -196,6 +247,27 @@ pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     config.path = launch.path;
     config.args = launch.args;
     config.env = launch.env;
+    #[cfg(target_os = "macos")]
+    if launch.provider != "mock" {
+        let inherited = std::env::var_os("PATH").unwrap_or_default();
+        let home = app.path().home_dir()?;
+        let path = std::env::join_paths(
+            std::env::split_paths(&inherited)
+                .filter(|path| path.is_absolute())
+                .chain([
+                    home.join(".local/bin"),
+                    PathBuf::from("/opt/homebrew/bin"),
+                    PathBuf::from("/usr/local/bin"),
+                    PathBuf::from("/usr/bin"),
+                    PathBuf::from("/bin"),
+                    PathBuf::from("/usr/sbin"),
+                    PathBuf::from("/sbin"),
+                ]),
+        )?;
+        if let Ok(path) = path.into_string() {
+            config.env.push(("PATH".into(), path));
+        }
+    }
     if cfg!(target_os = "linux") && in_chat {
         config
             .env
@@ -250,7 +322,7 @@ pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
             }
         });
     }
-    #[cfg(feature = "probe")]
+    #[cfg(all(feature = "probe", target_os = "linux"))]
     crate::probe::trace("native:setup:complete");
     Ok(())
 }
@@ -297,7 +369,7 @@ fn handle_event(
         }
         HostEvent::Status(status) => {
             let is_ready = status["state"] == "ready";
-            #[cfg(feature = "probe")]
+            #[cfg(all(feature = "probe", target_os = "linux"))]
             crate::probe::trace(if is_ready {
                 "engine:status:ready"
             } else {
@@ -371,7 +443,7 @@ fn handle_event(
 }
 
 fn schedule_window(handle: &tauri::AppHandle, approvals: &Arc<Broker>, open: OpenApproval) {
-    #[cfg(feature = "probe")]
+    #[cfg(all(feature = "probe", target_os = "linux"))]
     crate::probe::trace(format!("approval:{}:schedule", open.label));
     let app = handle.clone();
     let failure_app = handle.clone();
@@ -381,10 +453,10 @@ fn schedule_window(handle: &tauri::AppHandle, approvals: &Arc<Broker>, open: Ope
     let run_label = failure_label.clone();
     if handle
         .run_on_main_thread(move || {
-            #[cfg(feature = "probe")]
+            #[cfg(all(feature = "probe", target_os = "linux"))]
             crate::probe::trace(format!("approval:{run_label}:main-thread:start"));
             if let Err(_error) = open_window(&app, &broker, open) {
-                #[cfg(feature = "probe")]
+                #[cfg(all(feature = "probe", target_os = "linux"))]
                 crate::probe::trace(format!("approval:{run_label}:create:error:{_error}"));
                 if let Some(resolution) = broker.reject(&run_label, now_ms()) {
                     dispatch_resolution(&app, resolution);
@@ -394,7 +466,7 @@ fn schedule_window(handle: &tauri::AppHandle, approvals: &Arc<Broker>, open: Ope
         .is_err()
         && let Some(resolution) = failure_broker.reject(&failure_label, now_ms())
     {
-        #[cfg(feature = "probe")]
+        #[cfg(all(feature = "probe", target_os = "linux"))]
         crate::probe::trace(format!("approval:{failure_label}:schedule:error"));
         dispatch_resolution(&failure_app, resolution);
     }
@@ -425,12 +497,12 @@ fn open_window(
     .parent(&parent)?
     .on_navigation(|url| {
         let allowed = approval_navigation_allowed(url);
-        #[cfg(feature = "probe")]
+        #[cfg(all(feature = "probe", target_os = "linux"))]
         trace_navigation("approval", url, allowed);
         allowed
     })
     .on_new_window(|_, _| deny_new_window());
-    #[cfg(feature = "probe")]
+    #[cfg(all(feature = "probe", target_os = "linux"))]
     let builder = builder
         .on_page_load(move |window, payload| {
             crate::probe::trace(format!(
@@ -466,14 +538,14 @@ fn open_window(
             }
         });
     let window = builder.build()?;
-    #[cfg(feature = "probe")]
+    #[cfg(all(feature = "probe", target_os = "linux"))]
     crate::probe::trace(format!("approval:{label}:created"));
 
     let close_app = handle.clone();
     let close_broker = approvals.clone();
     let close_label = label.clone();
     window.on_window_event(move |event| {
-        #[cfg(feature = "probe")]
+        #[cfg(all(feature = "probe", target_os = "linux"))]
         if matches!(
             event,
             tauri::WindowEvent::CloseRequested { .. } | tauri::WindowEvent::Destroyed
@@ -537,7 +609,8 @@ pub fn webview_permission(
     use tauri::webview::{PermissionKind, PermissionResponse};
     match kind {
         PermissionKind::Microphone
-            if webview.label() == "main" && webview.url().is_ok_and(|url| trusted_app_origin(&url)) =>
+            if webview.label() == "main"
+                && webview.url().is_ok_and(|url| trusted_app_origin(&url)) =>
         {
             PermissionResponse::Allow
         }
@@ -566,7 +639,7 @@ pub fn main_navigation_allowed(
         // application origin before invoking navigation hooks.
         "" | "/" | "/index.html" => true,
         "/legacy.html" => legacy_shell,
-        #[cfg(feature = "probe")]
+        #[cfg(all(feature = "probe", target_os = "linux"))]
         "/probe.html" => true,
         // A page of the T3 client's own router (/settings/general, /<env>/<thread>) when the window
         // reloads there. Tauri (`manager::get_asset`) decodes `%XX`, then serves the first file of
@@ -618,13 +691,13 @@ pub fn main_security_plugin<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin<R
                         assets.iter().any(|(key, _)| key == file)
                     })
             };
-            #[cfg(feature = "probe")]
+            #[cfg(all(feature = "probe", target_os = "linux"))]
             if webview.label() == "main" {
                 trace_navigation("main", url, allowed);
             }
             allowed
         });
-    #[cfg(feature = "probe")]
+    #[cfg(all(feature = "probe", target_os = "linux"))]
     let builder = builder
         .on_page_load(|webview, payload| {
             if webview.label() == "main" {
@@ -735,7 +808,7 @@ fn install_zoom(view: &webkit2gtk::WebView, dir: Option<PathBuf>) {
     });
 }
 
-#[cfg(feature = "probe")]
+#[cfg(all(feature = "probe", target_os = "linux"))]
 fn trace_navigation(kind: &str, url: &tauri::Url, allowed: bool) {
     crate::probe::trace(format!(
         "{kind}:navigation:{}:{}://{}{}",
@@ -778,7 +851,7 @@ fn expire_approval(approvals: &Broker, label: &str, now: u64) -> Option<Resoluti
     approvals.expire(label, now)
 }
 
-#[cfg(feature = "probe")]
+#[cfg(all(feature = "probe", target_os = "linux"))]
 fn is_approval_probe() -> bool {
     crate::probe::approval_requested()
 }
@@ -847,7 +920,7 @@ pub async fn engine_request(
     method: String,
     params: Value,
 ) -> Result<Value, crate::errors::HostError> {
-    #[cfg(feature = "probe")]
+    #[cfg(all(feature = "probe", target_os = "linux"))]
     crate::probe::trace(format!("invoke:engine_request:received:{method}"));
     let label = window.label().to_owned();
     let engine = state.engine.clone();
@@ -883,10 +956,10 @@ pub async fn engine_request(
             &method,
             params,
             |params| {
-                #[cfg(feature = "probe")]
+                #[cfg(all(feature = "probe", target_os = "linux"))]
                 crate::probe::trace(format!("preflight:{method}:start"));
                 if !ready.load(Ordering::Acquire) {
-                    #[cfg(feature = "probe")]
+                    #[cfg(all(feature = "probe", target_os = "linux"))]
                     crate::probe::trace(format!("preflight:{method}:engine-not-ready"));
                     return Err(crate::errors::CONNECTING.into());
                 }
@@ -908,22 +981,22 @@ pub async fn engine_request(
                 }
                 let (open, receiver) = approvals.begin_preflight(&method, params, now_ms())?;
                 let approval_label = open.label.clone();
-                #[cfg(feature = "probe")]
+                #[cfg(all(feature = "probe", target_os = "linux"))]
                 crate::probe::trace(format!("preflight:{method}:begun:{approval_label}"));
                 schedule_window(&handle, &approvals, open);
                 match receiver.recv_timeout(Duration::from_secs(305)) {
                     Ok(true) => {
-                        #[cfg(feature = "probe")]
+                        #[cfg(all(feature = "probe", target_os = "linux"))]
                         crate::probe::trace(format!("preflight:{method}:complete:allowed"));
                         Ok(())
                     }
                     Ok(false) => {
-                        #[cfg(feature = "probe")]
+                        #[cfg(all(feature = "probe", target_os = "linux"))]
                         crate::probe::trace(format!("preflight:{method}:complete:rejected"));
                         Err(crate::errors::REJECTED.into())
                     }
                     Err(_) => {
-                        #[cfg(feature = "probe")]
+                        #[cfg(all(feature = "probe", target_os = "linux"))]
                         crate::probe::trace(format!("preflight:{method}:complete:timeout"));
                         if let Some(resolution) = approvals.reject(&approval_label, now_ms()) {
                             dispatch_resolution(&handle, resolution);
@@ -1020,7 +1093,7 @@ pub fn approval_current(
     window: tauri::WebviewWindow,
     state: tauri::State<'_, Host>,
 ) -> Result<ApprovalView, String> {
-    #[cfg(feature = "probe")]
+    #[cfg(all(feature = "probe", target_os = "linux"))]
     crate::probe::trace(format!("approval:{}:current", window.label()));
     state
         .approvals
@@ -1355,44 +1428,7 @@ pub async fn pick_folder(window: tauri::WebviewWindow) -> Result<Option<String>,
     let app = window.app_handle().clone();
     let (tx, rx) = std::sync::mpsc::channel();
     app.run_on_main_thread(move || {
-        #[cfg(target_os = "linux")]
-        {
-            use gtk::prelude::*;
-            let result = window
-                .gtk_window()
-                .map_err(|_| "Нет родительского окна".to_owned())
-                .and_then(|parent| {
-                    let dialog = gtk::FileChooserNative::new(
-                        Some("Папка для работы"),
-                        Some(&parent),
-                        gtk::FileChooserAction::SelectFolder,
-                        Some("Выбрать"),
-                        Some("Отмена"),
-                    );
-                    dialog.set_local_only(true);
-                    let result = if dialog.run() == gtk::ResponseType::Accept {
-                        dialog
-                            .filename()
-                            .map(|p| {
-                                p.to_str()
-                                    .map(str::to_owned)
-                                    .ok_or_else(|| "Имя папки должно быть в UTF-8".to_owned())
-                            })
-                            .transpose()
-                    } else {
-                        Ok(None)
-                    };
-                    dialog.destroy();
-                    result
-                });
-            let _ = tx.send(result);
-        }
-        #[cfg(not(target_os = "linux"))]
-        {
-            let _ = tx.send(Err(
-                "Системный выбор папки ещё не подключён на этой платформе".to_owned(),
-            ));
-        }
+        let _ = tx.send(crate::platform::pick_folder(&window));
     })
     .map_err(|_| "Не удалось открыть выбор папки".to_owned())?;
     tauri::async_runtime::spawn_blocking(move || {
@@ -1531,12 +1567,13 @@ mod tests {
     #[test]
     fn engine_path_requires_the_real_build_variable() {
         let home = std::path::Path::new("/data/engine");
-        assert!(select_engine_launch(None, None, home).is_err());
+        assert!(select_engine_launch(None, None, None, home).is_err());
         assert_eq!(
-            select_engine_launch(None, Some(OsString::from("/opt/hoh/bin/hoh")), home).unwrap(),
+            select_engine_launch(None, Some(OsString::from("/opt/hoh/bin/hoh")), None, home)
+                .unwrap(),
             EngineLaunch {
                 path: PathBuf::from("/opt/hoh/bin/hoh"),
-                args: vec!["--profile".into(), "window".into()],
+                args: vec!["--profile".into(), default_engine_profile().into()],
                 env: vec![("DSH_HOME".into(), "/data/engine".into())],
                 provider: "openai-compatible",
                 model: "local",
@@ -1545,12 +1582,49 @@ mod tests {
     }
 
     #[test]
-    fn test_engine_is_the_only_stub_override_and_gets_no_profile_arguments() {
+    fn engine_profile_must_be_one_of_the_window_profiles() {
+        let home = std::path::Path::new("/data/engine");
+        let launch = |profile| {
+            select_engine_launch(
+                None,
+                Some(OsString::from("/opt/hoh/bin/hoh")),
+                profile,
+                home,
+            )
+        };
+        for name in ["window", "window-external"] {
+            let engine = launch(Some(OsStr::new(name))).expect("allowed window profile");
+            assert_eq!(engine.args, ["--profile", name]);
+            assert_eq!(engine.provider, "openai-compatible");
+        }
+        for rejected in ["", "headless", "window --patch file.yml"] {
+            let error = launch(Some(OsStr::new(rejected))).expect_err("unsupported profile");
+            assert!(error.contains("HOH_WINDOW_PROFILE"), "{error}");
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::ffi::OsStrExt;
+            assert!(launch(Some(OsStr::from_bytes(&[255]))).is_err());
+        }
+    }
+
+    #[test]
+    fn engine_bundle_is_resolved_beside_the_desktop_binary() {
+        let executable = PathBuf::from("bundle").join("hoh-desktop");
+        assert_eq!(
+            bundled_engine_path(&executable),
+            PathBuf::from("bundle").join("hoh")
+        );
+    }
+
+    #[test]
+    fn engine_replay_stub_ignores_the_configured_profile() {
         let home = std::path::Path::new("/data/engine");
         assert_eq!(
             select_engine_launch(
                 Some(OsString::from("/tmp/hoh-window-stub")),
                 Some(OsString::from("/opt/hoh/bin/hoh")),
+                Some(OsStr::new("invalid")),
                 home,
             )
             .unwrap(),
@@ -1562,6 +1636,6 @@ mod tests {
                 model: "mock",
             }
         );
-        assert!(select_engine_launch(Some(OsString::new()), None, home).is_err());
+        assert!(select_engine_launch(Some(OsString::new()), None, None, home).is_err());
     }
 }

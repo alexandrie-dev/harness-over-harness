@@ -1,0 +1,51 @@
+# In-process agent loop and model tools for the window profile.
+- insert:
+    - id: tool-executor-native
+      name: '@deepseek-ai/dsh-tool-executor-native'
+
+    # File effects are confined to the workspace; anything wider is an escalation the user
+    # approves (approval/request with a mac), exactly as in the dsh base profile.
+    - id: sandbox
+      name: '@deepseek-ai/dsh-sandbox-local'
+
+    - id: tool-working-directory
+      name: '@deepseek-ai/dsh-tool-working-directory'
+
+    - id: tool-fs
+      name: '@deepseek-ai/dsh-tool-fs'
+      config:
+        readImage: false
+        applyPatch: true
+
+    - id: subprocess
+      name: '@deepseek-ai/dsh-subprocess-local'
+
+    - id: bash-sandbox
+      name: '@deepseek-ai/dsh-bash-sandbox'
+
+    - id: shell-env
+      name: '@deepseek-ai/dsh-shell-env'
+
+    - id: tool-bash
+      name: '@deepseek-ai/dsh-tool-bash'
+      config:
+        enableRunInBackground: false
+        promoteOnTimeout: false
+
+    # Window profile only (no dsh counterpart): bash commands that may delete or overwrite an
+    # existing file are put to the user first.
+    - id: destructive-guard
+      name: 'hoh:window-destructive-guard'
+
+    - id: tool-ask-user
+      name: '@deepseek-ai/dsh-tool-ask-user'
+
+    - id: tool-todo
+      name: '@deepseek-ai/dsh-tool-todo'
+      config:
+        allowParallelInProgress: true
+
+    - id: agent-loop
+      name: '@deepseek-ai/dsh-agent-loop'
+      config:
+        agents: []

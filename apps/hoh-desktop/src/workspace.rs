@@ -23,6 +23,30 @@ pub fn usable_default(documents: &Path, fallback_base: &Path) -> std::io::Result
     Ok(fallback)
 }
 
+/// macOS may deny Documents access. Keep the fallback in the user's home, outside Library.
+#[cfg(any(target_os = "macos", all(test, unix)))]
+pub fn usable_default_on_macos(documents: &Path, home: &Path) -> std::io::Result<PathBuf> {
+    use std::os::unix::fs::DirBuilderExt;
+
+    let preferred = default_folder(documents);
+    if std::fs::create_dir_all(&preferred).is_ok() && preferred.is_dir() {
+        return Ok(preferred);
+    }
+
+    let fallback = default_folder(home);
+    match std::fs::DirBuilder::new().mode(0o700).create(&fallback) {
+        Ok(()) => Ok(fallback),
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+            if std::fs::symlink_metadata(&fallback)?.is_dir() {
+                Ok(fallback)
+            } else {
+                Err(error)
+            }
+        }
+        Err(error) => Err(error),
+    }
+}
+
 /// The folder the person chose, as an absolute path. The first-run default label stands for the
 /// default folder; any other relative text is refused because it would depend on the process folder.
 pub fn resolve_choice(choice: &str, default: &Path) -> Result<PathBuf, String> {
@@ -107,6 +131,31 @@ mod tests {
             healthy.join("HoH")
         );
         std::fs::remove_dir_all(base).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn macos_default_uses_home_without_following_an_existing_fallback_symlink() {
+        let home = scratch("macos-fallback");
+        let documents = home.join("Documents");
+        std::fs::File::create(&documents).unwrap();
+        let fallback = home.join("HoH");
+        let protected = home.join("Library");
+        std::fs::create_dir(&protected).unwrap();
+        std::os::unix::fs::symlink(&protected, &fallback).unwrap();
+        assert!(usable_default_on_macos(&documents, &home).is_err());
+
+        std::fs::remove_file(&fallback).unwrap();
+        assert_eq!(
+            usable_default_on_macos(&documents, &home).unwrap(),
+            fallback
+        );
+        assert_eq!(
+            usable_default_on_macos(&documents, &home).unwrap(),
+            fallback
+        );
+        assert!(std::fs::symlink_metadata(&fallback).unwrap().is_dir());
+        std::fs::remove_dir_all(home).unwrap();
     }
 
     #[test]

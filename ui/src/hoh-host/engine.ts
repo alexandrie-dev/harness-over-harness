@@ -1,5 +1,6 @@
 // What the HoH host needs from the engine: the same methods and notifications the current window
 // uses (ui/src/screens/chat/transport.ts), reached through the Tauri bridge (tauri.ts) or a fake in tests.
+import type { EnvironmentPlatform } from './config.ts';
 
 export interface EngineNotification { readonly method: string; readonly params: any }
 export type EngineStatus = { readonly state: 'starting' | 'ready' | 'unavailable' | 'restarting' | 'stopped' };
@@ -24,6 +25,7 @@ export type ApprovalDecision = 'allowed-once' | 'rejected';
 
 export interface HohEngine {
   request(method: string, params: unknown): Promise<any>;
+  environmentPlatform?(): Promise<EnvironmentPlatform>;
   /** Native-only bounded read of a raster, rooted by the native host in this conversation's cwd. */
   readImageAsset?(input: { readonly sessionId: string; readonly path: string }): Promise<LocalImageAsset>;
   confirmExternalImage?(input: { readonly sessionId: string; readonly path: string }): Promise<LocalImageAsset | null>;

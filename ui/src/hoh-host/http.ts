@@ -3,22 +3,11 @@
 // `GET /.well-known/t3/environment` (the primary environment's descriptor); everything else it asks
 // over HTTP has a socket fallback, so it is answered 503 and the socket carries it.
 // Addresses outside the HoH environment go to the previous fetch unchanged (bundle assets).
-import { HOH_ENVIRONMENT_ID, HOH_LABEL, ORCHESTRATION_PROTOCOL_VERSION } from './config.ts';
+import { environmentDescriptor, type EnvironmentPlatform } from './config.ts';
 
 export const HOH_SCOPES = [
   'orchestration:read', 'orchestration:operate', 'settings:write', 'providers:manage', 'filesystem:read', 'filesystem:write', 'diagnostics:read',
 ] as const;
-
-export function environmentDescriptor() {
-  return {
-    environmentId: HOH_ENVIRONMENT_ID,
-    label: HOH_LABEL,
-    platform: { os: 'linux', arch: 'x64' },
-    serverVersion: '0.0.0-hoh',
-    orchestrationProtocolVersion: ORCHESTRATION_PROTOCOL_VERSION,
-    capabilities: { repositoryIdentity: false, connectionProbe: true, threadForceStop: true, inlineMessageContext: true, providerWorkspaceSnapshotsOnDemand: true },
-  };
-}
 
 export function authSessionState() {
   return {
@@ -38,9 +27,9 @@ const json = (status: number, body: unknown) =>
   new Response(body === undefined ? null : JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
 
 /** The answer of the HoH environment to one HTTP request. */
-export function hohHttpResponse(method: string, pathname: string): Response {
+export function hohHttpResponse(method: string, pathname: string, platform?: EnvironmentPlatform): Response {
   if (method === 'GET' && pathname === '/api/auth/session') return json(200, authSessionState());
-  if (method === 'GET' && pathname === '/.well-known/t3/environment') return json(200, environmentDescriptor());
+  if (method === 'GET' && pathname === '/.well-known/t3/environment') return json(200, environmentDescriptor(platform));
   // Client tracing: accepted and dropped, nothing leaves the window.
   if (pathname.startsWith('/api/observability/')) return json(200, {});
   // Shell and thread snapshots, uploads, previews: the socket has them (or the feature is hidden).
@@ -52,6 +41,7 @@ export function installHohFetch(
   isHohAddress: (url: string) => boolean,
   target: any = globalThis,
   readHistory?: (threadId: string, cursor?: number) => Promise<unknown>,
+  platform?: EnvironmentPlatform,
 ): () => void {
   const previous = target.fetch as typeof fetch;
   target.fetch = (input: RequestInfo | URL, init?: RequestInit) => {
@@ -69,7 +59,7 @@ export function installHohFetch(
         .then(result => result === undefined ? new Response(null, { status: 503 }) : json(200, result),
           () => new Response(null, { status: 503 }));
     }
-    return Promise.resolve(hohHttpResponse(method, address.pathname));
+    return Promise.resolve(hohHttpResponse(method, address.pathname, platform));
   };
   return () => { target.fetch = previous; };
 }

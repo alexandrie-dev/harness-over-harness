@@ -1,4 +1,4 @@
-//! Stdio composition of the window profile: one reader of the process stdin, shared by the
+//! Stdio composition of the window profiles: one reader of the process stdin, shared by the
 //! JSON-RPC server (the bytes) and `hoh-sdk-app` (only the end of the stream).
 
 use futures_util::future::BoxFuture;
@@ -24,8 +24,10 @@ use std::{
 };
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt, BufReader, ReadBuf};
 
-/// The only profile that takes its stdio through this seam.
+/// The default window profile with the native agent loop and external executors.
 pub const WINDOW_PROFILE: &str = "window";
+/// The opt-in window profile whose sessions require an external executor.
+pub const WINDOW_EXTERNAL_PROFILE: &str = "window-external";
 const PIPE_CAPACITY: usize = 64 * 1024;
 const STDIN_CHUNK: usize = 8 * 1024;
 

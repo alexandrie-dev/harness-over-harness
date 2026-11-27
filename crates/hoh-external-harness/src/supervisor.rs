@@ -386,7 +386,7 @@ impl Supervisor {
         }
     }
 
-    /// The processes under the harness now, read from `/proc` off the runtime's threads
+    /// The processes under the harness now, queried off the runtime's threads
     /// (PORTING.md §6): a command it started in a session of its own is out of its group, not out
     /// of this.
     async fn tree(&self) -> Vec<u32> {
@@ -401,7 +401,7 @@ impl Supervisor {
     /// Kill the process group and every process under the harness now, without the graceful
     /// steps of [`terminate`](Self::terminate), unless it was terminated or has exited; stdin is
     /// closed. For an owner that gives up on the process (a start the caller stopped).
-    /// Idempotent. The walk of `/proc` and the kill run on a blocking thread of the runtime, or
+    /// Idempotent. The process lookup and the kill run on a blocking thread of the runtime, or
     /// on a thread of their own outside one: the caller may be a runtime's thread or a `Drop`.
     pub fn abandon(&self) {
         lock(&self.stdin).take();
@@ -485,9 +485,28 @@ fn raw_pid(pid: u32) -> Option<rustix::process::Pid> {
         .and_then(rustix::process::Pid::from_raw)
 }
 
-/// Every process under `root` — its children, theirs, and so on — as `/proc` shows them now.
+/// Every process under `root` in the current process snapshot, including separate groups.
 fn descendants(root: u32) -> Vec<u32> {
-    let parents: Vec<(u32, u32)> = std::fs::read_dir("/proc")
+    let parents = process_parents();
+    let mut tree = vec![root];
+    let mut seen = std::collections::HashSet::from([root]);
+    let mut index = 0;
+    while let Some(&parent) = tree.get(index) {
+        tree.extend(
+            parents
+                .iter()
+                .filter(|(pid, ppid)| *ppid == parent && seen.insert(*pid))
+                .map(|(pid, _)| *pid),
+        );
+        index += 1;
+    }
+    tree.remove(0);
+    tree
+}
+
+#[cfg(not(target_os = "macos"))]
+fn process_parents() -> Vec<(u32, u32)> {
+    std::fs::read_dir("/proc")
         .into_iter()
         .flatten()
         .flatten()
@@ -496,22 +515,38 @@ fn descendants(root: u32) -> Vec<u32> {
             let stat = std::fs::read(entry.path().join("stat")).ok()?;
             Some((pid, parent_in_stat(&stat)?))
         })
-        .collect();
-    let mut tree = vec![root];
-    let mut next = 0;
-    while let Some(&parent) = tree.get(next) {
-        tree.extend(
-            parents
-                .iter()
-                .filter(|(_, ppid)| *ppid == parent)
-                .map(|(pid, _)| *pid),
-        );
-        next += 1;
-    }
-    tree.remove(0);
-    tree
+        .collect()
 }
 
+#[cfg(target_os = "macos")]
+fn process_parents() -> Vec<(u32, u32)> {
+    let Ok(snapshot) = std::process::Command::new("/bin/ps")
+        .args(["-A", "-o", "pid=", "-o", "ppid="])
+        .env_clear()
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .output()
+    else {
+        return Vec::new();
+    };
+    if !snapshot.status.success() {
+        return Vec::new();
+    }
+    String::from_utf8_lossy(&snapshot.stdout)
+        .lines()
+        .filter_map(parent_in_ps)
+        .collect()
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn parent_in_ps(line: &str) -> Option<(u32, u32)> {
+    let mut fields = line.split_ascii_whitespace();
+    let pid = fields.next()?.parse().ok()?;
+    let parent = fields.next()?.parse().ok()?;
+    (pid != 0 && fields.next().is_none()).then_some((pid, parent))
+}
+
+#[cfg(not(target_os = "macos"))]
 /// The parent pid in `/proc/<pid>/stat`, `pid (name) state ppid …`. Read as bytes and split at
 /// the last `)`: the name is up to 15 bytes of whatever the program was started as — `)`, spaces,
 /// line breaks, and a character cut in half (`проверка.sh` is 19 bytes), which is no UTF-8.
@@ -530,6 +565,7 @@ fn parent_in_stat(stat: &[u8]) -> Option<u32> {
 /// has to outlive it. The harness is not stopped first: its
 /// group, orphaned by the engine's death with a stopped member, would get SIGHUP from the kernel,
 /// and a harness ended by it leaves its commands to another parent before they are found.
+#[cfg(not(target_os = "macos"))]
 const GUARD: &str = r#"read -r _
 tree=" $1 "
 grown=1
@@ -547,6 +583,33 @@ while [ -n "$grown" ]; do
   done
 done
 kill -9 $tree 2>/dev/null
+kill -9 -"$1" 2>/dev/null
+"#;
+
+#[cfg(target_os = "macos")]
+const GUARD: &str = DARWIN_GUARD;
+
+/// The same pipe lifetime on Darwin, where the process table is available through BSD ps.
+#[cfg(any(target_os = "macos", all(test, target_os = "linux")))]
+const DARWIN_GUARD: &str = r#"read -r _
+snapshot=$(/bin/ps -A -o pid= -o ppid=) || snapshot=
+descendants=$(printf '%s\n' "$snapshot" | /usr/bin/awk -v root="$1" '
+  NF == 2 && $1 ~ /^[1-9][0-9]*$/ && $2 ~ /^[0-9]+$/ { parent[$1] = $2 }
+  END {
+    ordered[0] = root
+    seen[root] = 1
+    size = 1
+    for (i = 0; i < size; i++)
+      for (pid in parent)
+        if (!(pid in seen) && parent[pid] == ordered[i]) {
+          seen[pid] = 1
+          ordered[size++] = pid
+          print pid
+        }
+  }
+')
+for pid in $descendants; do kill -9 "$pid" 2>/dev/null; done
+kill -9 "$1" 2>/dev/null
 kill -9 -"$1" 2>/dev/null
 "#;
 
@@ -720,6 +783,7 @@ fn keep_stderr_line(
 mod tests {
     use super::*;
     use crate::redact::REDACTED;
+    #[cfg(target_os = "linux")]
     use std::path::Path;
 
     #[cfg(unix)]
@@ -883,6 +947,16 @@ mod tests {
         assert_eq!(exit.signal, Some(9), "{pid}: {exit:?}");
     }
 
+    #[test]
+    fn the_darwin_process_table_contains_only_numeric_parent_pairs() {
+        assert_eq!(parent_in_ps("   21     7"), Some((21, 7)));
+        assert_eq!(parent_in_ps("1 0"), Some((1, 0)));
+        for row in ["", "PID PPID", "7", "0 4", "7 -1", "7 4 extra"] {
+            assert_eq!(parent_in_ps(row), None, "{row}");
+        }
+    }
+
+    #[cfg(target_os = "linux")]
     fn alive(pid: u32) -> bool {
         std::fs::read(format!("/proc/{pid}/stat"))
             .ok()
@@ -895,6 +969,7 @@ mod tests {
 
     /// Waits until `pid` runs as `program`: the kernel names a process by the first 15 bytes of
     /// the file name it was started by.
+    #[cfg(target_os = "linux")]
     fn until_named(pid: u32, program: &Path) {
         use std::os::unix::ffi::OsStrExt;
         let name = program.file_name().expect("a file name").as_bytes();
@@ -909,6 +984,7 @@ mod tests {
     }
 
     /// `/bin/sleep` under the name `name`, in a folder of its own.
+    #[cfg(target_os = "linux")]
     fn sleep_named(name: &str) -> (tempfile::TempDir, PathBuf) {
         let folder = tempfile::tempdir().expect("folder");
         let program = folder.path().join(name);
@@ -918,6 +994,7 @@ mod tests {
 
     /// Pilot 22.11 («Стоп»): a command the harness runs in a session of its own, as Claude Code
     /// runs its commands, is out of the harness's group and still ends with it.
+    #[cfg(target_os = "linux")]
     #[tokio::test]
     async fn terminating_ends_a_command_in_a_session_of_its_own() {
         terminating_ends_the_command(Path::new("sleep")).await;
@@ -925,12 +1002,14 @@ mod tests {
 
     /// Ревью Fable 174941: a command named `проверка.sh` (19 bytes, the kernel keeps 15 and cuts
     /// the `а` in half) has a `stat` that is no UTF-8, and still ends with its harness.
+    #[cfg(target_os = "linux")]
     #[tokio::test]
     async fn terminating_ends_a_command_whose_name_is_cut_in_a_character() {
         let (_folder, program) = sleep_named("проверка.sh");
         terminating_ends_the_command(&program).await;
     }
 
+    #[cfg(target_os = "linux")]
     async fn terminating_ends_the_command(program: &Path) {
         let supervisor = shell(&format!(
             "setsid '{}' 60 & echo \"{{\\\"command\\\":$!}}\"; exec sleep 60",
@@ -990,18 +1069,28 @@ mod tests {
     /// Ревью Fable 173026: the name of a process (`comm`, the file name it was started by) may
     /// hold a line break, and its `/proc/<pid>/stat` is then two lines: the guard and the engine
     /// still find it under the harness.
+    #[cfg(target_os = "linux")]
     #[test]
     fn a_name_with_a_line_break_does_not_hide_a_process() {
-        the_guard_ends_a_command_named("x\n) S 1");
+        the_guard_ends_a_command_named("x\n) S 1", GUARD);
     }
 
     /// Ревью Fable 174941: nor does a name cut in the middle of a character (no UTF-8).
+    #[cfg(target_os = "linux")]
     #[test]
     fn a_name_cut_in_a_character_does_not_hide_a_process() {
-        the_guard_ends_a_command_named("проверка.sh");
+        the_guard_ends_a_command_named("проверка.sh", GUARD);
     }
 
-    fn the_guard_ends_a_command_named(name: &str) {
+    // Exercise the exact Darwin watchdog on Linux too, with a real out-of-group descendant.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn darwin_guard_ends_a_detached_command_after_pipe_eof() {
+        the_guard_ends_a_command_named("x\n) S 1", DARWIN_GUARD);
+    }
+
+    #[cfg(target_os = "linux")]
+    fn the_guard_ends_a_command_named(name: &str, guard: &str) {
         use std::os::unix::process::CommandExt;
         let (_folder, program) = sleep_named(name);
         // The harness in a group of its own, its command in a session of its own: only the walk
@@ -1024,7 +1113,7 @@ mod tests {
         assert_eq!(descendants(root.id()), [child]);
         // As `spawn_guard` starts it: no environment, so no locale.
         std::process::Command::new("/bin/sh")
-            .args(["-c", GUARD, "hoh-harness-guard", &root.id().to_string()])
+            .args(["-c", guard, "hoh-harness-guard", &root.id().to_string()])
             .stdin(Stdio::null())
             .env_clear()
             .status()

@@ -80,6 +80,35 @@ function anchorPatch(file: string, code: string, edits: ReadonlyArray<readonly [
   }
   return header + out;
 }
+
+function commandPalettePicker(code: string): string {
+  const picker = resolve(UI, 'src/t3-entry/macos-project-picker.ts');
+  return anchorPatch('CommandPalette.tsx', code, [
+    ['  const canOpenProjectFromFileManager =\n', '  const pickMacFolder = macProjectPicker(browseEnvironmentId);\n  const canOpenProjectFromFileManager =\n'],
+    ['    window.desktopBridge !== undefined;', '    (window.desktopBridge !== undefined || pickMacFolder !== undefined);'],
+    [
+      '    const command = resolveShortcutCommand(event, keybindings, {',
+      `    if (pickMacFolder && canOpenProjectFromFileManager && isPrimaryModifierPressed(event) &&
+        !event.altKey && !event.shiftKey && !event.nativeEvent.isComposing &&
+        event.key.toLowerCase() === "o") {
+      (event as typeof event & { preventBaseUIHandler?: () => void }).preventBaseUIHandler?.();
+      event.preventDefault();
+      event.stopPropagation();
+      if (!event.repeat) void handleOpenProjectFromFileManager();
+      return;
+    }
+
+    const command = resolveShortcutCommand(event, keybindings, {`,
+    ],
+    [
+      '      pickedPath = await api.dialogs.pickFolder(\n        Object.keys(pickerOptions).length > 0 ? pickerOptions : undefined,\n      );',
+      '      pickedPath = pickMacFolder\n        ? await pickMacFolder()\n        : await api.dialogs.pickFolder(\n            Object.keys(pickerOptions).length > 0 ? pickerOptions : undefined,\n          );',
+    ],
+    ['      disabled={isPickingProjectFolder}\n', '      disabled={isPickingProjectFolder}\n      aria-keyshortcuts={pickMacFolder ? "Meta+O" : undefined}\n'],
+    ['      {gt("Open in {app}", { app: fileManagerName })}\n', '      {gt("Open in {app}", { app: fileManagerName })}\n      {pickMacFolder ? <Kbd aria-hidden>⌘O</Kbd> : null}\n'],
+  ], `import { macProjectPicker } from ${JSON.stringify(picker)};\nimport { Kbd } from "./ui/kbd";\n`);
+}
+
 /** Providers (ProviderSettingsPanel.tsx): только поставщики VISIBLE_PROVIDER_DRIVERS, без «Add provider» и «+», без настроек, которых движок не исполняет. */
 export function providerSettingsPanel(code: string): string {
   return anchorPatch('ProviderSettingsPanel.tsx', code, PROVIDER_ANCHORS,
@@ -530,6 +559,7 @@ function hohT3(): Plugin {
           map: null,
         };
       }
+      if (id === resolve(T3_WEB, 'components/CommandPalette.tsx')) return { code: commandPalettePicker(code), map: null };
       if (id === resolve(T3_WEB, 'components/settings/ProviderSettingsPanel.tsx')) return { code: providerSettingsPanel(code), map: null };
       if (id === resolve(T3_WEB, 'components/settings/ThemePreviewCircles.tsx')) return { code: themeCards(code), map: null };
       if (id === resolve(T3_WEB, 'components/settings/ThemeSettings.tsx')) return { code: themeSettings(code), map: null };

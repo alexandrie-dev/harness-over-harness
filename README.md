@@ -1,6 +1,6 @@
 # HarnessOverHarness
 
-HoH состоит из движка `hoh` и окна `hoh-desktop` на Tauri. Окно запускает движок с профилем `window`. Движок и окно собираются из одного checkout, каждый со своим `Cargo.lock`.
+HoH состоит из движка `hoh` и окна `hoh-desktop` на Tauri. Окно работает с сессиями по одному протоколу. Исполнители подключаются как плагины. Движок и окно собираются из одного checkout, каждый со своим `Cargo.lock`.
 
 ## Сборка на Linux
 
@@ -21,6 +21,28 @@ scripts/build-linux.sh build
 
 `build` собирает интерфейс, движок и окно офлайн с зафиксированными зависимостями. Результат находится в `target/engine/release/` и `target/desktop/release/`. На машине с отдельным диском можно задать `HOH_BUILD_DIR` абсолютным путём. Для проверки типов, unit-тестов и браузерной приёмки интерфейса установите Chrome и выполните `scripts/build-linux.sh check`.
 
+## Сборка на macOS Apple Silicon
+
+Установите Xcode Command Line Tools (`xcode-select --install`), Python 3 и rustup.
+Rustup подберёт версию Rust из [rust-toolchain.toml](rust-toolchain.toml).
+Распакуйте архив интерфейса из той же ревизии в корень checkout, чтобы
+появился `ui/dist/index.html`. Интерфейс можно подготовить на Linux командой
+`bash ui/scripts/build.sh` после `scripts/build-linux.sh prepare`.
+
+На Mac выполните из корня checkout:
+
+```sh
+cargo fetch --locked --target aarch64-apple-darwin
+cargo fetch --locked --target aarch64-apple-darwin --manifest-path apps/hoh-desktop/Cargo.toml
+python3 scripts/build-desktop.py --build-dir target/macos
+```
+
+Обе команды `cargo fetch` подготавливают зависимости. Сборка использует эти
+кэши офлайн и создаёт `target/macos/HoH-macos-arm64.zip`. Распакуйте архив и
+откройте `HoH.app` в Finder. Внутри приложения есть движок и локальная подпись
+для разработки. На Mac включён профиль внешних исполнителей. Установите
+поддерживаемый Codex CLI и выполните [приёмку на Apple Silicon](docs/macos-smoke.md).
+
 ## Запуск
 
 В графической сессии разработки запустите окно с собранным движком:
@@ -33,6 +55,13 @@ scripts/build-linux.sh build
 
 - [Конфигурация окна и запуск движка](apps/hoh-desktop/PORT_NOTES.md)
 - [Зависимости и проверка поставки UI](docs/ts/DEPS.md)
+
+### Профиль внешних агентов
+
+На Linux для запуска окна с внешними агентами задайте `HOH_WINDOW_PROFILE=window-external`.
+В новом чате можно выбрать установленный Codex, Claude или Pi. Профиль использует
+общее хранилище чатов и загружает настройки исполнителей из своего каталога. В
+стандартном профиле Linux `window` также доступен встроенный агент.
 
 ### Pi Agent
 

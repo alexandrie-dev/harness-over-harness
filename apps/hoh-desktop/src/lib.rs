@@ -10,14 +10,16 @@ pub mod image_asset;
 #[cfg(feature = "desktop")]
 pub mod native;
 pub mod opener;
-#[cfg(feature = "probe")]
+#[cfg(feature = "desktop")]
+mod platform;
+#[cfg(all(feature = "probe", target_os = "linux"))]
 pub mod probe;
 pub mod questions;
 pub mod workspace;
 pub mod zoom;
 
 pub fn probe_compiled() -> bool {
-    cfg!(feature = "probe")
+    cfg!(all(feature = "probe", target_os = "linux"))
 }
 
 #[cfg(feature = "desktop")]

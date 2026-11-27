@@ -213,6 +213,12 @@
           "markdownDescription": "Enables the engine_request command without any pre-configured scope."
         },
         {
+          "description": "Enables the environment_platform command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-environment-platform",
+          "markdownDescription": "Enables the environment_platform command without any pre-configured scope."
+        },
+        {
           "description": "Enables the layout_external_ui_workspace command without any pre-configured scope.",
           "type": "string",
           "const": "allow-layout-external-ui-workspace",
@@ -319,6 +325,12 @@
           "type": "string",
           "const": "deny-engine-request",
           "markdownDescription": "Denies the engine_request command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the environment_platform command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-environment-platform",
+          "markdownDescription": "Denies the environment_platform command without any pre-configured scope."
         },
         {
           "description": "Denies the layout_external_ui_workspace command without any pre-configured scope.",

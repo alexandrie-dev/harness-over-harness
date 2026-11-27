@@ -1,7 +1,7 @@
 //! Opening what a chat answer links to: an http(s) address in the system browser, a file inside the
 //! session's working folder with the system program, or its folder. Every check is here and pure,
 //! so it is tested without a window; the Tauri command in `native` only asks the engine for the
-//! session's folder and calls these. No shell is involved: `xdg-open` gets one argument.
+//! session's folder and calls these. The system opener receives a single validated target.
 use std::ffi::OsStr;
 use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -138,7 +138,7 @@ pub fn clicked_link(url: &str, user_gesture: bool) -> Option<std::ffi::OsString>
     check_url(url).ok().map(Into::into)
 }
 
-/// What to hand to `xdg-open` for a request, after every check.
+/// What to hand to the system opener for a request, after every check.
 pub fn resolve(kind: Kind, target: &str, folder: &Path) -> Result<std::ffi::OsString, String> {
     match kind {
         Kind::Url => check_url(target).map(Into::into),
@@ -147,9 +147,13 @@ pub fn resolve(kind: Kind, target: &str, folder: &Path) -> Result<std::ffi::OsSt
     }
 }
 
-/// `xdg-open <argument>` without a shell; the argument is an absolute path or a checked http(s) address.
+/// The argument is an absolute path or a checked http(s) address.
 pub fn open(argument: &OsStr) -> Result<(), String> {
-    Command::new("xdg-open")
+    #[cfg(target_os = "macos")]
+    let program = "/usr/bin/open";
+    #[cfg(not(target_os = "macos"))]
+    let program = "xdg-open";
+    Command::new(program)
         .arg(argument)
         .stdin(Stdio::null())
         .stdout(Stdio::null())

@@ -1411,7 +1411,6 @@ impl SessionPersistence for JsonlSessionPersistence {
             }
             // Pin both directories. Renaming through the descriptors cannot be redirected by
             // replacing `trash` with a symlink after the no-follow open.
-            use std::os::fd::AsRawFd;
             use std::os::unix::fs::OpenOptionsExt;
             let open_dir = |path: &std::path::Path| {
                 std::fs::OpenOptions::new()
@@ -1430,27 +1429,27 @@ impl SessionPersistence for JsonlSessionPersistence {
                 .file_name()
                 .ok_or_else(|| error("session directory has no name"))?;
             let source_parent = open_dir(parent)?;
-            let anchored_source =
-                std::path::PathBuf::from(format!("/proc/self/fd/{}", source_parent.as_raw_fd()))
-                    .join(source_name);
-            if !std::fs::symlink_metadata(&anchored_source)?
-                .file_type()
-                .is_dir()
-            {
-                return Err(error("session directory is not a real directory"));
-            }
+            let source_name = source_name.to_os_string();
             let token = random_token(16)?;
             let stamp = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)?
                 .as_millis();
-            let destination =
-                std::path::PathBuf::from(format!("/proc/self/fd/{}", trash_dir.as_raw_fd())).join(
-                    format!(
-                        "{stamp}-{}-{token}",
-                        crate::format::encode_segment(id.as_str())?
-                    ),
-                );
-            tokio::fs::rename(anchored_source, destination).await?;
+            let destination = format!(
+                "{stamp}-{}-{token}",
+                crate::format::encode_segment(id.as_str())?
+            );
+            tokio::task::spawn_blocking(move || -> Result<()> {
+                use rustix::fs::{AtFlags, FileType, renameat, statat};
+                let metadata = statat(&source_parent, &source_name, AtFlags::SYMLINK_NOFOLLOW)
+                    .map_err(std::io::Error::from)?;
+                if FileType::from_raw_mode(metadata.st_mode) != FileType::Directory {
+                    return Err(error("session directory is not a real directory"));
+                }
+                renameat(source_parent, source_name, trash_dir, destination)
+                    .map_err(std::io::Error::from)?;
+                Ok(())
+            })
+            .await??;
             // The rename is the commit point. A close-hook failure must not report a
             // failed deletion after the directory has already moved to trash.
             let _ = lease.release().await;
@@ -1469,7 +1468,6 @@ impl SessionPersistence for JsonlSessionPersistence {
     }
     fn is_trashed<'a>(&'a self, id: &'a SessionId) -> BoxFuture<'a, Result<bool>> {
         Box::pin(async move {
-            use std::os::fd::AsRawFd;
             use std::os::unix::fs::OpenOptionsExt;
             let path = std::path::Path::new(&self.0.root).join("trash");
             let directory = match std::fs::OpenOptions::new()
@@ -1484,29 +1482,31 @@ impl SessionPersistence for JsonlSessionPersistence {
                 Err(e) => return Err(e.into()),
             };
             let encoded = encode_segment(id.as_str())?;
-            let mut dirs =
-                tokio::fs::read_dir(format!("/proc/self/fd/{}", directory.as_raw_fd())).await?;
-            while let Some(entry) = dirs.next_entry().await? {
-                let name = entry.file_name();
-                let Some(name) = name.to_str() else {
-                    continue;
-                };
-                let Some((stamp, tail)) = name.split_once('-') else {
-                    continue;
-                };
-                let Some((key, nonce)) = tail.rsplit_once('-') else {
-                    continue;
-                };
-                if key == encoded
-                    && !stamp.is_empty()
-                    && stamp.bytes().all(|c| c.is_ascii_digit())
-                    && nonce.len() == 32
-                    && nonce.bytes().all(|c| c.is_ascii_hexdigit())
-                {
-                    return Ok(true);
+            tokio::task::spawn_blocking(move || -> Result<bool> {
+                let dirs = rustix::fs::Dir::new(directory).map_err(std::io::Error::from)?;
+                for entry in dirs {
+                    let entry = entry.map_err(std::io::Error::from)?;
+                    let Ok(name) = entry.file_name().to_str() else {
+                        continue;
+                    };
+                    let Some((stamp, tail)) = name.split_once('-') else {
+                        continue;
+                    };
+                    let Some((key, nonce)) = tail.rsplit_once('-') else {
+                        continue;
+                    };
+                    if key == encoded
+                        && !stamp.is_empty()
+                        && stamp.bytes().all(|c| c.is_ascii_digit())
+                        && nonce.len() == 32
+                        && nonce.bytes().all(|c| c.is_ascii_hexdigit())
+                    {
+                        return Ok(true);
+                    }
                 }
-            }
-            Ok(false)
+                Ok(false)
+            })
+            .await?
         })
     }
     fn flush(&self) -> BoxFuture<'_, Result<()>> {

@@ -9,6 +9,13 @@ import type { EngineQuestion, EngineStatus, FolderListing, HohEngine } from './e
 export function tauriEngine(): HohEngine {
   return {
     request: (method, params) => invoke('engine_request', { method, params }),
+    async environmentPlatform() {
+      const { os, arch } = await invoke<{ os: string; arch: string }>('environment_platform');
+      return {
+        os: os === 'win32' || os === 'windows' ? 'windows' : os === 'darwin' || os === 'linux' ? os : 'unknown',
+        arch: arch === 'x64' || arch === 'arm64' ? arch : 'other',
+      };
+    },
     confirmExternalImage: input => invoke('confirm_external_image', input),
     readImageAsset: input => invoke('read_image_asset', { sessionId: input.sessionId, path: input.path }),
     subscribe: subscribeEngineNotifications,
