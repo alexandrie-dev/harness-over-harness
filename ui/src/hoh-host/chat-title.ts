@@ -1,4 +1,5 @@
 import { stripImageContextReferences } from './composer.ts';
+import { isAttachmentOnlyBootstrapPrompt } from '../t3/base/shared/composerContextReferences.ts';
 
 const MAX_TITLE_LENGTH = 48;
 const MAX_PROMPT_LENGTH = 6_000;
@@ -8,13 +9,15 @@ const TITLE_WORD = new RegExp(`\\.?(?:${WORD.source})(?:\\+{1,2}|#)?`, 'gu');
 const ARTICLE = /^(?:a|an|the)$/iu;
 const CONNECTOR = /^(?:a|an|the|and|or|of|to|for|with|in|on|at|from|by|about|before|after|during|в|во|на|и|или|с|со|к|ко|по|из|для|без|от|про|при|о|об|обо|у|за|до|через|после|перед|между|над|под)$/iu;
 const CJK = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]/u;
+const FRENCH_CONNECTOR = /^(?:à|au|aux|avec|chez|dans|de|des|du|en|et|la|le|les|par|pour|sans|sous|sur|un|une)$/iu;
+const CONNECTOR_ALPHABET = /^[a-zàâæçéèêëîïôœùûüÿа-яё]$/iu;
+const QUOTED_SUBJECT = /(?<![\p{L}\p{N}])(?:плагин|проект|страниц[уа]|модуль|plugin|project|page|module)\s+[«“"]([^»”"\n]+)[»”"]/giu;
 
 export function titleSource(prompt: string, limit = MAX_PROMPT_LENGTH): string {
-  return stripImageContextReferences(prompt)
+  const source = stripImageContextReferences(prompt)
     .replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, ' ')
-    .trim()
-    .slice(0, limit)
     .trim();
+  return isAttachmentOnlyBootstrapPrompt(source) ? '' : source.slice(0, limit).trimEnd();
 }
 
 export function shortTitleFromPrompt(prompt: string): string {
@@ -39,8 +42,14 @@ export function shortTitleFromPrompt(prompt: string): string {
 }
 
 export function explicitTitleFromPrompt(prompt: string): string {
-  const named = titleSource(prompt).match(/(?:плагин|проект|страниц[уа]|модуль|plugin|project|page|module)\s+[«“"]([^»”"\n]+)[»”"]/iu)?.[1];
-  return shortGeneratedTitle(named, true);
+  return explicitTitlesFromPrompt(prompt)[0] ?? '';
+}
+
+export function explicitTitlesFromPrompt(prompt: string): string[] {
+  return Array.from(titleSource(prompt).matchAll(QUOTED_SUBJECT), ([, name]) => {
+    const exact = name.trim().replace(/ +/g, ' ');
+    return shortGeneratedTitle(exact, [exact]);
+  }).filter(Boolean);
 }
 
 export function titleGenerationPrompt(messages: readonly string[], currentTitle?: string): string {
@@ -64,7 +73,7 @@ User messages in chronological order as a JSON array:
 ${JSON.stringify(messages)}`;
 }
 
-export function shortGeneratedTitle(value: unknown, allowSingleWord = false): string {
+export function shortGeneratedTitle(value: unknown, exactNames: readonly string[] = []): string {
   if (typeof value !== 'string' || /[\p{Cc}\p{Cf}]/u.test(value)) return '';
   const title = value.trim().replace(/ +/g, ' ');
   if (title.length > MAX_TITLE_LENGTH) return '';
@@ -74,7 +83,9 @@ export function shortGeneratedTitle(value: unknown, allowSingleWord = false): st
     const validEdges = /^[\p{L}\p{N}](?:.*[\p{L}\p{M}\p{N}])?$/u.test(title);
     return Array.from(title).length <= 12 && (matchesWords || validEdges) ? title : '';
   }
-  if (!matchesWords) return '';
-  const meaningful = words.filter(word => !CONNECTOR.test(word)).length;
-  return meaningful >= (allowSingleWord ? 1 : 2) && meaningful <= 3 && words.length <= 6 ? title : '';
+  if (!matchesWords || words.length > 6) return '';
+  if (words.length === 1) return exactNames.includes(title) ? title : '';
+  const meaningful = words.filter(word => !CONNECTOR.test(word) && !FRENCH_CONNECTOR.test(word)).length;
+  const supported = (title.match(/[\p{L}\p{M}]/gu) ?? []).every(letter => CONNECTOR_ALPHABET.test(letter));
+  return meaningful >= 2 && (!supported || meaningful <= 3) ? title : '';
 }

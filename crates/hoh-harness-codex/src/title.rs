@@ -8,7 +8,7 @@ use hoh_external_harness::{
     code,
 };
 use serde::Deserialize;
-use serde_json::Value;
+use serde_json::{Value, json};
 use tokio::sync::Semaphore;
 
 use crate::harness::{CodexConfig, VersionCheck, app_server_spec, check_version, projects_config};
@@ -18,7 +18,9 @@ const TITLE_SCHEMA: &str = r#"{"type":"object","properties":{"title":{"type":"st
 const INPUT_LIMIT: usize = 64 * 1024;
 const FRAME_LIMIT: usize = 128;
 const TITLE_TIMEOUT: Duration = Duration::from_secs(35);
-const PROBE_TIMEOUT: Duration = Duration::from_secs(5);
+pub(crate) const PROBE_TIMEOUT: Duration = Duration::from_secs(5);
+const CHATGPT_BASE_URL: &str = "https://chatgpt.com/backend-api/";
+const CHATGPT_ORIGIN: &str = "https://chatgpt.com";
 static TITLE_WORKERS: Semaphore = Semaphore::const_new(2);
 
 const DISABLED_FEATURES: &[&str] = &[
@@ -50,18 +52,16 @@ impl Drop for OneShotProcess {
     }
 }
 
-fn unavailable() -> HarnessFailure {
+pub(crate) fn unavailable() -> HarnessFailure {
     HarnessFailure::new(
         code::POLICY_UNAVAILABLE,
         "An isolated Codex title request is unavailable for this conversation's configuration.",
     )
 }
 
-fn verified_auth_store(
+pub(crate) fn verified_auth_store(
     config: &Value,
-    thread: &Value,
     requirements: &Value,
-    id: &str,
 ) -> HarnessResult<&'static str> {
     let config = config
         .get("config")
@@ -75,12 +75,7 @@ fn verified_auth_store(
     };
     // The title launch skips user configuration but uses the same Codex authentication and
     // environment. Only the standard OpenAI route can be reproduced that way.
-    if thread.pointer("/thread/id").and_then(Value::as_str) != Some(id)
-        || thread
-            .pointer("/thread/modelProvider")
-            .and_then(Value::as_str)
-            != Some("openai")
-        || !requirements.get("requirements").is_some_and(Value::is_null)
+    if !requirements.get("requirements").is_some_and(Value::is_null)
         || config
             .get("model_provider")
             .filter(|value| !value.is_null())
@@ -90,9 +85,9 @@ fn verified_auth_store(
         || !is_default("experimental_realtime_ws_base_url")
         || !is_default("forced_login_method")
         || !is_default("forced_chatgpt_workspace_id")
-        || config.get("chatgpt_base_url").is_some_and(|url| {
-            !url.is_null() && url.as_str() != Some("https://chatgpt.com/backend-api/")
-        })
+        || config
+            .get("chatgpt_base_url")
+            .is_some_and(|url| !url.is_null() && url.as_str() != Some(CHATGPT_BASE_URL))
     {
         return Err(unavailable());
     }
@@ -106,6 +101,40 @@ fn verified_auth_store(
         Some("auto") => Ok("auto"),
         _ => Err(unavailable()),
     }
+}
+
+pub(crate) fn verified_account(account: Value) -> HarnessResult<Value> {
+    if account["requiresOpenaiAuth"].as_bool() != Some(true) {
+        return Err(unavailable());
+    }
+    let routing = account.get("workspaceRouting").ok_or_else(unavailable)?;
+    let standard = match account.pointer("/account/type").and_then(Value::as_str) {
+        Some("apiKey") => routing.is_null(),
+        Some("chatgpt") if routing.is_null() => account
+            .pointer("/account/email")
+            .and_then(Value::as_str)
+            .is_some_and(|email| !email.is_empty()),
+        Some("chatgpt") => {
+            routing["backendOrigin"].as_str() == Some(CHATGPT_ORIGIN)
+                && routing["chatgptAccountId"]
+                    .as_str()
+                    .is_some_and(|id| !id.is_empty())
+                && routing["accountRoutingOverride"].as_str() == Some("NO_CONSTRAINT")
+        }
+        _ => false,
+    };
+    if !standard {
+        return Err(unavailable());
+    }
+    Ok(json!({"account": account["account"], "workspaceRouting": routing}))
+}
+
+fn route_settings(auth_store: &str) -> [(&'static str, &str); 3] {
+    [
+        ("openai_base_url", ""),
+        ("chatgpt_base_url", CHATGPT_BASE_URL),
+        ("cli_auth_credentials_store", auth_store),
+    ]
 }
 
 fn title_spec(
@@ -143,16 +172,14 @@ fn title_spec(
         "skills.include_instructions=false",
         "project_doc_max_bytes=0",
         r#"model_reasoning_effort="low""#,
+        r#"model_provider="openai""#,
     ] {
         args.extend(["-c".to_owned(), setting.to_owned()]);
     }
-    args.extend([
-        "-c".to_owned(),
-        format!("cli_auth_credentials_store=\"{auth_store}\""),
-        "-c".to_owned(),
-        projects_config(cwd, false),
-        "-".to_owned(),
-    ]);
+    for (key, value) in route_settings(auth_store) {
+        args.extend(["-c".to_owned(), format!("{key}={value:?}")]);
+    }
+    args.extend(["-c".to_owned(), projects_config(cwd, false), "-".to_owned()]);
     ProcessSpec {
         program: config.executable.clone(),
         args,
@@ -243,82 +270,120 @@ async fn one_shot(spec: &ProcessSpec, prompt: &str) -> HarnessResult<String> {
     Ok(title.to_owned())
 }
 
-pub(crate) async fn generate(config: &CodexConfig, request: TitleRequest) -> HarnessResult<String> {
-    let model = request
-        .model
-        .as_deref()
-        .filter(|model| !model.is_empty())
-        .ok_or_else(unavailable)?;
-    let workspace = request
-        .workspace
-        .as_ref()
-        .filter(|workspace| workspace.path().is_absolute())
-        .ok_or_else(unavailable)?;
-    let native_id = request
-        .native_session_id
-        .as_deref()
-        .ok_or_else(unavailable)?;
-    for name in ["CODEX_HOME", "HOME"] {
-        let value = config
+pub(crate) fn supports_environment(config: &CodexConfig) -> bool {
+    ["CODEX_HOME", "HOME"].into_iter().all(|name| {
+        config
             .extra_env
             .iter()
             .rev()
             .find(|(key, _)| key == name)
             .map(|(_, value)| std::ffi::OsString::from(value))
-            .or_else(|| std::env::var_os(name));
-        if value.is_some_and(|path| !Path::new(&path).is_absolute()) {
-            return Err(unavailable());
-        }
-    }
-    if request.prompt.is_empty() || request.prompt.len() > INPUT_LIMIT {
-        return Err(HarnessFailure::new(
-            code::PROTOCOL,
-            "Invalid Codex title input length.",
-        ));
-    }
-    tokio::time::timeout(TITLE_TIMEOUT, async {
-        let _worker = TITLE_WORKERS.acquire().await.map_err(|_| unavailable())?;
-        if !matches!(check_version(config).await, VersionCheck::Supported(_)) {
-            return Err(unavailable());
-        }
-        let (probe, trusted) = workspace
-            .spawn_probe(config.limits, |cwd, trusted| {
-                app_server_spec(config, cwd, trusted)
-            })
-            .await?;
-        // The probe only reads configuration and the persisted thread header; it never resumes or
-        // sends a prompt to the existing thread. Avoid leaking user config in a probe error.
-        let (effective_config, thread, requirements) = CodexSession::read_title_context(
-            probe,
-            config.request_timeout.min(PROBE_TIMEOUT),
-            workspace.path().to_string_lossy().into_owned(),
-            trusted,
-            native_id,
-        )
-        .await
-        .map_err(|_| unavailable())?;
-        let auth_store = verified_auth_store(&effective_config, &thread, &requirements, native_id)?;
-        let directory = tempfile::Builder::new()
-            .prefix("hoh-codex-title-")
-            .tempdir()
-            .map_err(|error| {
-                HarnessFailure::new(
-                    code::IO,
-                    format!("Cannot create Codex title workspace: {error}"),
-                )
-            })?;
-        let schema = directory.path().join("title-schema.json");
-        tokio::fs::write(&schema, TITLE_SCHEMA)
-            .await
-            .map_err(|error| {
-                HarnessFailure::new(
-                    code::IO,
-                    format!("Cannot write the Codex title schema: {error}"),
-                )
-            })?;
-        let spec = title_spec(config, directory.path(), &schema, model, auth_store);
-        one_shot(&spec, &request.prompt).await
+            .or_else(|| std::env::var_os(name))
+            .is_none_or(|path| Path::new(&path).is_absolute())
     })
-    .await
-    .map_err(|_| HarnessFailure::new(code::TIMEOUT, "The Codex title request timed out."))?
+}
+
+pub(crate) struct TitleRoute {
+    config: CodexConfig,
+    version: String,
+    auth_store: &'static str,
+}
+
+impl TitleRoute {
+    pub(crate) fn new(config: CodexConfig, version: &str, auth_store: &'static str) -> Self {
+        Self {
+            config,
+            version: version.to_owned(),
+            auth_store,
+        }
+    }
+
+    pub(crate) fn pin(&self, config: &mut Value) {
+        for (key, value) in route_settings(self.auth_store) {
+            config[key] = json!(value);
+        }
+    }
+
+    pub(crate) async fn generate(
+        &self,
+        request: TitleRequest,
+        live: &CodexSession,
+    ) -> HarnessResult<String> {
+        let config = &self.config;
+        let (live_cwd, live_trusted) = live.title_workspace();
+        let model = request
+            .model
+            .as_deref()
+            .filter(|model| !model.is_empty())
+            .ok_or_else(unavailable)?;
+        let workspace = request
+            .workspace
+            .as_ref()
+            .filter(|workspace| {
+                workspace.path() == Path::new(live_cwd) && workspace.path().is_absolute()
+            })
+            .ok_or_else(unavailable)?;
+        if request.prompt.is_empty() || request.prompt.len() > INPUT_LIMIT {
+            return Err(HarnessFailure::new(
+                code::PROTOCOL,
+                "Invalid Codex title input length.",
+            ));
+        }
+        tokio::time::timeout(TITLE_TIMEOUT, async {
+            let _worker = TITLE_WORKERS.acquire().await.map_err(|_| unavailable())?;
+            if !live.is_running() {
+                return Err(unavailable());
+            }
+            let VersionCheck::Supported(version) = check_version(config).await else {
+                return Err(unavailable());
+            };
+            if version != self.version {
+                return Err(unavailable());
+            }
+            let (probe, trusted) = workspace
+                .spawn_probe(config.limits, |cwd, trusted| {
+                    app_server_spec(config, cwd, trusted)
+                })
+                .await?;
+            let (auth_store, account) = CodexSession::probe_title_route(
+                probe,
+                config.request_timeout.min(PROBE_TIMEOUT),
+                live_cwd.to_owned(),
+                trusted,
+            )
+            .await
+            .map_err(|_| unavailable())?;
+            if auth_store != self.auth_store
+                || trusted != live_trusted
+                || live.title_account().await.map_err(|_| unavailable())? != account
+            {
+                return Err(unavailable());
+            }
+            let directory = tempfile::Builder::new()
+                .prefix("hoh-codex-title-")
+                .tempdir()
+                .map_err(|error| {
+                    HarnessFailure::new(
+                        code::IO,
+                        format!("Cannot create Codex title workspace: {error}"),
+                    )
+                })?;
+            let schema = directory.path().join("title-schema.json");
+            tokio::fs::write(&schema, TITLE_SCHEMA)
+                .await
+                .map_err(|error| {
+                    HarnessFailure::new(
+                        code::IO,
+                        format!("Cannot write the Codex title schema: {error}"),
+                    )
+                })?;
+            let spec = title_spec(config, directory.path(), &schema, model, self.auth_store);
+            if !live.is_running() {
+                return Err(unavailable());
+            }
+            one_shot(&spec, &request.prompt).await
+        })
+        .await
+        .map_err(|_| HarnessFailure::new(code::TIMEOUT, "The Codex title request timed out."))?
+    }
 }

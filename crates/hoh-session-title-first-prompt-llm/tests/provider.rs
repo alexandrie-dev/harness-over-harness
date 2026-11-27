@@ -546,24 +546,36 @@ async fn takes_the_title_from_the_first_nonempty_output_line() {
 
 #[tokio::test]
 async fn keeps_natural_connectors_within_the_content_word_limit() {
-    let env = setup_with_route(
-        chunks([
-            json!({"type":"text-delta","index":0,"text":"Доступ к кабинету CEO"}),
-            json!({"type":"finish","reason":{"kind":"stop"}}),
-        ]),
-        &[],
-        Some(("title-route", "title-model")),
-        "title-route",
-        32,
-        Some(3),
-    )
-    .await;
-    let session = session(&env, "title-with-connector");
-    append_human(&session, "У CEO не открывается кабинет");
+    for (prompt, expected) in [
+        ("У CEO не открывается кабинет", "Доступ к кабинету CEO"),
+        (
+            "Le tableau du PDG ne s’ouvre plus",
+            "Accès au tableau du PDG",
+        ),
+        (
+            "Δεν ανοίγει ο πίνακας του διευθυντή",
+            "Πρόσβαση στον πίνακα του διευθυντή",
+        ),
+    ] {
+        let env = setup_with_route(
+            chunks([
+                json!({"type":"text-delta","index":0,"text":expected}),
+                json!({"type":"finish","reason":{"kind":"stop"}}),
+            ]),
+            &[],
+            Some(("title-route", "title-model")),
+            "title-route",
+            32,
+            Some(3),
+        )
+        .await;
+        let session = session(&env, "title-with-connector");
+        append_human(&session, prompt);
 
-    let title = env.titles.refresh(&session, None).await.unwrap().unwrap();
-    assert_eq!(title.title, "Доступ к кабинету CEO");
-    env.shutdown().await;
+        let title = env.titles.refresh(&session, None).await.unwrap().unwrap();
+        assert_eq!(title.title, expected);
+        env.shutdown().await;
+    }
 }
 
 #[tokio::test]

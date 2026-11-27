@@ -1,6 +1,7 @@
 use std::fs::OpenOptions;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::os::unix::process::CommandExt;
+use std::path::Path;
 use std::process::{Child, Command};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -114,6 +115,7 @@ fn main() {
     let delayed_turn_active = Arc::new(AtomicBool::new(false));
     let mut turn_count = 0_u8;
     let mut supervised_cwd = None;
+    let mut live_thread = false;
     for line in BufReader::new(stdin.lock()).lines() {
         let line = line.unwrap();
         let message: Value = serde_json::from_str(&line).unwrap();
@@ -129,9 +131,20 @@ fn main() {
                 {"id":"gpt-stub","model":"gpt-stub","displayName":"GPT Stub","hidden":false,"isDefault":true,"defaultReasoningEffort":"medium","supportedReasoningEfforts":[{"reasoningEffort":"low","description":"Fast"},{"reasoningEffort":"medium","description":"Balanced"},{"reasoningEffort":"high","description":"Deep"}]},
                 {"id":"hidden","model":"hidden","displayName":"Hidden","hidden":true,"isDefault":false,"defaultReasoningEffort":"medium","supportedReasoningEfforts":[]}
             ],"nextCursor":null}})),
-            Some("account/read") => send(
-                json!({"id":id,"result":{"account":{"type":"chatgpt","email":"founder@example.test","planType":"pro"},"requiresOpenaiAuth":true}}),
-            ),
+            Some("account/read") => {
+                let email = if Path::new("changed-account").exists() {
+                    if live_thread {
+                        "previous@example.test"
+                    } else {
+                        "new@example.test"
+                    }
+                } else {
+                    "founder@example.test"
+                };
+                send(
+                    json!({"id":id,"result":{"account":{"type":"chatgpt","email":email,"planType":"pro"},"requiresOpenaiAuth":true,"workspaceRouting":null}}),
+                );
+            }
             Some("account/rateLimits/read") => {
                 let main = json!({
                     "limitId": "codex",
@@ -170,19 +183,12 @@ fn main() {
                 } else {
                     "openai"
                 };
-                send(
-                    json!({"id":id,"result":{"config":{"model_provider":provider,"cli_auth_credentials_store":"keyring"}}}),
-                );
-            }
-            Some("thread/read") => {
-                let provider = if scenario == "title-custom-thread" {
-                    "custom"
-                } else {
-                    "openai"
-                };
-                send(
-                    json!({"id":id,"result":{"thread":{"id":message["params"]["threadId"],"modelProvider":provider}}}),
-                );
+                let mut config =
+                    json!({"model_provider":provider,"cli_auth_credentials_store":"keyring"});
+                if Path::new("custom-route").exists() {
+                    config["openai_base_url"] = json!("https://gateway.example.invalid/v1");
+                }
+                send(json!({"id":id,"result":{"config":config}}));
             }
             Some("configRequirements/read") => {
                 let requirements = if scenario == "title-managed" {
@@ -192,8 +198,19 @@ fn main() {
                 };
                 send(json!({"id":id,"result":{"requirements":requirements}}));
             }
-            Some("thread/start") => send(json!({"id":id,"result":{"thread":{"id":"thread-stub"}}})),
+            Some("thread/start") => {
+                live_thread = true;
+                let provider = if scenario == "title-custom-thread" {
+                    "custom"
+                } else {
+                    "openai"
+                };
+                send(
+                    json!({"id":id,"result":{"thread":{"id":"thread-stub"},"modelProvider":provider}}),
+                );
+            }
             Some("thread/resume") => {
+                live_thread = true;
                 let thread = message
                     .pointer("/params/threadId")
                     .and_then(Value::as_str)
@@ -203,7 +220,7 @@ fn main() {
                 } else {
                     thread
                 };
-                send(json!({"id":id,"result":{"thread":{"id":returned}}}));
+                send(json!({"id":id,"result":{"thread":{"id":returned},"modelProvider":"openai"}}));
             }
             Some("turn/start") => {
                 if scenario == "supervised-write" {

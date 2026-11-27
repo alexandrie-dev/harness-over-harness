@@ -8,7 +8,7 @@ import { toastManager } from '~/components/ui/toast';
 
 interface ChatTitles {
   getEnabled(): boolean;
-  setEnabled(enabled: boolean): void;
+  setEnabled(enabled: boolean): Promise<void>;
   subscribe(listener: () => void): () => void;
   rename(threadId: string): Promise<string>;
 }
@@ -25,17 +25,21 @@ export function ChatTitleSetting() {
   const russian = useLocale() === 'ru';
   const labelId = useId();
   const descriptionId = useId();
+  const [saving, setSaving] = useState(false);
   const titles = chatTitles();
   if (!titles) return null;
 
-  const setEnabled = (checked: boolean) => {
+  const setEnabled = async (checked: boolean) => {
+    setSaving(true);
     try {
-      titles.setEnabled(checked);
+      await titles.setEnabled(checked);
     } catch {
       toastManager.add({
         type: 'error',
-        title: russian ? 'Не удалось сохранить настройку названий' : 'Could not save the chat title setting',
+        title: russian ? 'Не удалось подтвердить настройку автоназваний' : 'Could not confirm the automatic title setting',
       });
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -50,7 +54,7 @@ export function ChatTitleSetting() {
             {russian ? 'Давать новым чатам короткие названия по первому сообщению.' : 'Give new chats short titles based on their first message.'}
           </p>
         </div>
-        <Switch aria-labelledby={labelId} aria-describedby={descriptionId} checked={enabled} onCheckedChange={setEnabled} />
+        <Switch aria-labelledby={labelId} aria-describedby={descriptionId} checked={enabled} disabled={saving} onCheckedChange={setEnabled} />
       </div>
     </section>
   );

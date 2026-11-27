@@ -10,8 +10,8 @@ use futures_util::future::BoxFuture;
 use hoh_external_harness::{
     AccessMode, AuthState, Discovery, ExecutorLimitWindow, ExternalHarness, HarnessCommand,
     HarnessCommands, HarnessEffort, HarnessFailure, HarnessModel, HarnessPolicy, HarnessResult,
-    ProcessSpec, StartParams, StartResult, Started, Supervisor, SupervisorLimits, TitleRequest,
-    VersionStatus, code,
+    ProcessSpec, StartParams, StartResult, Started, Supervisor, SupervisorLimits, VersionStatus,
+    code,
 };
 use serde_json::Value;
 
@@ -571,6 +571,8 @@ impl ExternalHarness for CodexHarness {
                     effort: params.effort,
                     resume,
                 },
+                config,
+                &version,
             )
             .await
             .map_err(|error| {
@@ -620,11 +622,6 @@ impl ExternalHarness for CodexHarness {
 
     fn stop_ends_process(&self) -> bool {
         true
-    }
-
-    fn generate_title(&self, request: TitleRequest) -> BoxFuture<'static, HarnessResult<String>> {
-        let config = self.config.clone();
-        Box::pin(async move { crate::title::generate(&config, request).await })
     }
 
     fn accepts_effort(&self, _effort: &str) -> bool {

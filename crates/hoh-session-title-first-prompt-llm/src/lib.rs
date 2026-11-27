@@ -206,6 +206,27 @@ fn is_title_connector(word: &str) -> bool {
             | "before"
             | "after"
             | "during"
+            | "à"
+            | "au"
+            | "aux"
+            | "avec"
+            | "chez"
+            | "dans"
+            | "de"
+            | "des"
+            | "du"
+            | "en"
+            | "et"
+            | "la"
+            | "le"
+            | "les"
+            | "par"
+            | "pour"
+            | "sans"
+            | "sous"
+            | "sur"
+            | "un"
+            | "une"
             | "в"
             | "во"
             | "на"
@@ -269,16 +290,30 @@ fn title_from_response(
     if title.is_empty() {
         return Err("session-title-llm: title model produced no text".into());
     }
-    if let Some(max_words) = max_words
-        && title
-            .split_whitespace()
-            .filter(|word| !is_title_connector(word))
-            .count()
-            > max_words.get()
-    {
-        return Err(
-            format!("session-title-llm: title output exceeds {max_words} content words").into(),
-        );
+    if let Some(max_words) = max_words {
+        if title.chars().count() > 48
+            || title.split_whitespace().count() > max_words.get().saturating_mul(2)
+        {
+            return Err("session-title-llm: title output exceeds the short title limit".into());
+        }
+        let supported = title.chars().all(|character| {
+            !character.is_alphabetic()
+                || character.is_ascii_alphabetic()
+                || matches!(character, 'А'..='Я' | 'а'..='я' | 'Ё' | 'ё')
+                || "ÀÂÆÇÉÈÊËÎÏÔŒÙÛÜŸàâæçéèêëîïôœùûüÿ".contains(character)
+        });
+        if supported
+            && title
+                .split_whitespace()
+                .filter(|word| !is_title_connector(word))
+                .count()
+                > max_words.get()
+        {
+            return Err(format!(
+                "session-title-llm: title output exceeds {max_words} content words"
+            )
+            .into());
+        }
     }
     Ok(title)
 }

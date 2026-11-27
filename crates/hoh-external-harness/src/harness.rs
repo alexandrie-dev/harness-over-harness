@@ -19,7 +19,6 @@ pub struct TitleRequest {
     pub prompt: String,
     pub model: Option<String>,
     pub workspace: Option<TitleWorkspace>,
-    pub native_session_id: Option<String>,
 }
 
 pub struct TitleWorkspace {
@@ -215,6 +214,12 @@ pub struct Started {
 /// Control of one running native session.
 pub trait HarnessSession: Send + Sync + 'static {
     fn prompt(&self, params: PromptParams) -> BoxFuture<'static, HarnessResult<()>>;
+    fn generate_title(&self, _request: TitleRequest) -> BoxFuture<'static, HarnessResult<String>> {
+        Box::pin(std::future::ready(Err(HarnessFailure::new(
+            code::POLICY_UNAVAILABLE,
+            "This native session cannot generate conversation titles.",
+        ))))
+    }
     /// `history_prefix_len` marks the inherited context before the current turn's input.
     fn prompt_with_history_prefix(
         &self,

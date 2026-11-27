@@ -8,8 +8,8 @@ import { WireClient } from './wire-client.mjs';
 
 let built; let mod;
 before(async () => {
-  built = await buildHost();
-  mod = { host: await built.load('host'), wire: await built.load('wire'), socket: await built.load('socket') };
+  built = await buildHost({ 'composer-context': 'src/t3/base/shared/composerContextReferences.ts' });
+  mod = { host: await built.load('host'), wire: await built.load('wire'), socket: await built.load('socket'), context: await built.load('composer-context') };
 });
 after(async () => { await rm(built.dir, { recursive: true, force: true }); });
 
@@ -91,6 +91,7 @@ test('an attached image context link stays in the conversation but is not duplic
 });
 
 test('an image-only chat keeps its image label across a restart until a text prompt can name it', async t => {
+  const { ATTACHMENT_ONLY_BOOTSTRAP_PROMPT } = mod.context;
   const engine = new FakeEngine();
   const data = new Map();
   const storage = { getItem: key => data.get(key) ?? null, setItem: (key, value) => data.set(key, value) };
@@ -101,10 +102,12 @@ test('an image-only chat keeps its image label across a restart until a text pro
   const launched = await client.call('orchestration.launchThread', {
     commandId: 'image-title-launch', threadId, projectId: 'hoh-project', title: 'Attached image', generateTitle: true,
     modelSelection: { instanceId: 'codex', model: 'gpt-6-sol' }, runtimeMode: 'approval-required',
-    initialMessage: { messageId: 'image', text: '![red.png](t3-context://v1/image/image_img-1)', attachments },
+    initialMessage: { messageId: 'image', text: ATTACHMENT_ONLY_BOOTSTRAP_PROMPT, attachments },
   });
   assert.equal(launched.projection.thread.title, 'Attached image');
   assert.equal(sent(engine, 'hoh/executor/title/generate').length, 0);
+  assert.equal(sent(engine, 'session/prompt').at(-1).params.contentBlocks.at(-1).text, ATTACHMENT_ONLY_BOOTSTRAP_PROMPT);
+  await assert.rejects(host.chatTitles.rename(threadId), /Send a message/);
   host.stop();
 
   const restartedEngine = new FakeEngine({ store: engine.store });

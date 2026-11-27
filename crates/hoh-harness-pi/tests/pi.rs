@@ -171,7 +171,6 @@ async fn titles_use_an_isolated_session_and_the_bound_model() {
             [identity.dev(), identity.ino()],
             dir.path().to_owned(),
         )),
-        native_session_id: None,
     };
 
     assert_eq!(

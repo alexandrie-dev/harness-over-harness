@@ -1349,9 +1349,11 @@ test('turning off automatic titles persists and explicit naming uses the bound c
   const request = engine.request.bind(engine);
   const titleRequests = [];
   const cancellations = [];
+  let acknowledgeCancellation;
   engine.request = (method, params) => {
     if (method === 'hoh/executor/title/cancel') {
       cancellations.push(params.cancellationId);
+      if (cancellations.length === 1) return new Promise(resolve => { acknowledgeCancellation = resolve; });
       return Promise.resolve({ cancelled: true });
     }
     if (method !== 'hoh/executor/title/generate') return request(method, params);
@@ -1374,16 +1376,21 @@ test('turning off automatic titles persists and explicit naming uses the bound c
   await launch('queued-name');
   assert.equal(titleRequests.length, 2);
   assert.equal(titleRequests[0].params.cancellationId, titleRequests[1].params.cancellationId);
-  settings.setEnabled(false);
+  let confirmed = false;
+  const disabling = settings.setEnabled(false).then(() => { confirmed = true; });
   assert.deepEqual(cancellations, [titleRequests[0].params.cancellationId]);
-  settings.setEnabled(true);
+  await tick(5);
+  assert.equal(confirmed, false);
+  acknowledgeCancellation({ cancelled: true });
+  await disabling;
+  await settings.setEnabled(true);
   for (const request of titleRequests) request.resolve({ title: 'Доступ к кабинету CEO' });
   await tick(5);
   const projection = threadId => client.call('orchestration.getThreadProjection', { threadId });
   assert.notEqual((await projection('pending-name')).thread.title, 'Доступ к кабинету CEO');
   assert.notEqual((await projection('queued-name')).thread.title, 'Доступ к кабинету CEO');
 
-  settings.setEnabled(false);
+  await settings.setEnabled(false);
   assert.deepEqual(observed, [false, true, false]);
   unsubscribe();
   assert.equal((await launch('explicit-name')).projection.thread.title, text);
@@ -1415,6 +1422,9 @@ test('turning off automatic titles persists and explicit naming uses the bound c
     ['named-dotnet', 'Update project ".NET"', '.NET', '.NET'],
     ['named-cpp', 'Fix module "C++"', 'C++', 'C++'],
     ['title-connectors', 'Добавь уведомления о платежах Stripe', 'Уведомления о платежах Stripe', 'Уведомления о платежах Stripe'],
+    ['title-french', 'Le tableau du PDG ne s’ouvre plus', 'Accès au tableau du PDG', 'Accès au tableau du PDG'],
+    ['title-french-ascii', 'Configurer le serveur de production', 'Configuration du serveur de production', 'Configuration du serveur de production'],
+    ['title-greek', 'Δεν ανοίγει ο πίνακας του διευθυντή', 'Πρόσβαση στον πίνακα του διευθυντή', 'Πρόσβαση στον πίνακα του διευθυντή'],
   ]) {
     await launch(id, message);
     const rename = settings.rename(id);
@@ -1434,6 +1444,17 @@ test('turning off automatic titles persists and explicit naming uses the bound c
   assert.match(titleRequests.at(-1).params.prompt, /OldSubject.*Проверь загрузку картинок/);
   titleRequests.at(-1).resolve({ title: 'Загрузка картинок' });
   assert.equal(await renamed, 'Загрузка картинок');
+
+  const contextual = settings.rename('current-subject');
+  await tick(5);
+  titleRequests.at(-1).resolve({ title: 'OldSubject' });
+  assert.equal(await contextual, 'OldSubject');
+
+  const unrelated = settings.rename('current-subject');
+  const invalidName = assert.rejects(unrelated, /valid chat title/);
+  await tick(5);
+  titleRequests.at(-1).resolve({ title: 'Unrelated' });
+  await invalidName;
 });
 
 test('executor naming accepts code and URLs without synthetic image references', async t => {

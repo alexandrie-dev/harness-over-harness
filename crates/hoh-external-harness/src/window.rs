@@ -591,11 +591,13 @@ impl Window {
             }
             request.model = Some(route.model);
             if params.executor == "codex" {
+                let shared = self
+                    .service()
+                    .shared("codex")
+                    .ok_or("The Codex harness is unavailable.")?;
                 let native = tokio::time::timeout(Duration::from_secs(12), async {
                     loop {
-                        if let Some(native) = crate::executor::recorded_native(
-                            &agent.session().snapshot_events(None, None),
-                        ) {
+                        if let Some(native) = shared.running_session(&id) {
                             return native;
                         }
                         tokio::time::sleep(Duration::from_millis(100)).await;
@@ -617,7 +619,7 @@ impl Window {
                     identity,
                     profile.dir.clone(),
                 ));
-                request.native_session_id = Some(native.to_string());
+                return Ok(native.generate_title(request).await?);
             }
         }
         let harness = self

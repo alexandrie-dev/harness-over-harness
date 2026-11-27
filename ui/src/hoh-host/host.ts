@@ -22,7 +22,7 @@ import {
   isAccessMode, KEYBINDINGS_LOCATION, presentProvider, type EnvironmentPlatform, type T3InteractionMode,
 } from './config.ts';
 import { usagePricing, usageSummary, type UsageSummaryInput } from './usage.ts';
-import { explicitTitleFromPrompt, shortGeneratedTitle, shortTitleFromPrompt, titleGenerationPrompt, titleSource } from './chat-title.ts';
+import { explicitTitleFromPrompt, explicitTitlesFromPrompt, shortGeneratedTitle, shortTitleFromPrompt, titleGenerationPrompt, titleSource } from './chat-title.ts';
 import type { EngineNotification, EngineQuestion, EngineQuestionAnswer, HohEngine, LocalImageAsset } from './engine.ts';
 import { base64Of, readUploads, searchAnswer, skillsAsCommands, stripAttachedImageReferences, UPLOAD_PATH, UPLOAD_TTL_MS, uploadSlot, workspaceSnapshot, type KeptImage, type UploadSlot } from './composer.ts';
 import { englishError, hostFailure } from './errors.ts';
@@ -550,13 +550,14 @@ export class HohHost {
 
   readonly chatTitles = {
     getEnabled: () => this.autoTitlesEnabled,
-    setEnabled: (enabled: boolean) => {
+    setEnabled: async (enabled: boolean) => {
       if (enabled === this.autoTitlesEnabled) return;
       if (!this.storage) throw new Error('Chat settings could not be saved on this device.');
       this.storage.setItem(CHAT_TITLE_SETTINGS_KEY, String(enabled));
       this.autoTitlesEnabled = enabled;
-      if (!enabled) this.cancelAutomaticTitleRequests();
+      const cancellation = enabled ? undefined : this.cancelAutomaticTitleRequests();
       for (const listener of this.titleSettingListeners) listener();
+      await cancellation;
     },
     subscribe: (listener: () => void) => {
       this.titleSettingListeners.add(listener);
@@ -880,7 +881,7 @@ export class HohHost {
 
   stop() {
     this.stopped = true;
-    this.cancelAutomaticTitleRequests();
+    void this.cancelAutomaticTitleRequests().catch(() => {});
     for (const id of this.titleRequests.keys()) this.discardTitleRequest(id);
     this.git.stop();
     for (const off of this.unsubscribers) off();
@@ -3045,21 +3046,22 @@ export class HohHost {
     this.setAutomaticTitle(thread, title);
   }
 
-  private cancelExecutorTitle(cancellationId: string) {
-    void this.engine.request('hoh/executor/title/cancel', { cancellationId }).catch(() => {});
+  private async cancelExecutorTitle(cancellationId: string) {
+    const response = await this.engine.request('hoh/executor/title/cancel', { cancellationId });
+    if (response?.cancelled !== true) throw new Error('The title cancellation was not confirmed.');
   }
 
   private discardTitleRequest(threadId: string) {
     const request = this.titleRequests.get(threadId);
     this.titleRequests.delete(threadId);
-    if (request && !request.automatic) this.cancelExecutorTitle(request.cancellationId);
+    if (request && !request.automatic) void this.cancelExecutorTitle(request.cancellationId).catch(() => {});
   }
 
-  private cancelAutomaticTitleRequests() {
+  private async cancelAutomaticTitleRequests() {
     for (const [id, request] of this.titleRequests) if (request.automatic) this.titleRequests.delete(id);
     const cancellationId = this.automaticTitleCancellationId;
     this.automaticTitleCancellationId = undefined;
-    if (cancellationId) this.cancelExecutorTitle(cancellationId);
+    if (cancellationId) return this.cancelExecutorTitle(cancellationId);
   }
 
   private armTitleRegeneration(thread: ThreadModel, requestId?: string): Promise<string> {
@@ -3107,13 +3109,12 @@ export class HohHost {
         prompt: titleGenerationPrompt(prompts, automatic ? undefined : baseline),
         cancellationId,
       });
-      const explicit = explicitTitleFromPrompt(latest);
-      const generated = shortGeneratedTitle(response?.title, Boolean(explicit));
+      const generated = shortGeneratedTitle(response?.title, prompts.flatMap(explicitTitlesFromPrompt));
       if (!generated) throw new Error('The model did not return a valid chat title.');
       if (!current() || (automatic && (!this.autoTitlesEnabled || !this.canApplyAutomaticTitle(thread)))) {
         throw new Error('The title request was superseded.');
       }
-      const title = explicit || generated;
+      const title = explicitTitleFromPrompt(latest) || generated;
       if (title !== baseline) {
         if (!automatic) this.threadMetadata.update(thread.id, { title });
         this.setAutomaticTitle(thread, title);
