@@ -5,6 +5,7 @@
 import { EXECUTOR_INSTANCES, runtimeModeOf, type HohAccessMode, type HohExecutor, type T3InteractionMode } from './config.ts';
 import type { EngineQuestion } from './engine.ts';
 import { providerFailure } from './errors.ts';
+import { isSecretaryThreadId, readSecretaryPromptPrefix } from './secretary-chat.ts';
 import { readThreadOrganization, type ThreadOrganization } from './thread-metadata.ts';
 import type { SearchableMessage, SearchableTurnItem } from './thread-search.ts';
 import type { SessionListResult } from '../../../protocol/core.ts';
@@ -371,7 +372,8 @@ export class ThreadModel {
     const messageId = known ?? (pending >= 0 ? this.outgoing.splice(pending, 1)[0].messageId : 'msg-' + engineId);
     this.echoed.set(engineId, messageId);
     if (startsTurn) {
-      const authoringPrefix = this.pluginAuthoringPrefixes.find(prefix => value.startsWith(prefix));
+      const authoringPrefix = isSecretaryThreadId(this.id) ? readSecretaryPromptPrefix(value)
+        : this.pluginAuthoringPrefixes.find(prefix => value.startsWith(prefix));
       this.editableMessages.set(messageId, { engineId, authoringPrefix });
     }
     if (known || pending >= 0) {
@@ -400,6 +402,10 @@ export class ThreadModel {
   }
 
   private addUserMessage(messageId: string, value: string, at: number, attachments: ShownAttachment[] = []) {
+    if (isSecretaryThreadId(this.id)) {
+      const prefix = readSecretaryPromptPrefix(value);
+      if (prefix) value = value.slice(prefix.length);
+    }
     // The journal keeps the full first prompt for the harness. The message bubble shows the user's words.
     if (this.pluginAuthoringPrefixes.length && this.userMessageCount() === 0) {
       const authoringPrefix = this.pluginAuthoringPrefixes.find(prefix => value.startsWith(prefix));
@@ -1045,6 +1051,14 @@ export class ThreadModel {
   private instanceId() { return !this.bindingKnown ? 'unknown' : EXECUTOR_INSTANCES[this.executor]; }
   private modelSelection() { return { instanceId: this.instanceId(), model: this.bindingKnown ? this.model : 'unknown', ...(this.options?.length ? { options: this.options } : {}) }; }
   titleText() { return nonBlank(this.title, 'New chat'); }
+
+  lastCompletedAssistantReply(): string | null {
+    const run = this.runs.at(-1);
+    if (run?.status !== 'completed') return null;
+    return this.messages.findLast(message =>
+      message.role === 'assistant' && message.runId === run.id && !message.streaming,
+    )?.text ?? null;
+  }
 
   applyOrganization(patch: Partial<ThreadOrganization>) {
     this.organization = readThreadOrganization({ ...this.organization, ...patch });

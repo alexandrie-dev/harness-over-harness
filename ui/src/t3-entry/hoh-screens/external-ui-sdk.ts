@@ -9,6 +9,7 @@ export interface PagePlugin {
   digest: string;
   chatPanel?: { title: string; sidebarLabel: string };
   workspaceLabel?: string;
+  secretaryChat?: true;
 }
 
 interface Catalog {

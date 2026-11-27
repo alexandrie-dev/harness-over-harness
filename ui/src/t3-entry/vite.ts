@@ -234,14 +234,23 @@ const NATIVE_TITLEBAR = [
 ] as const;
 const TAURI_IMPORT = 'import { isTauri } from "@tauri-apps/api/core";\n';
 function chatIndexHome(code: string): string {
-  return anchorPatch('_chat.index.tsx', code, [[
-    '    void handleNewThread(projectRef, { replace: true })',
-    `    // The landing route can reopen the project draft that New chat just docked.
+  const pageStore = `import { useSyncExternalStore as useHohPageStore } from "react";\nimport { pages as hohPages } from ${JSON.stringify(SIDEBAR_PAGES)};\n`;
+  return anchorPatch('_chat.index.tsx', code, [
+    ['  const router = useRouter();', `  const router = useRouter();
+  const hohPage = useHohPageStore(hohPages.subscribe, hohPages.current, () => null);`],
+    ['    // Starting a draft after the user has left would replace the page they picked.', `    // A Workspace page can create the first scratch project to prepare its own draft.
+    if (hohPages.current()?.startsWith("workspace:")) return;
+    // Starting a draft after the user has left would replace the page they picked.`],
+    ['  }, [attempt, handleNewThread, mostRecentProject]);', '  }, [attempt, handleNewThread, mostRecentProject, hohPage]);'],
+    ['  if (mostRecentProject !== null) {', '  if (mostRecentProject !== null && !hohPage?.startsWith("workspace:")) {'],
+    ['    void handleNewThread(projectRef, { replace: true })',
+      `    // The landing route can reopen the project draft that New chat just docked.
     // Clear the view marker before navigation so that draft can render Home.
     try { sessionStorage.removeItem("hoh-project-new-chat"); } catch { /* Storage is optional. */ }
     window.dispatchEvent(new CustomEvent("hoh-project-new-chat", { detail: null }));
     void handleNewThread(projectRef, { replace: true })`,
-  ], NATIVE_TITLEBAR], TAURI_IMPORT);
+    ], NATIVE_TITLEBAR,
+  ], TAURI_IMPORT + pageStore);
 }
 export function chatViewHome(code: string): string {
   return anchorPatch('ChatView.tsx', code, [

@@ -46,6 +46,7 @@ export function installHohHost(options: InstallOptions) {
     method === 'POST' ? host.receiveUpload(pathname, contentType, body) : Promise.resolve({ status: 404 }), options.target);
   // The home screen (src/t3-entry/hoh-screens) reads the host through this handle.
   (options.target ?? globalThis).__HOH_HOME__ = host.home;
+  (options.target ?? globalThis).__HOH_SECRETARY_CHAT__ = host.secretaryChat;
   (options.target ?? globalThis).__HOH_PLUGINS__ = pluginInventory(options.engine);
   if (options.pluginAuthoringSkill) {
     (options.target ?? globalThis).__HOH_PLUGIN_CREATOR__ = host.pluginCreator(options.pluginAuthoringSkill, options.pluginAuthoringGuide);
@@ -65,6 +66,7 @@ export function installHohHost(options: InstallOptions) {
     server,
     uninstall: () => {
       delete (options.target ?? globalThis).__HOH_PLUGINS__;
+      delete (options.target ?? globalThis).__HOH_SECRETARY_CHAT__;
       delete (options.target ?? globalThis).__HOH_PLUGIN_CREATOR__;
       delete (options.target ?? globalThis).__HOH_EXTERNAL_IMAGE__;
       delete (options.target ?? globalThis).__HOH_MESSAGE_EDIT__;

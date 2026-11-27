@@ -25,6 +25,63 @@ function connect(engine, options = {}) {
 const lastSnapshot = stream => stream.values.filter(value => value.kind === 'snapshot').at(-1);
 const itemsOf = snapshot => snapshot.projection.turnItems;
 
+test('the secretary uses an ordinary selected harness and returns a completed proposal for the current cabinet', async () => {
+  const engine = new FakeEngine();
+  const saved = new Map();
+  const storage = { getItem: key => saved.get(key) ?? null, setItem: (key, value) => saved.set(key, value) };
+  const { host, client } = connect(engine, { storage });
+  const threadId = 'hoh-secretary-12345678-1234-1234-1234-123456789abc';
+  const input = { revision: 'current', instructions: 'Use the cabinet changes format.', context: { focus: 'Roadmap' } };
+  const proposal = JSON.stringify({ revision: input.revision, reply: 'Доска готова.', changes: [] });
+  try {
+    host.secretaryChat.bind(threadId, input);
+    assert.equal(await host.secretaryChat.hasThread(threadId), false);
+    assert.equal(engine.requests.some(request => request.method === 'session/prompt'), false);
+
+    const launched = await client.call('orchestration.launchThread', {
+      commandId: 'launch-secretary', threadId, projectId: 'hoh-project', title: 'Draft title',
+      modelSelection: { instanceId: 'codex', model: 'gpt-6-sol' },
+      runtimeMode: 'approval-required', interactionMode: 'default', workspaceStrategy: { type: 'root' },
+      initialMessage: { messageId: 'secretary-user', text: 'Обнови роадмап.', attachments: [] },
+    });
+    assert.equal(launched.projection.thread.title, 'Секретарь');
+    assert.equal(launched.projection.thread.modelSelection.instanceId, 'codex');
+    assert.equal(launched.projection.messages[0].text, 'Обнови роадмап.');
+    assert.equal(await host.secretaryChat.hasThread(threadId), true);
+    const sent = engine.requests.find(request => request.method === 'session/prompt').params;
+    assert.match(sent.contentBlocks[0].text, /"context":\{"focus":"Roadmap"\}/);
+    assert.match(sent.contentBlocks[0].text, /User message:\nОбнови роадмап\.$/);
+
+    await tick(5); // Replay must later read the real prompt and its context from the fake journal.
+    engine.emitEvent(threadId, 'assistant/message', { turn: 1, step: 1, message: {
+      id: 'secretary-assistant', content: [{ type: 'text', text: ['Готово.', '', '```cabinet-changes', proposal, '```'].join('\n') }],
+    } });
+    assert.equal(await host.secretaryChat.getProposal(threadId), null);
+    engine.emitEvent(threadId, 'turn/end', { turn: 1, reason: { kind: 'completed' } });
+    assert.equal(await host.secretaryChat.getProposal(threadId), proposal);
+    assert.equal(await host.secretaryChat.getProposal('unrelated-chat'), null);
+
+    host.secretaryChat.bind(threadId, { ...input, revision: 'newer' });
+    assert.equal(await host.secretaryChat.getProposal(threadId), null);
+    engine.store.get(threadId).title = 'Engine-generated title';
+  } finally {
+    host.stop();
+    client.close();
+  }
+
+  const restarted = connect(new FakeEngine({ store: engine.store }), { storage });
+  try {
+    assert.equal(await restarted.host.secretaryChat.hasThread(threadId), true);
+    const history = await restarted.client.call('orchestration.getThreadProjection', { threadId });
+    assert.equal(history.thread.title, 'Секретарь');
+    assert.equal(history.messages[0].text, 'Обнови роадмап.');
+    assert.equal(await restarted.host.secretaryChat.getProposal(threadId), null, 'workspace context is window-local');
+  } finally {
+    restarted.host.stop();
+    restarted.client.close();
+  }
+});
+
 test('editing sends the replacement and retained attachment to a separate branch with the earlier history', async () => {
   const engine = new FakeEngine();
   const user = (id, text, attachments = []) => ['user/message', {

@@ -22,6 +22,7 @@ fn main() {
             "install_external_ui_plugin",
             "open_external_ui_plugin",
             "layout_external_ui_workspace",
+            "reply_external_ui_secretary",
             "update_external_ui_panel",
             "open_link",
             "question_answer",

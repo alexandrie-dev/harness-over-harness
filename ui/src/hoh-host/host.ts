@@ -30,6 +30,10 @@ import { folderProject, HOH_PROJECT_ID, hohProject, ThreadModel, type FolderProj
 import type { SessionForkForEditResult } from '../protocol.ts';
 import { RpcFailure, type Handlers, type StreamSink } from './wire.ts';
 import { ThreadMetadataStore, threadTag, type ThreadMetadata, type ThreadOrganization } from './thread-metadata.ts';
+import {
+  isSecretaryThreadId, readSecretaryProposal, secretaryPromptPrefix, SECRETARY_THREAD_PREFIX,
+  SECRETARY_TITLE, type SecretaryChatApi,
+} from './secretary-chat.ts';
 import type { FindInput, FindResult } from './thread-search.ts';
 import type { CreateHohLocalSettings } from '../t3-entry/local-settings.ts';
 import {
@@ -280,6 +284,7 @@ export class HohHost {
   private readonly localImageContextGraceMs: number;
   private stopped = false;
   private readonly threads = new Map<string, ThreadModel>();
+  private readonly secretaryContexts = new Map<string, { revision: string; prefix: string }>();
   private pluginAuthoringPrefixes: readonly string[] = [];
   private readonly projectTrustRevisions = new Map<string, number>();
   /** Rows restored before the engine answers; its list/history replaces their cached metadata once available. */
@@ -743,6 +748,30 @@ export class HohHost {
   private pluginCreatorChanged() {
     for (const listener of this.pluginCreatorListeners) listener();
   }
+
+  /** This API is called by the trusted Workspace shell after native package validation. */
+  readonly secretaryChat: SecretaryChatApi = {
+    hasThread: async threadId => {
+      if (!isSecretaryThreadId(threadId)) return false;
+      await this.start();
+      return this.threads.get(threadId)?.archivedAt === null
+        && !this.deletingThreads.has(threadId) && !this.deletedThreads.has(threadId);
+    },
+    bind: (threadId, input) => {
+      if (!isSecretaryThreadId(threadId)) throw new Error('Некорректный чат секретаря.');
+      this.secretaryContexts.set(threadId, { revision: input.revision, prefix: secretaryPromptPrefix(input) });
+    },
+    getProposal: async threadId => {
+      const context = this.secretaryContexts.get(threadId);
+      if (!context) return null;
+      await this.start();
+      const thread = await this.loaded(threadId);
+      if (!thread || thread.archivedAt !== null || this.deletingThreads.has(threadId)
+        || this.threads.get(threadId) !== thread || this.secretaryContexts.get(threadId) !== context) return null;
+      const answer = thread.lastCompletedAssistantReply();
+      return answer === null ? null : readSecretaryProposal(answer, context.revision);
+    },
+  };
 
   private pluginCreatorHarnesses(): PluginCreatorOptions['harnesses'] {
     const claude = claudeProvider(this.claudeDiscovery, this.iso(), this.mode !== null, this.discoveryFailure);
@@ -2424,7 +2453,12 @@ export class HohHost {
             this.emitProject(folderProject(folder));
           }
         }
-        const thread = new ThreadModel({ id: threadId, title, createdAt: this.now(), model: chosenModel, mode: this.defaultMode, executor, projectId: folder?.id ?? HOH_PROJECT_ID });
+        const secretary = this.secretaryContexts.has(threadId);
+        const thread = new ThreadModel({
+          id: threadId, title: secretary ? SECRETARY_TITLE : title,
+          createdAt: this.now(), model: chosenModel, mode: this.defaultMode, executor,
+          projectId: folder?.id ?? HOH_PROJECT_ID,
+        });
         thread.pluginAuthoringPrefixes = this.pluginAuthoringPrefixes;
         thread.setInteractionMode(interaction);
         this.interactions.set(threadId, interaction);
@@ -2437,6 +2471,7 @@ export class HohHost {
         }
         this.threads.set(threadId, thread);
         this.homes.set(threadId, thread.projectId);
+        if (secretary) this.titles.set(threadId, SECRETARY_TITLE);
         this.save();
         if (!folder) this.showProject();
         this.changed(threadId);
@@ -2701,7 +2736,8 @@ export class HohHost {
       if (!prompt) throw new Error('Enter a message.');
       const original = source.editableUserMessage(messageId)!;
       await this.requireAccess();
-      const sessionId = globalThis.crypto?.randomUUID?.() ?? `edit-${this.now()}-${Math.random().toString(36).slice(2)}`;
+      const id = globalThis.crypto?.randomUUID?.() ?? `edit-${this.now()}-${Math.random().toString(36).slice(2)}`;
+      const sessionId = isSecretaryThreadId(source.id) ? SECRETARY_THREAD_PREFIX + id : id;
       this.creatingEditBranches.add(sessionId);
       let fork: SessionForkForEditResult;
       try {
@@ -2775,7 +2811,7 @@ export class HohHost {
       this.sentPreviewIds.add(image.id);
     }
     const commandFolder = folderPath(thread.cwd) || (thread.projectId === HOH_PROJECT_ID ? this.workspaceRoot : '');
-    const prompt = (edit?.authoringPrefix ?? '') + skillsAsCommands(
+    const prompt = (edit?.authoringPrefix ?? this.secretaryContexts.get(thread.id)?.prefix ?? '') + skillsAsCommands(
       stripAttachedImageReferences(text, images.map(image => image.id), context),
       this.skillsByFolder.get(`${thread.executor}\0${commandFolder}`) ?? new Set(),
       thread.executor,
@@ -2827,7 +2863,9 @@ export class HohHost {
           } catch { /* the engine history remains usable if window storage is unavailable */ }
         }
       }
-      if (firstMessage && !edit && !thread.builtin && thread.executor === 'claude') void this.generateTitle(thread, text);
+      if (firstMessage && !edit && !thread.builtin && !isSecretaryThreadId(thread.id) && thread.executor === 'claude') {
+        void this.generateTitle(thread, text);
+      }
     } catch (error) {
       this.homePrompts.delete(thread.id);
       if (this.homeDispositions.has(thread.id)) this.failedHomePrompts.add(thread.id);
@@ -3408,6 +3446,7 @@ ${message.slice(0, 8000)}`;
           this.deletedThreads.add(target.id);
           this.deletingThreads.delete(target.id);
           this.threads.delete(target.id);
+          this.secretaryContexts.delete(target.id);
           this.titleRequests.delete(target.id);
           this.wakeLocalImageReaders();
           this.dirty.delete(target.id);

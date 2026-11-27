@@ -42,6 +42,7 @@ fn main() {
             hoh_desktop::external_ui::install_external_ui_plugin,
             hoh_desktop::external_ui::open_external_ui_plugin,
             hoh_desktop::external_ui::layout_external_ui_workspace,
+            hoh_desktop::external_ui::reply_external_ui_secretary,
             hoh_desktop::external_ui::update_external_ui_panel,
             #[cfg(target_os = "linux")]
             hoh_desktop::clipboard_image::read_pasted_image,

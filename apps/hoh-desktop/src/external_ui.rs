@@ -6,6 +6,10 @@ use tauri::{Manager, WebviewWindow, ipc::JavaScriptChannelId};
 #[path = "external_ui_secretary.rs"]
 mod secretary;
 
+#[cfg(target_os = "linux")]
+#[path = "external_ui_secretary_chat.rs"]
+mod secretary_chat;
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct PagePlugin {
@@ -21,6 +25,12 @@ pub struct PagePlugin {
         rename = "workspaceLabel"
     )]
     workspace_label: Option<String>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        rename = "secretaryChat"
+    )]
+    secretary_chat: Option<bool>,
 }
 
 #[derive(Deserialize)]
@@ -153,19 +163,27 @@ pub async fn open_external_ui_plugin(
     window: WebviewWindow,
     package: PagePlugin,
     panel_id: Option<u32>,
+    workspace_id: Option<u32>,
     on_event: Option<JavaScriptChannelId>,
 ) -> Result<(), String> {
     ensure_main(&window)?;
     if !matches!(
-        (&package.chat_panel, panel_id, &on_event),
-        (Some(_), Some(_), Some(_)) | (None, None, None)
+        (
+            &package.chat_panel,
+            package.secretary_chat,
+            panel_id,
+            workspace_id,
+            &on_event
+        ),
+        (Some(_), None, Some(_), None, Some(_))
+            | (None, Some(true), None, Some(1..), Some(_))
+            | (None, None, None, None, None)
     ) {
         return Err("The requested placement does not match the plugin.".into());
     }
     #[cfg(target_os = "linux")]
     {
         let app = window.app_handle().clone();
-        let on_event = on_event.map(|id| id.channel_on(window.as_ref().clone()));
         let folder = app.path().app_data_dir().map_err(|e| e.to_string())?;
         let snapshot = tauri::async_runtime::spawn_blocking(move || linux::open(&folder, &package))
             .await
@@ -175,19 +193,38 @@ pub async fn open_external_ui_plugin(
             .map(|host| host.engine.clone());
         let (send, receive) = std::sync::mpsc::channel();
         app.run_on_main_thread(move || {
-            let result = match panel_id.zip(on_event) {
-                Some((id, events)) => window
+            let result = match (panel_id, workspace_id, on_event) {
+                (Some(id), None, Some(channel)) => window
                     .default_vbox()
                     .map_err(|_| "The main HoH window is unavailable.".into())
-                    .and_then(|parent| linux::show_panel(&parent, snapshot, id, events)),
-                None if snapshot.is_workspace_page() => window
+                    .and_then(|parent| {
+                        linux::show_panel(
+                            &parent,
+                            snapshot,
+                            id,
+                            channel.channel_on(window.as_ref().clone()),
+                        )
+                    }),
+                (None, Some(id), Some(channel)) => window
                     .default_vbox()
                     .map_err(|_| "The main HoH window is unavailable.".into())
-                    .and_then(|parent| linux::open_workspace(&parent, snapshot, engine)),
-                None => window
+                    .and_then(|parent| {
+                        linux::open_workspace(
+                            &parent,
+                            snapshot,
+                            engine,
+                            Some((id, channel.channel_on(window.as_ref().clone()))),
+                        )
+                    }),
+                (None, None, None) if snapshot.is_workspace_page() => window
+                    .default_vbox()
+                    .map_err(|_| "The main HoH window is unavailable.".into())
+                    .and_then(|parent| linux::open_workspace(&parent, snapshot, engine, None)),
+                (None, None, None) => window
                     .gtk_window()
                     .map_err(|_| "The main HoH window is unavailable.".into())
                     .and_then(|parent| linux::show(&parent, snapshot)),
+                _ => Err("The requested placement does not match the plugin.".into()),
             };
             let _ = send.send(result);
         })
@@ -202,9 +239,35 @@ pub async fn open_external_ui_plugin(
     }
     #[cfg(not(target_os = "linux"))]
     {
-        let _ = (package, panel_id, on_event);
+        let _ = (package, panel_id, workspace_id, on_event);
         Err("External UI plugins require the isolated Linux WebKit view.".into())
     }
+}
+
+#[tauri::command]
+pub fn reply_external_ui_secretary(
+    window: WebviewWindow,
+    workspace_id: u32,
+    request_id: u32,
+    value: Option<String>,
+    error: Option<String>,
+) -> Result<(), String> {
+    ensure_main(&window)?;
+    if workspace_id == 0
+        || request_id == 0
+        || (value.is_some() && error.is_some())
+        || value.as_ref().is_some_and(|text| text.len() > 128 * 1024)
+        || error
+            .as_ref()
+            .is_some_and(|text| text.is_empty() || text.len() > 1024)
+    {
+        return Err("Invalid Cabinet chat reply.".into());
+    }
+    #[cfg(target_os = "linux")]
+    window
+        .run_on_main_thread(move || linux::reply_secretary(workspace_id, request_id, value, error))
+        .map_err(|_| "The Cabinet could not receive the chat reply.".to_owned())?;
+    Ok(())
 }
 
 #[tauri::command]
@@ -350,6 +413,12 @@ mod linux {
         protocol_versions: [u32; 1],
     }
 
+    #[derive(Clone, Copy)]
+    enum WorkspaceBridge<'a> {
+        Model(&'a [u8]),
+        Chat(&'a [u8]),
+    }
+
     pub(super) struct Snapshot {
         package: PagePlugin,
         script: String,
@@ -493,6 +562,7 @@ mod linux {
                         ),
                         chat_panel: Some(panel),
                         workspace_label: None,
+                        secretary_chat: None,
                     },
                     script: format!("{script}\n{}", include_str!("external_ui_panel.js")),
                     secretary: false,
@@ -506,23 +576,21 @@ mod linux {
                 Some(ui),
                 Some(digest),
             ) if (protocols == [1] && permissions == &["page"])
-                || (protocols == [4]
+                || (matches!(protocols, [4] | [5])
                     && page.sidebar_label.is_some()
                     && permissions.len() == 2
-                    && ["page", "secretary"]
-                        .iter()
-                        .all(|permission| permissions.iter().any(|p| p == permission))) =>
+                    && permissions.iter().any(|p| p == "page")
+                    && permissions.iter().any(|p| {
+                        (protocols == [4] && p == "secretary")
+                            || (protocols == [5] && p == "secretaryChat")
+                    })) =>
             {
-                let secretary_manifest = (protocols == [4]).then_some(manifest_bytes.as_slice());
-                read_page(
-                    dir,
-                    id,
-                    manifest.version,
-                    page,
-                    ui,
-                    digest,
-                    secretary_manifest,
-                )
+                let bridge = match protocols {
+                    [4] => Some(WorkspaceBridge::Model(&manifest_bytes)),
+                    [5] => Some(WorkspaceBridge::Chat(&manifest_bytes)),
+                    _ => None,
+                };
+                read_page(dir, id, manifest.version, page, ui, digest, bridge)
             }
             _ => Err("This package does not match a supported external UI contract.".into()),
         }
@@ -544,7 +612,7 @@ mod linux {
         page: Page,
         ui: Ui,
         expected_digest: String,
-        secretary_manifest: Option<&[u8]>,
+        bridge: Option<WorkspaceBridge<'_>>,
     ) -> Result<Snapshot, String> {
         if page.id != "main"
             || page.handler != "mount"
@@ -560,13 +628,19 @@ mod linux {
             return Err("This package does not match the supported UI-only page contract.".into());
         }
         let source = read_script(dir, ui, &expected_digest)?;
-        let (digest, mount) = if let Some(manifest) = secretary_manifest {
+        let (digest, mount) = if let Some(bridge) = bridge {
+            let (manifest, mount) = match bridge {
+                WorkspaceBridge::Model(bytes) => (bytes, include_str!("external_ui_secretary.js")),
+                WorkspaceBridge::Chat(bytes) => {
+                    (bytes, include_str!("external_ui_secretary_chat.js"))
+                }
+            };
             (
                 format!(
                     "sha256:{}",
                     hoh_protocol::approval::hex(&Sha256::digest(manifest))
                 ),
-                include_str!("external_ui_secretary.js"),
+                mount,
             )
         } else {
             (
@@ -582,9 +656,10 @@ mod linux {
                 digest,
                 chat_panel: None,
                 workspace_label: page.sidebar_label,
+                secretary_chat: matches!(bridge, Some(WorkspaceBridge::Chat(_))).then_some(true),
             },
             script: format!("{source}\n{mount}"),
-            secretary: secretary_manifest.is_some(),
+            secretary: matches!(bridge, Some(WorkspaceBridge::Model(_))),
         })
     }
 
@@ -847,7 +922,13 @@ mod linux {
     struct WorkspaceView {
         overlay: gtk::Overlay,
         host: webkit2gtk::WebView,
-        page: Option<(PagePlugin, webkit2gtk::WebView)>,
+        page: Option<WorkspacePage>,
+    }
+
+    struct WorkspacePage {
+        package: PagePlugin,
+        view: webkit2gtk::WebView,
+        secretary_chat: Option<Rc<secretary_chat::Bridge>>,
     }
 
     fn detach_workspace(overlay: &gtk::Overlay, view: &webkit2gtk::WebView) {
@@ -883,6 +964,7 @@ mod linux {
         parent: &gtk::Box,
         snapshot: Snapshot,
         engine: Option<std::sync::Arc<crate::engine::Engine>>,
+        channel: Option<(u32, Channel<secretary_chat::WorkspaceEvent>)>,
     ) -> Result<(), String> {
         use gtk::prelude::*;
         use webkit2gtk::WebViewExt;
@@ -891,11 +973,14 @@ mod linux {
                 *workspace = Some(WorkspaceView::new(parent)?);
             }
             let workspace = workspace.as_mut().expect("workspace overlay was installed");
-            if workspace
+            if let Some(page) = workspace
                 .page
                 .as_ref()
-                .is_some_and(|(active, _)| *active == snapshot.package)
+                .filter(|page| page.package == snapshot.package)
             {
+                if let (Some(bridge), Some((id, events))) = (&page.secretary_chat, channel) {
+                    bridge.replace_channel(&page.view, id, events);
+                }
                 return Ok(());
             }
             let secretary_engine = if snapshot.secretary {
@@ -903,15 +988,27 @@ mod linux {
             } else {
                 None
             };
-            let (view, url) = isolated_view(snapshot.script, None, true, secretary_engine)?;
-            if let Some((_, previous)) = workspace.page.take() {
-                detach_workspace(&workspace.overlay, &previous);
+            let secretary_chat =
+                channel.map(|(id, events)| secretary_chat::Bridge::new(id, events));
+            let (view, url) = isolated_view(
+                snapshot.script,
+                None,
+                true,
+                secretary_engine,
+                secretary_chat.clone(),
+            )?;
+            if let Some(previous) = workspace.page.take() {
+                detach_workspace(&workspace.overlay, &previous.view);
             }
             view.set_halign(gtk::Align::Start);
             view.set_valign(gtk::Align::Start);
             view.set_no_show_all(true);
             view.load_uri(&url);
-            workspace.page = Some((snapshot.package, view));
+            workspace.page = Some(WorkspacePage {
+                package: snapshot.package,
+                view,
+                secretary_chat,
+            });
             Ok(())
         })
     }
@@ -921,8 +1018,25 @@ mod linux {
             workspace
                 .as_ref()
                 .and_then(|workspace| workspace.page.as_ref())
-                .is_some_and(|(_, active)| active == view)
+                .is_some_and(|page| &page.view == view)
         })
+    }
+
+    pub(super) fn reply_secretary(
+        workspace_id: u32,
+        request_id: u32,
+        value: Option<String>,
+        error: Option<String>,
+    ) {
+        WORKSPACE.with_borrow(|workspace| {
+            if let Some(page) = workspace
+                .as_ref()
+                .and_then(|workspace| workspace.page.as_ref())
+                && let Some(bridge) = &page.secretary_chat
+            {
+                bridge.reply(&page.view, workspace_id, request_id, value, error);
+            }
+        });
     }
 
     pub(super) fn layout_workspace(id: &str, bounds: Option<WorkspaceBounds>) {
@@ -932,9 +1046,10 @@ mod linux {
             let Some(workspace) = workspace.as_ref() else {
                 return;
             };
-            let Some((_, view)) = workspace.page.as_ref().filter(|(page, _)| page.id == id) else {
+            let Some(page) = workspace.page.as_ref().filter(|page| page.package.id == id) else {
                 return;
             };
+            let view = &page.view;
             let Some(bounds) = bounds else {
                 detach_workspace(&workspace.overlay, view);
                 return;
@@ -1014,7 +1129,8 @@ mod linux {
             revision: Cell::new(0),
             activation: Cell::new(None),
         });
-        let (view, url) = isolated_view(snapshot.script, Some(Rc::clone(&bridge)), false, None)?;
+        let (view, url) =
+            isolated_view(snapshot.script, Some(Rc::clone(&bridge)), false, None, None)?;
         close_panel(parent);
         let panel = gtk::Box::new(gtk::Orientation::Vertical, 0);
         panel.set_width_request((parent.allocated_width() / 3).clamp(180, 380));
@@ -1069,6 +1185,7 @@ mod linux {
         panel: Option<Rc<PanelBridge>>,
         workspace: bool,
         secretary_engine: Option<std::sync::Arc<crate::engine::Engine>>,
+        secretary_chat: Option<Rc<secretary_chat::Bridge>>,
     ) -> Result<(webkit2gtk::WebView, String), String> {
         use gtk::{
             gio::MemoryInputStream,
@@ -1170,6 +1287,9 @@ mod linux {
         let view = builder.build();
         if let Some(engine) = secretary_engine {
             secretary::attach(&view, &manager, engine)?;
+        }
+        if let Some(bridge) = secretary_chat {
+            secretary_chat::attach(&view, &manager, bridge)?;
         }
         let settings =
             WebViewExt::settings(&view).ok_or("Plugin view restrictions are unavailable.")?;
@@ -1281,7 +1401,7 @@ mod linux {
     pub(super) fn show(parent: &gtk::ApplicationWindow, snapshot: Snapshot) -> Result<(), String> {
         use gtk::prelude::*;
         use webkit2gtk::WebViewExt;
-        let (view, url) = isolated_view(snapshot.script, None, false, None)?;
+        let (view, url) = isolated_view(snapshot.script, None, false, None, None)?;
         let window = gtk::Window::new(gtk::WindowType::Toplevel);
         let title = format!(
             "HoH — Plugin {} ({})",
@@ -1428,6 +1548,48 @@ mod linux {
                 catalog(&profile.0).unwrap().rejected[0].id,
                 "hello-workspace"
             );
+        }
+
+        #[test]
+        fn secretary_chat_is_limited_to_a_workspace_page_with_the_v5_contract() {
+            let profile = Profile::new();
+            let dir = profile.0.join("external_plugins/hello-workspace");
+            fs::create_dir_all(&dir).unwrap();
+            let source = include_bytes!("../../../docs/examples/hello-workspace/ui.js");
+            let example = include_str!("../../../docs/examples/hello-workspace/hoh-package.json");
+            fs::write(dir.join("ui.js"), source).unwrap();
+            let path = dir.join("hoh-package.json");
+            let mut manifest: serde_json::Value = serde_json::from_str(example).unwrap();
+            manifest["requires"]["services"]["ui"]["protocolVersions"] = serde_json::json!([5]);
+            manifest["requestedPermissions"]["ui"] = serde_json::json!(["page", "secretaryChat"]);
+            fs::write(&path, manifest.to_string()).unwrap();
+
+            let page = catalog(&profile.0).unwrap().packages.pop().unwrap();
+            assert_eq!(page.secretary_chat, Some(true));
+            assert_ne!(Some(page.digest.as_str()), manifest["digest"].as_str());
+            assert!(
+                open(&profile.0, &page)
+                    .unwrap()
+                    .script
+                    .contains("hohSecretaryChat")
+            );
+
+            manifest["requestedPermissions"]["ui"] = serde_json::json!(["secretaryChat", "page"]);
+            fs::write(&path, manifest.to_string()).unwrap();
+            assert!(open(&profile.0, &page).is_err());
+            assert!(catalog(&profile.0).unwrap().rejected.is_empty());
+
+            manifest["contributes"]["ui"]["pages"][0]
+                .as_object_mut()
+                .unwrap()
+                .remove("sidebarLabel");
+            fs::write(&path, manifest.to_string()).unwrap();
+            assert_eq!(catalog(&profile.0).unwrap().rejected.len(), 1);
+
+            manifest["contributes"]["ui"]["pages"][0]["sidebarLabel"] = "Workspace".into();
+            manifest["requestedPermissions"]["ui"] = serde_json::json!(["page", "openChat"]);
+            fs::write(&path, manifest.to_string()).unwrap();
+            assert_eq!(catalog(&profile.0).unwrap().rejected.len(), 1);
         }
 
         #[test]
